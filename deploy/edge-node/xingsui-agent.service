@@ -1,0 +1,19 @@
+[Unit]
+Description=Xingsui VPN Edge Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/xingsui/agent.env
+ExecStart=/usr/bin/python3 /opt/xingsui/agent.py
+Restart=always
+RestartSec=3
+# 仅需操作 awg 与读取系统指标，限制权限
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+# 星隧 VPN 控制面反向代理
+# SITE_DOMAIN 由 compose 注入：
+#   - 已有域名：设为 api.example.com，Caddy 自动签发 Let's Encrypt 证书
+#   - 暂无域名：设为 :443，使用内部自签证书（App 需放行/或先用 IP+http 调试）
+{
+	# 全局选项：用真实邮箱接收证书到期通知（可在 .env 留空使用默认）
+	email {$ACME_EMAIL}
+}
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	# 反代到 FastAPI；保留真实来源信息
+	reverse_proxy api:8000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# 安全响应头
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "no-referrer-when-downgrade"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

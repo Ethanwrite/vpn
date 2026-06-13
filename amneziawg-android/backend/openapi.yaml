@@ -1,0 +1,1670 @@
+openapi: 3.1.0
+info:
+  title: Xingsui Commercial API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Health Health Get
+  /auth/email/register:
+    post:
+      summary: Register By Email
+      operationId: register_by_email_auth_email_register_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auth/email/login:
+    post:
+      summary: Login By Email
+      operationId: login_by_email_auth_email_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /me:
+    get:
+      summary: Get Me
+      operationId: get_me_me_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /usage/authorize:
+    get:
+      summary: Authorize Usage
+      operationId: authorize_usage_usage_authorize_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entitlement'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /vpn/authorize:
+    get:
+      summary: Authorize Vpn
+      operationId: authorize_vpn_vpn_authorize_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entitlement'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /user/vip/status:
+    get:
+      summary: Get User Vip Status
+      operationId: get_user_vip_status_user_vip_status_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /vpn/config:
+    get:
+      summary: Get Vpn Config
+      operationId: get_vpn_config_vpn_config_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VpnNodeConfig'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /usage/report:
+    post:
+      summary: Report Usage
+      operationId: report_usage_usage_report_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsageReportRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entitlement'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /invitations/me:
+    get:
+      summary: Get My Invitation
+      operationId: get_my_invitation_invitations_me_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationSummary'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /plans:
+    get:
+      summary: List Plans
+      operationId: list_plans_plans_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/VipPlan'
+                type: array
+                title: Response List Plans Plans Get
+  /promotions/active:
+    get:
+      summary: Get Active Promotion
+      operationId: get_active_promotion_promotions_active_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromotionActivity'
+  /payment-settings:
+    get:
+      summary: List Enabled Payment Settings
+      operationId: list_enabled_payment_settings_payment_settings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/PaymentSetting'
+                type: array
+                title: Response List Enabled Payment Settings Payment Settings Get
+  /orders:
+    post:
+      summary: Create Order
+      operationId: create_order_orders_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /withdrawals:
+    post:
+      summary: Create Withdrawal
+      operationId: create_withdrawal_withdrawals_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWithdrawalRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /withdrawals/me:
+    get:
+      summary: List My Withdrawals
+      operationId: list_my_withdrawals_withdrawals_me_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Withdrawal'
+                title: Response List My Withdrawals Withdrawals Me Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /orders/{order_id}:
+    get:
+      summary: Get Order
+      operationId: get_order_orders__order_id__get
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /orders/{order_id}/paid:
+    post:
+      summary: Mark Order Paid
+      operationId: mark_order_paid_orders__order_id__paid_post
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/dashboard:
+    get:
+      summary: Get Dashboard
+      operationId: get_dashboard_admin_dashboard_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummary'
+  /admin/orders:
+    get:
+      summary: List Admin Orders
+      operationId: list_admin_orders_admin_orders_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - $ref: '#/components/schemas/OrderStatus'
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Order'
+                title: Response List Admin Orders Admin Orders Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/users:
+    get:
+      summary: List Admin Users
+      operationId: list_admin_users_admin_users_get
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Q
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminUserSummary'
+                title: Response List Admin Users Admin Users Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/system-health:
+    get:
+      summary: Get System Health
+      operationId: get_system_health_admin_system_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthSummary'
+  /admin/payment-settings:
+    get:
+      summary: List Admin Payment Settings
+      operationId: list_admin_payment_settings_admin_payment_settings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/PaymentSetting'
+                type: array
+                title: Response List Admin Payment Settings Admin Payment Settings
+                  Get
+  /admin/payment-settings/{channel}:
+    put:
+      summary: Update Admin Payment Setting
+      operationId: update_admin_payment_setting_admin_payment_settings__channel__put
+      parameters:
+      - name: channel
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/PayChannel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminPaymentSettingRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSetting'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/promotions:
+    get:
+      summary: List Admin Promotions
+      operationId: list_admin_promotions_admin_promotions_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/PromotionActivity'
+                type: array
+                title: Response List Admin Promotions Admin Promotions Get
+    post:
+      summary: Create Admin Promotion
+      operationId: create_admin_promotion_admin_promotions_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminPromotionRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromotionActivity'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/promotions/{promotion_id}:
+    put:
+      summary: Update Admin Promotion
+      operationId: update_admin_promotion_admin_promotions__promotion_id__put
+      parameters:
+      - name: promotion_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Promotion Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminPromotionRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromotionActivity'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/withdrawals:
+    get:
+      summary: List Admin Withdrawals
+      operationId: list_admin_withdrawals_admin_withdrawals_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - $ref: '#/components/schemas/WithdrawalStatus'
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Withdrawal'
+                title: Response List Admin Withdrawals Admin Withdrawals Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/withdrawals/{withdrawal_id}/approve:
+    post:
+      summary: Approve Admin Withdrawal
+      operationId: approve_admin_withdrawal_admin_withdrawals__withdrawal_id__approve_post
+      parameters:
+      - name: withdrawal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Withdrawal Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/AdminOrderAction'
+              - type: 'null'
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/withdrawals/{withdrawal_id}/reject:
+    post:
+      summary: Reject Admin Withdrawal
+      operationId: reject_admin_withdrawal_admin_withdrawals__withdrawal_id__reject_post
+      parameters:
+      - name: withdrawal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Withdrawal Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/AdminOrderAction'
+              - type: 'null'
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/invitations:
+    get:
+      summary: List Admin Invitations
+      operationId: list_admin_invitations_admin_invitations_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InvitationRecord'
+                title: Response List Admin Invitations Admin Invitations Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/users/{user_id}:
+    get:
+      summary: Get Admin User
+      operationId: get_admin_user_admin_users__user_id__get
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/orders/{order_id}/confirm:
+    post:
+      summary: Confirm Order
+      operationId: confirm_order_admin_orders__order_id__confirm_post
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/AdminOrderAction'
+              - type: 'null'
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /admin/orders/{order_id}/reject:
+    post:
+      summary: Reject Order
+      operationId: reject_order_admin_orders__order_id__reject_post
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/AdminOrderAction'
+              - type: 'null'
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    AdminOrderAction:
+      properties:
+        reviewed_by:
+          type: string
+          title: Reviewed By
+          default: admin
+        note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Note
+      type: object
+      title: AdminOrderAction
+    AdminPaymentSettingRequest:
+      properties:
+        display_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Display Name
+        qr_url:
+          type: string
+          title: Qr Url
+        enabled:
+          type: boolean
+          title: Enabled
+          default: true
+      type: object
+      required:
+      - qr_url
+      title: AdminPaymentSettingRequest
+    AdminPromotionRequest:
+      properties:
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+        name:
+          type: string
+          title: Name
+        tag:
+          type: string
+          title: Tag
+          default: 限时特惠
+        plan_id:
+          type: string
+          title: Plan Id
+          default: plan_month
+        starts_at:
+          type: string
+          format: date-time
+          title: Starts At
+        ends_at:
+          type: string
+          format: date-time
+          title: Ends At
+        promo_price_cents:
+          type: integer
+          title: Promo Price Cents
+        invite_extra_discount_cents:
+          type: integer
+          title: Invite Extra Discount Cents
+          default: 0
+        stackable:
+          type: boolean
+          title: Stackable
+          default: false
+        new_user_only:
+          type: boolean
+          title: New User Only
+          default: false
+        countdown_enabled:
+          type: boolean
+          title: Countdown Enabled
+          default: true
+        status:
+          type: string
+          title: Status
+          default: active
+      type: object
+      required:
+      - name
+      - starts_at
+      - ends_at
+      - promo_price_cents
+      title: AdminPromotionRequest
+    AdminUserSummary:
+      properties:
+        id:
+          type: string
+          title: Id
+        email:
+          type: string
+          title: Email
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        vip_status:
+          type: string
+          title: Vip Status
+        vip_expired_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Vip Expired At
+        last_login_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Login At
+        last_seen_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Seen At
+        online:
+          type: boolean
+          title: Online
+      type: object
+      required:
+      - id
+      - email
+      - created_at
+      - vip_status
+      - online
+      title: AdminUserSummary
+    AuthRequest:
+      properties:
+        email:
+          type: string
+          title: Email
+        password:
+          type: string
+          title: Password
+        invite_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Invite Code
+      type: object
+      required:
+      - email
+      - password
+      title: AuthRequest
+    AuthResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        token_type:
+          type: string
+          title: Token Type
+          default: bearer
+        user:
+          $ref: '#/components/schemas/User'
+      type: object
+      required:
+      - access_token
+      - user
+      title: AuthResponse
+    CreateOrderRequest:
+      properties:
+        plan_id:
+          type: string
+          title: Plan Id
+        promotion_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Promotion Id
+        pay_channel:
+          $ref: '#/components/schemas/PayChannel'
+        user_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Id
+        invite_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Invite Code
+      type: object
+      required:
+      - plan_id
+      - pay_channel
+      title: CreateOrderRequest
+    CreateWithdrawalRequest:
+      properties:
+        amount_cents:
+          type: integer
+          title: Amount Cents
+        account_type:
+          type: string
+          title: Account Type
+          default: alipay
+        account_masked:
+          type: string
+          title: Account Masked
+      type: object
+      required:
+      - amount_cents
+      - account_masked
+      title: CreateWithdrawalRequest
+    DashboardSummary:
+      properties:
+        total_users:
+          type: integer
+          title: Total Users
+        today_new_users:
+          type: integer
+          title: Today New Users
+        online_users:
+          type: integer
+          title: Online Users
+        vip_users:
+          type: integer
+          title: Vip Users
+        expiring_soon_users:
+          type: integer
+          title: Expiring Soon Users
+        total_orders:
+          type: integer
+          title: Total Orders
+        pending_confirm_orders:
+          type: integer
+          title: Pending Confirm Orders
+        completed_orders:
+          type: integer
+          title: Completed Orders
+        revenue_cents:
+          type: integer
+          title: Revenue Cents
+        active_vip_users:
+          type: integer
+          title: Active Vip Users
+        paid_invite_count:
+          type: integer
+          title: Paid Invite Count
+        total_cashback_cents:
+          type: integer
+          title: Total Cashback Cents
+        pending_withdrawal_count:
+          type: integer
+          title: Pending Withdrawal Count
+        pending_withdrawal_cents:
+          type: integer
+          title: Pending Withdrawal Cents
+      type: object
+      required:
+      - total_users
+      - today_new_users
+      - online_users
+      - vip_users
+      - expiring_soon_users
+      - total_orders
+      - pending_confirm_orders
+      - completed_orders
+      - revenue_cents
+      - active_vip_users
+      - paid_invite_count
+      - total_cashback_cents
+      - pending_withdrawal_count
+      - pending_withdrawal_cents
+      title: DashboardSummary
+    Entitlement:
+      properties:
+        allowed:
+          type: boolean
+          title: Allowed
+        reason:
+          type: string
+          title: Reason
+        vip_status:
+          type: string
+          title: Vip Status
+        vip_expired_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Vip Expired At
+        free_traffic_quota_bytes:
+          type: integer
+          title: Free Traffic Quota Bytes
+        free_traffic_used_bytes:
+          type: integer
+          title: Free Traffic Used Bytes
+        free_traffic_remaining_bytes:
+          type: integer
+          title: Free Traffic Remaining Bytes
+      type: object
+      required:
+      - allowed
+      - reason
+      - vip_status
+      - free_traffic_quota_bytes
+      - free_traffic_used_bytes
+      - free_traffic_remaining_bytes
+      title: Entitlement
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    InvitationRecord:
+      properties:
+        id:
+          type: string
+          title: Id
+        inviter_user_id:
+          type: string
+          title: Inviter User Id
+        invitee_user_id:
+          type: string
+          title: Invitee User Id
+        order_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Order Id
+        reward_cents:
+          type: integer
+          title: Reward Cents
+        status:
+          type: string
+          title: Status
+        risk_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Risk Reason
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - inviter_user_id
+      - invitee_user_id
+      - order_id
+      - reward_cents
+      - status
+      - created_at
+      title: InvitationRecord
+    InvitationSummary:
+      properties:
+        invite_code:
+          type: string
+          title: Invite Code
+        invited_count:
+          type: integer
+          title: Invited Count
+        paid_invite_count:
+          type: integer
+          title: Paid Invite Count
+        total_reward_cents:
+          type: integer
+          title: Total Reward Cents
+        withdrawable_balance_cents:
+          type: integer
+          title: Withdrawable Balance Cents
+      type: object
+      required:
+      - invite_code
+      - invited_count
+      - paid_invite_count
+      - total_reward_cents
+      - withdrawable_balance_cents
+      title: InvitationSummary
+    Order:
+      properties:
+        id:
+          type: string
+          title: Id
+        order_no:
+          type: string
+          title: Order No
+        user_id:
+          type: string
+          title: User Id
+        user_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Email
+        plan_id:
+          type: string
+          title: Plan Id
+        promotion_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Promotion Id
+        invite_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Invite Code
+        original_amount_cents:
+          type: integer
+          title: Original Amount Cents
+        discount_amount_cents:
+          type: integer
+          title: Discount Amount Cents
+        pay_amount_cents:
+          type: integer
+          title: Pay Amount Cents
+        pay_channel:
+          $ref: '#/components/schemas/PayChannel'
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        payment_qr_url:
+          type: string
+          title: Payment Qr Url
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        paid_marked_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Paid Marked At
+        confirmed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Confirmed At
+        reviewed_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reviewed By
+        review_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Review Note
+      type: object
+      required:
+      - id
+      - order_no
+      - user_id
+      - plan_id
+      - promotion_id
+      - original_amount_cents
+      - discount_amount_cents
+      - pay_amount_cents
+      - pay_channel
+      - status
+      - payment_qr_url
+      - created_at
+      title: Order
+    OrderStatus:
+      type: string
+      enum:
+      - pending_payment
+      - pending_confirm
+      - completed
+      - cancelled
+      - rejected
+      title: OrderStatus
+    PayChannel:
+      type: string
+      enum:
+      - wechat
+      - alipay
+      title: PayChannel
+    PaymentSetting:
+      properties:
+        channel:
+          $ref: '#/components/schemas/PayChannel'
+        display_name:
+          type: string
+          title: Display Name
+        qr_url:
+          type: string
+          title: Qr Url
+        enabled:
+          type: boolean
+          title: Enabled
+          default: true
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - channel
+      - display_name
+      - qr_url
+      - updated_at
+      title: PaymentSetting
+    PromotionActivity:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        tag:
+          type: string
+          title: Tag
+        plan_id:
+          type: string
+          title: Plan Id
+        starts_at:
+          type: string
+          format: date-time
+          title: Starts At
+        ends_at:
+          type: string
+          format: date-time
+          title: Ends At
+        promo_price_cents:
+          type: integer
+          title: Promo Price Cents
+        invite_extra_discount_cents:
+          type: integer
+          title: Invite Extra Discount Cents
+          default: 0
+        stackable:
+          type: boolean
+          title: Stackable
+          default: false
+        new_user_only:
+          type: boolean
+          title: New User Only
+          default: false
+        countdown_enabled:
+          type: boolean
+          title: Countdown Enabled
+          default: true
+        status:
+          type: string
+          title: Status
+          default: active
+      type: object
+      required:
+      - id
+      - name
+      - tag
+      - plan_id
+      - starts_at
+      - ends_at
+      - promo_price_cents
+      title: PromotionActivity
+    SystemHealthSummary:
+      properties:
+        cpu_load_1m:
+          type: number
+          title: Cpu Load 1M
+        memory_used_percent:
+          type: number
+          title: Memory Used Percent
+        network_rx_bytes:
+          type: integer
+          title: Network Rx Bytes
+        network_tx_bytes:
+          type: integer
+          title: Network Tx Bytes
+        active_vpn_devices:
+          type: integer
+          title: Active Vpn Devices
+        wireguard_peers:
+          type: integer
+          title: Wireguard Peers
+        node_status:
+          type: string
+          title: Node Status
+      type: object
+      required:
+      - cpu_load_1m
+      - memory_used_percent
+      - network_rx_bytes
+      - network_tx_bytes
+      - active_vpn_devices
+      - wireguard_peers
+      - node_status
+      title: SystemHealthSummary
+    UsageReportRequest:
+      properties:
+        tunnel_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tunnel Name
+        rx_bytes_delta:
+          type: integer
+          title: Rx Bytes Delta
+          default: 0
+        tx_bytes_delta:
+          type: integer
+          title: Tx Bytes Delta
+          default: 0
+      type: object
+      title: UsageReportRequest
+    User:
+      properties:
+        id:
+          type: string
+          title: Id
+        email:
+          type: string
+          title: Email
+        phone:
+          type: string
+          title: Phone
+          default: ''
+        nickname:
+          type: string
+          title: Nickname
+        invite_code:
+          type: string
+          title: Invite Code
+        vip_status:
+          type: string
+          title: Vip Status
+          default: inactive
+        vip_expired_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Vip Expired At
+        cash_balance_cents:
+          type: integer
+          title: Cash Balance Cents
+          default: 0
+        free_traffic_quota_bytes:
+          type: integer
+          title: Free Traffic Quota Bytes
+          default: 0
+        free_traffic_used_bytes:
+          type: integer
+          title: Free Traffic Used Bytes
+          default: 0
+        free_traffic_remaining_bytes:
+          type: integer
+          title: Free Traffic Remaining Bytes
+          default: 0
+      type: object
+      required:
+      - id
+      - email
+      - nickname
+      - invite_code
+      title: User
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    VipPlan:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        duration_days:
+          type: integer
+          title: Duration Days
+        original_price_cents:
+          type: integer
+          title: Original Price Cents
+        sale_price_cents:
+          type: integer
+          title: Sale Price Cents
+      type: object
+      required:
+      - id
+      - name
+      - duration_days
+      - original_price_cents
+      - sale_price_cents
+      title: VipPlan
+    VipStatusResponse:
+      properties:
+        user_id:
+          type: string
+          title: User Id
+        email:
+          type: string
+          title: Email
+        vip_status:
+          type: string
+          title: Vip Status
+        vip_expired_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Vip Expired At
+        free_traffic_quota_bytes:
+          type: integer
+          title: Free Traffic Quota Bytes
+        free_traffic_used_bytes:
+          type: integer
+          title: Free Traffic Used Bytes
+        free_traffic_remaining_bytes:
+          type: integer
+          title: Free Traffic Remaining Bytes
+        entitlement:
+          $ref: '#/components/schemas/Entitlement'
+      type: object
+      required:
+      - user_id
+      - email
+      - vip_status
+      - free_traffic_quota_bytes
+      - free_traffic_used_bytes
+      - free_traffic_remaining_bytes
+      - entitlement
+      title: VipStatusResponse
+    VpnNodeConfig:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        region:
+          type: string
+          title: Region
+          default: 智能线路
+        tunnel_name:
+          type: string
+          title: Tunnel Name
+          default: xingsui
+        config_text:
+          type: string
+          title: Config Text
+        entitlement:
+          $ref: '#/components/schemas/Entitlement'
+      type: object
+      required:
+      - id
+      - name
+      - config_text
+      - entitlement
+      title: VpnNodeConfig
+    Withdrawal:
+      properties:
+        id:
+          type: string
+          title: Id
+        user_id:
+          type: string
+          title: User Id
+        user_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Email
+        amount_cents:
+          type: integer
+          title: Amount Cents
+        account_type:
+          type: string
+          title: Account Type
+        account_masked:
+          type: string
+          title: Account Masked
+        status:
+          $ref: '#/components/schemas/WithdrawalStatus'
+        reviewed_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reviewed By
+        reviewed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Reviewed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - user_id
+      - amount_cents
+      - account_type
+      - account_masked
+      - status
+      - created_at
+      title: Withdrawal
+    WithdrawalStatus:
+      type: string
+      enum:
+      - pending
+      - completed
+      - rejected
+      title: WithdrawalStatus

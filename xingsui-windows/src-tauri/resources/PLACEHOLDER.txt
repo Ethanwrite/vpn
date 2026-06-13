@@ -1,0 +1,6 @@
+放置 wintun.dll（TUN 模式必需）。
+
+下载：https://www.wintun.net/  → 解压取对应架构（amd64）的 wintun.dll
+放置为：resources/wintun.dll
+
+sing-box TUN 模式在 Windows 上依赖此驱动 DLL。

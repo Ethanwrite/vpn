@@ -1,0 +1,12 @@
+放置 sing-box 内核（必须为支持 AmneziaWG 混淆的构建版本）。
+
+要求文件名（Tauri sidecar 命名规则：name-<target-triple>）：
+  sing-box-x86_64-pc-windows-msvc.exe
+
+内核来源（任选其一，需支持 Jc/Jmin/Jmax/S1/S2/H1-H4 字段）：
+  - https://github.com/Leadaxe/sing-box-lx
+  - https://github.com/qr243vbi/sing-box
+说明：主线 SagerNet/sing-box 暂不支持 AmneziaWG 混淆参数，
+      必须使用上述 AmneziaWG-capable 分支构建。
+
+获取目标三元组：rustc -Vv | grep host

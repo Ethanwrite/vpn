@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust / Tauri
+src-tauri/target
+src-tauri/gen
+
+# 二进制内核与驱动（体积大，按需自行放置，勿提交）
+src-tauri/binaries/sing-box*
+src-tauri/resources/wintun.dll
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.DS_Store

@@ -1,0 +1,87 @@
+# 星隧 VPN 控制面（大阪 212.50.232.111 / 2GB RAM）
+# 组件：PostgreSQL 16 + FastAPI 后端 + Caddy(自动 TLS / 反代)
+# 用法：
+#   1) cp .env.example .env 并填好真实值（DATABASE_URL/POSTGRES_PASSWORD/ADMIN_*/SITE_DOMAIN ...）
+#   2) docker compose up -d --build
+# 注意：控制面不承载 VPN 转发，VPN_AUTO_PROVISION 置 false（容器内无 awg 接口）。
+
+name: xingsui-control-plane
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # 2GB 机器调优：限制连接数与内存占用，避免与 API/Caddy 抢内存
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=50"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "work_mem=8MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 768m
+    networks: [internal]
+
+  api:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    image: xingsui-backend:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # 容器内连库用服务名 db；覆盖 .env 里可能写成 localhost 的值
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+    volumes:
+      - /opt/xingsui/download:/opt/xingsui/download:ro,Z
+    mem_limit: 640m
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,Z
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    mem_limit: 128m
+    networks: [internal]
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    driver: bridge

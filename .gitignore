@@ -1,0 +1,37 @@
+# Local secrets and deployment credentials
+.env
+*.env
+*secret*
+*password*
+*.jks
+*.keystore
+
+# Build outputs
+build/
+**/build/
+.gradle/
+.gradle-home/
+node_modules/
+dist/
+target/
+*.apk
+*.aab
+*.idsig
+*.exe
+*.msi
+*.zip
+
+# Local IDE/runtime files
+local.properties
+.DS_Store
+.idea/
+*.iml
+__pycache__/
+.pytest_cache/
+.venv/
+
+# Runtime payment/deployment artifacts
+wechat.jpg
+alipay.jpg
+edge-node-*-output-*.txt
+wg-test/

@@ -1,0 +1,10 @@
+# 构建上下文裁剪：避免把密钥/缓存/测试产物打进镜像
+.env
+.env.*
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+tests/
+README.md
