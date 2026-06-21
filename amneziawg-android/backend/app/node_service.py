@@ -16,7 +16,24 @@ import urllib.error
 import urllib.request
 
 # AmneziaWG 混淆参数下发顺序（client/server 必须一致）。
-AMNEZIA_PARAM_KEYS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
+AMNEZIA_PARAM_KEYS = (
+    "Jc",
+    "Jmin",
+    "Jmax",
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "I5",
+)
 
 
 def internal_api_token() -> str:
@@ -96,6 +113,26 @@ def params_fingerprint(params: dict[str, str]) -> str:
     """对混淆参数生成稳定指纹，用于校验各节点配置一致性。"""
     canonical = json.dumps(params, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def build_vless_config(node: Any) -> dict[str, str] | None:
+    params = parse_node_params(getattr(node, "params_json", "{}"))
+    uuid = params.get("VlessUUID", "").strip()
+    public_key = params.get("VlessPublicKey", "").strip()
+    short_id = params.get("VlessShortId", "").strip()
+    if not uuid or not public_key or not short_id:
+        return None
+    host = params.get("VlessHost", "").strip() or str(getattr(node, "endpoint", "")).rsplit(":", 1)[0]
+    return {
+        "server": host,
+        "server_port": params.get("VlessPort", "8443").strip() or "8443",
+        "uuid": uuid,
+        "flow": params.get("VlessFlow", "xtls-rprx-vision").strip() or "xtls-rprx-vision",
+        "public_key": public_key,
+        "short_id": short_id,
+        "server_name": params.get("VlessServerName", "www.microsoft.com").strip() or "www.microsoft.com",
+        "utls_fingerprint": params.get("VlessFingerprint", "chrome").strip() or "chrome",
+    }
 
 
 def node_status_label(health: Any, now: datetime | None = None, offline_after_seconds: int | None = None) -> str:

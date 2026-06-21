@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "星隧VPN",
-  "version": "1.0.0",
+  "version": "1.0.9",
+  "mainBinaryName": "星隧VPN",
   "identifier": "com.xingsui.vpn.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -40,8 +41,15 @@
     "externalBin": ["binaries/sing-box"],
     "resources": ["resources/wintun.dll"],
     "windows": {
+      "webviewInstallMode": {
+        "type": "skip"
+      },
       "nsis": {
-        "installMode": "perMachine"
+        "installMode": "perMachine",
+        "languages": ["SimpChinese"]
+      },
+      "wix": {
+        "language": "zh-CN"
       }
     }
   },

@@ -19,7 +19,6 @@ export default function ConnectButton({ conn, onClick }: Props) {
   return (
     <button
       onClick={onClick}
-      disabled={connecting}
       className="relative grid h-44 w-44 place-items-center rounded-full outline-none"
       aria-label={LABEL[conn]}
     >
@@ -31,6 +30,8 @@ export default function ConnectButton({ conn, onClick }: Props) {
         className={`absolute inset-0 rounded-full border transition-colors duration-500 ${
           active
             ? "border-brand-glow/60 shadow-glow"
+            : connecting
+            ? "animate-spin border-amber-300/70 border-t-transparent"
             : "border-white/10"
         }`}
       />

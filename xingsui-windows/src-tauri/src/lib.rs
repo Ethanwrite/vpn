@@ -21,10 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // AppData 目录用于存放加密登录态与运行时配置。
-            let app_dir = app
-                .path()
-                .app_data_dir()
-                .expect("无法解析 AppData 目录");
+            let app_dir = app.path().app_data_dir().expect("无法解析 AppData 目录");
             std::fs::create_dir_all(&app_dir).ok();
             app.manage(AppState::new(app_dir));
             Ok(())

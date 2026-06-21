@@ -32,7 +32,7 @@ S1="${AMNEZIA_S1:-86}"; S2="${AMNEZIA_S2:-574}"
 # 约束：S1+56 必须 != S2
 if [[ $((S1 + 56)) -eq $S2 ]]; then S2=$((S2 + 1)); fi
 
-rand_u32() { echo $(( ((RANDOM << 16 | RANDOM) % 2000000000) + 5 )); }
+rand_u32() { echo $(( (RANDOM % 250) + 5 )); }
 gen_distinct_h() {  # 生成 4 个互不相同、且 >4 的大随机数（避免与 WG 标准消息类型冲突）
   local a b c d
   a=$(rand_u32); b=$(rand_u32); c=$(rand_u32); d=$(rand_u32)

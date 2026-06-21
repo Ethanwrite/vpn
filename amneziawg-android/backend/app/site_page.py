@@ -196,6 +196,29 @@ SITE_HTML = """<!doctype html>
     .status.error { color: var(--danger); }
     .status.ok { color: var(--mint-dark); }
     .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .benefits { margin-top: 24px; }
+    .benefit {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      background: rgba(255,255,255,.78);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 10px 28px rgba(57, 104, 122, .07);
+    }
+    .benefit b { display: block; color: var(--blue); margin-bottom: 4px; }
+    .benefit span {
+      flex: 0 0 auto;
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      color: #062430;
+      font-weight: 950;
+      background: linear-gradient(135deg, #18d0ad, #23c2ff);
+    }
     .metric strong { display: block; color: var(--blue); font-size: 22px; margin-top: 6px; overflow-wrap: anywhere; }
     .plan { position: relative; overflow: hidden; }
     .plan.hot { border-color: rgba(255, 159, 28, .44); box-shadow: 0 20px 50px rgba(255,159,28,.12); }
@@ -263,7 +286,7 @@ SITE_HTML = """<!doctype html>
       <div>
         <span class="tag">限时特惠 · 新人专享 · 30MB 免费体验</span>
         <h1>星隧</h1>
-        <p class="lead">为日常网络加速和安全连接打造的轻量 VPN 产品。官网注册、App 登录、会员状态自动同步，新用户自带 30MB 体验流量，打开 App 即可一键连接。</p>
+        <p class="lead">为日常上网、学习和办公打造的高速稳定 VPN。价格实惠，连接简单，打开 App 一键开始，Windows 和 Android 都能使用。</p>
         <div class="priceLine">
           <span class="now" id="homeNow">18 元/月</span>
           <span class="old" id="homeOld">原价 28.8 元</span>
@@ -271,8 +294,15 @@ SITE_HTML = """<!doctype html>
         </div>
         <div class="heroActions">
           <a class="primary" href="/register" data-route="register">立即注册</a>
-          <a class="secondary" href="/download" data-route="download">下载 Android APK</a>
+          <a class="secondary" href="/download/windows">下载 Windows 版</a>
+          <a class="secondary" href="/download/android">下载 Android APK</a>
           <a class="secondary" href="/vip" data-route="vip">查看套餐</a>
+        </div>
+        <div class="grid two benefits">
+          <div class="benefit"><span>快</span><p><b>速度更快</b>智能选择更合适的线路，网页、视频和常用应用打开更顺畅。</p></div>
+          <div class="benefit"><span>稳</span><p><b>连接稳定</b>日常使用不断线，适合长时间学习、办公和娱乐。</p></div>
+          <div class="benefit"><span>省</span><p><b>价格实惠</b>月度套餐低门槛，新用户可先体验再开通。</p></div>
+          <div class="benefit"><span>简</span><p><b>操作简单</b>官网注册，App 登录，一键连接，新手也能快速上手。</p></div>
         </div>
       </div>
       <div class="heroPanel" aria-label="App 界面预览">
@@ -406,17 +436,17 @@ SITE_HTML = """<!doctype html>
       <div class="sectionHead">
         <div>
           <h2>App 下载</h2>
-          <p>安装后使用官网账号登录，会员状态实时同步。</p>
+          <p>选择适合你的设备安装。使用官网账号登录后，会员状态会自动同步。</p>
         </div>
         <div class="actions">
-          <a class="primary" href="/download/android">下载 Android APK</a>
-          <a class="secondary" href="/download/windows">下载 Windows 版</a>
+          <a class="primary" href="/download/windows">下载 Windows 版</a>
+          <a class="secondary" href="/download/android">下载 Android APK</a>
         </div>
       </div>
       <div class="grid three">
-        <div class="panel"><h3>统一账号</h3><p>官网注册后，App 直接用邮箱和密码登录。</p></div>
-        <div class="panel"><h3>会员同步</h3><p>订单完成后，App 首页会刷新 VIP 状态。</p></div>
-        <div class="panel"><h3>连接入口</h3><p>App 首页有明显连接按钮，非 VIP 会引导开通。</p></div>
+        <div class="panel"><h3>高速体验</h3><p>常用网站、视频和应用访问更顺畅，减少等待时间。</p></div>
+        <div class="panel"><h3>稳定连接</h3><p>适合日常长时间使用，连接状态清晰可见。</p></div>
+        <div class="panel"><h3>实惠套餐</h3><p>新人可先体验，月度套餐价格友好，开通后立即同步。</p></div>
       </div>
     </section>
 
@@ -438,7 +468,7 @@ SITE_HTML = """<!doctype html>
   </main>
 
   <footer>
-    <div class="shell">星隧 · 安全高速网络通道 · 官网账号与 App 会员状态同步</div>
+    <div class="shell">星隧 · 高速稳定 · 价格实惠 · 一键连接</div>
   </footer>
 
   <script>

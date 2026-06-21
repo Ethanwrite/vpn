@@ -47,7 +47,7 @@ export default function Home({ onProfile }: Props) {
   );
 
   const onConnectToggle = async () => {
-    if (conn === "connected") {
+    if (conn === "connected" || conn === "connecting") {
       try {
         await api.disconnect();
       } catch (e) {

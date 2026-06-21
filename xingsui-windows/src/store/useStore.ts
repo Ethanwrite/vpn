@@ -47,7 +47,7 @@ export const useStore = create<AppStore>((set) => ({
   selectedNodeId: null,
   conn: "disconnected",
   connNodeName: null,
-  mode: "tun",
+  mode: "systemproxy",
   stats: emptyStats,
   toasts: [],
 

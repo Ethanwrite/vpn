@@ -355,6 +355,7 @@ class VpnNodeConfig(BaseModel):
     region: str = "智能线路"
     tunnel_name: str = "xingsui"
     config_text: str
+    vless_config: dict[str, str] | None = None
     entitlement: Entitlement
 
 
@@ -1709,6 +1710,7 @@ def get_vpn_config(
                 region=pool_node.region,
                 tunnel_name=device.tunnel_name,
                 config_text=device.config_text,
+                vless_config=node_service.build_vless_config(pool_node),
                 entitlement=entitlement,
             )
 
@@ -1730,12 +1732,14 @@ def get_vpn_config(
         revoke_vpn_devices(db, user)
 
     device = get_or_create_vpn_device(db, user)
+    node = db.get(VpnNodeRow, device.node_id) if device.node_id else None
     return VpnNodeConfig(
         id=device.node_id,
         name=os.getenv("VPN_NODE_NAME", "星隧智能节点"),
         region=os.getenv("VPN_NODE_REGION", "智能线路"),
         tunnel_name=device.tunnel_name,
         config_text=device.config_text,
+        vless_config=node_service.build_vless_config(node) if node is not None else None,
         entitlement=entitlement,
     )
 
@@ -2327,6 +2331,7 @@ def get_vpn_node_config(
         region=node.region,
         tunnel_name=device.tunnel_name,
         config_text=device.config_text,
+        vless_config=node_service.build_vless_config(node),
         entitlement=entitlement,
     )
 

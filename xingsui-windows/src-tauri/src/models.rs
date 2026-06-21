@@ -65,6 +65,40 @@ pub struct VpnNodeConfig {
     #[serde(default)]
     pub tunnel_name: String,
     pub config_text: String,
+    #[serde(default)]
+    pub vless_config: Option<VlessConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VlessConfig {
+    pub server: String,
+    #[serde(default = "default_vless_port")]
+    pub server_port: String,
+    pub uuid: String,
+    #[serde(default = "default_vless_flow")]
+    pub flow: String,
+    pub public_key: String,
+    pub short_id: String,
+    #[serde(default = "default_vless_server_name")]
+    pub server_name: String,
+    #[serde(default = "default_vless_fingerprint")]
+    pub utls_fingerprint: String,
+}
+
+fn default_vless_port() -> String {
+    "8443".to_string()
+}
+
+fn default_vless_flow() -> String {
+    "xtls-rprx-vision".to_string()
+}
+
+fn default_vless_server_name() -> String {
+    "www.microsoft.com".to_string()
+}
+
+fn default_vless_fingerprint() -> String {
+    "chrome".to_string()
 }
 
 /// 网络接管模式。

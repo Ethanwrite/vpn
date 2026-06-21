@@ -99,6 +99,10 @@ pub async fn connect(app: AppHandle, node_id: String, mode: NetMode) -> AppResul
         }
     };
 
+    if let Some(vless_cfg) = config.vless_config {
+        return core::start_vless(&app, vless_cfg, mode, config.id, config.name);
+    }
+
     let awg_cfg = match awg::parse(&config.config_text) {
         Ok(c) => c,
         Err(e) => {
