@@ -127,7 +127,7 @@ def build_vless_config(node: Any) -> dict[str, str] | None:
         "server": host,
         "server_port": params.get("VlessPort", "8443").strip() or "8443",
         "uuid": uuid,
-        "flow": params.get("VlessFlow", "xtls-rprx-vision").strip() or "xtls-rprx-vision",
+        "flow": params.get("VlessFlow", "").strip(),
         "public_key": public_key,
         "short_id": short_id,
         "server_name": params.get("VlessServerName", "www.microsoft.com").strip() or "www.microsoft.com",

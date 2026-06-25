@@ -5143,7 +5143,7 @@ dependencies = [
 
 [[package]]
 name = "xingsui-windows"
-version = "1.0.9"
+version = "1.0.13"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

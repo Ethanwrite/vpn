@@ -1,4 +1,4 @@
-// 与 Rust 后端模型严格对齐的前端类型。
+// Frontend types aligned with Rust backend models.
 
 export interface User {
   id: string;
@@ -23,7 +23,7 @@ export interface VpnNodeSummary {
   locked: boolean;
 }
 
-export type NetMode = "tun" | "systemproxy";
+export type NetMode = "global" | "rule" | "systemproxy";
 
 export type ConnState = "disconnected" | "connecting" | "connected";
 

@@ -5,6 +5,15 @@ use serde_json::{json, Map, Value};
 
 const OUT_TAG: &str = "proxy-out";
 const TUN_IFACE: &str = "xingsui-tun";
+const PRIVATE_CIDRS: &[&str] = &[
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "224.0.0.0/4",
+];
+const DIRECT_DOMAIN_SUFFIXES: &[&str] = &["cn", "local", "localhost", "lan"];
 
 pub fn build(cfg: &AwgConfig, mode: NetMode, proxy_port: u16, clash_port: u16) -> AppResult<Value> {
     let (host, port) = cfg.endpoint_host_port()?;
@@ -40,13 +49,15 @@ pub fn build(cfg: &AwgConfig, mode: NetMode, proxy_port: u16, clash_port: u16) -
     };
 
     Ok(base_config(
-        build_inbounds(mode, mtu, proxy_port),
+        build_inbounds(mode, mtu, proxy_port, Some(&host)),
         json!([]),
         json!([{"type": "direct", "tag": "direct"}]),
         Some(json!([Value::Object(endpoint)])),
         dns_first(&dns),
+        mode,
         clash_port,
-        mode == NetMode::Tun,
+        mode.is_tun(),
+        Some(host),
     ))
 }
 
@@ -57,13 +68,12 @@ pub fn build_vless(
     clash_port: u16,
 ) -> AppResult<Value> {
     let server_port = cfg.server_port.trim().parse::<u16>().unwrap_or(8443);
-    let outbound = json!({
+    let mut outbound = json!({
         "type": "vless",
         "tag": OUT_TAG,
         "server": cfg.server,
         "server_port": server_port,
         "uuid": cfg.uuid,
-        "flow": cfg.flow,
         "packet_encoding": "xudp",
         "tls": {
             "enabled": true,
@@ -79,15 +89,20 @@ pub fn build_vless(
             }
         }
     });
+    if !cfg.flow.trim().is_empty() {
+        outbound["flow"] = json!(cfg.flow.trim());
+    }
 
     Ok(base_config(
-        build_inbounds(mode, 1280, proxy_port),
+        build_inbounds(mode, 1280, proxy_port, Some(&cfg.server)),
         json!([outbound]),
         json!([{ "type": "direct", "tag": "direct" }]),
         None,
         "1.1.1.1",
+        mode,
         clash_port,
-        mode == NetMode::Tun,
+        mode.is_tun(),
+        Some(cfg.server.clone()),
     ))
 }
 
@@ -97,8 +112,10 @@ fn base_config(
     fallback_outbounds: Value,
     endpoints: Option<Value>,
     dns_server: impl Into<String>,
+    mode: NetMode,
     clash_port: u16,
     block_udp_443: bool,
+    bypass_host: Option<String>,
 ) -> Value {
     let mut outbounds = Vec::new();
     if let Value::Array(items) = primary_outbounds {
@@ -110,33 +127,44 @@ fn base_config(
 
     let mut root = Map::new();
     root.insert("log".into(), json!({ "level": "warn", "timestamp": true }));
-    root.insert(
-        "dns".into(),
-        json!({
-            "servers": [
-                { "type": "tcp", "tag": "remote", "server": dns_server.into() },
-                { "type": "udp", "tag": "local", "server": "223.5.5.5" }
-            ],
-            "strategy": "prefer_ipv4"
-        }),
-    );
+    root.insert("dns".into(), build_dns(dns_server.into()));
     root.insert("inbounds".into(), inbounds);
     if let Some(endpoints) = endpoints {
         root.insert("endpoints".into(), endpoints);
     }
     root.insert("outbounds".into(), Value::Array(outbounds));
+
     let mut rules = vec![json!({ "action": "sniff" })];
+    rules.push(json!({ "protocol": "dns", "action": "hijack-dns" }));
+    if let Some(host) = bypass_host.filter(|host| is_ipv4(host)) {
+        rules.push(json!({
+            "ip_cidr": [format!("{host}/32")],
+            "action": "route",
+            "outbound": "direct"
+        }));
+    }
+    rules.push(json!({
+        "ip_cidr": PRIVATE_CIDRS,
+        "action": "route",
+        "outbound": "direct"
+    }));
+    if mode == NetMode::Rule {
+        rules.push(json!({
+            "domain_suffix": DIRECT_DOMAIN_SUFFIXES,
+            "action": "route",
+            "outbound": "direct"
+        }));
+    }
     if block_udp_443 {
         rules.push(json!({ "network": "udp", "port": 443, "action": "reject" }));
     }
-    rules.push(json!({ "protocol": "dns", "action": "hijack-dns" }));
 
     root.insert(
         "route".into(),
         json!({
             "auto_detect_interface": true,
             "default_domain_resolver": {
-                "server": "local",
+                "server": if mode == NetMode::Global { "remote" } else { "local" },
                 "strategy": "prefer_ipv4"
             },
             "final": OUT_TAG,
@@ -152,6 +180,25 @@ fn base_config(
         }),
     );
     Value::Object(root)
+}
+
+fn build_dns(remote_server: String) -> Value {
+    json!({
+        "servers": [
+            {
+                "type": "tcp",
+                "tag": "remote",
+                "server": remote_server,
+                "detour": OUT_TAG
+            },
+            {
+                "type": "udp",
+                "tag": "local",
+                "server": "223.5.5.5"
+            }
+        ],
+        "strategy": "prefer_ipv4"
+    })
 }
 
 fn awg_fields(cfg: &AwgConfig) -> Vec<(&'static str, Value)> {
@@ -244,18 +291,29 @@ fn dns_first(dns: &[String]) -> String {
     dns.first().cloned().unwrap_or_else(|| "1.1.1.1".into())
 }
 
-fn build_inbounds(mode: NetMode, mtu: u32, proxy_port: u16) -> Value {
+fn build_inbounds(mode: NetMode, mtu: u32, proxy_port: u16, bypass_host: Option<&str>) -> Value {
     match mode {
-        NetMode::Tun => json!([{
-            "type": "tun",
-            "tag": "tun-in",
-            "interface_name": TUN_IFACE,
-            "address": ["172.19.0.1/30"],
-            "mtu": mtu,
-            "auto_route": true,
-            "strict_route": true,
-            "stack": "gvisor"
-        }]),
+        NetMode::Global | NetMode::Rule => {
+            let mut route_exclude_address = PRIVATE_CIDRS
+                .iter()
+                .map(|cidr| json!(cidr))
+                .collect::<Vec<_>>();
+            if let Some(host) = bypass_host.filter(|host| is_ipv4(host)) {
+                route_exclude_address.push(json!(format!("{host}/32")));
+            }
+            json!([{
+                "type": "tun",
+                "tag": "tun-in",
+                "interface_name": TUN_IFACE,
+                "address": ["172.19.0.1/30"],
+                "mtu": mtu,
+                "auto_route": true,
+                "strict_route": false,
+                "route_address": ["0.0.0.0/1", "128.0.0.0/1"],
+                "route_exclude_address": route_exclude_address,
+                "stack": "gvisor"
+            }])
+        }
         NetMode::SystemProxy => json!([{
             "type": "mixed",
             "tag": "mixed-in",
@@ -263,4 +321,8 @@ fn build_inbounds(mode: NetMode, mtu: u32, proxy_port: u16) -> Value {
             "listen_port": proxy_port
         }]),
     }
+}
+
+fn is_ipv4(host: &str) -> bool {
+    host.parse::<std::net::Ipv4Addr>().is_ok()
 }

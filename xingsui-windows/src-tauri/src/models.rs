@@ -75,7 +75,7 @@ pub struct VlessConfig {
     #[serde(default = "default_vless_port")]
     pub server_port: String,
     pub uuid: String,
-    #[serde(default = "default_vless_flow")]
+    #[serde(default)]
     pub flow: String,
     pub public_key: String,
     pub short_id: String,
@@ -87,10 +87,6 @@ pub struct VlessConfig {
 
 fn default_vless_port() -> String {
     "8443".to_string()
-}
-
-fn default_vless_flow() -> String {
-    "xtls-rprx-vision".to_string()
 }
 
 fn default_vless_server_name() -> String {
@@ -105,15 +101,24 @@ fn default_vless_fingerprint() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NetMode {
-    /// TUN 全局接管（wintun）
-    Tun,
-    /// 系统代理（注册表）
+    /// TUN 全局接管。
+    #[serde(alias = "tun")]
+    Global,
+    /// TUN 规则接管。
+    Rule,
+    /// 系统代理。
     SystemProxy,
 }
 
 impl Default for NetMode {
     fn default() -> Self {
-        NetMode::Tun
+        NetMode::Global
+    }
+}
+
+impl NetMode {
+    pub fn is_tun(self) -> bool {
+        matches!(self, NetMode::Global | NetMode::Rule)
     }
 }
 

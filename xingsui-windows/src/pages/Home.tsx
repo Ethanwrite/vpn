@@ -1,5 +1,3 @@
-// 主页：节点选择 + 连接按钮 + 实时统计 + 模式切换。
-
 import { useEffect, useMemo, useState } from "react";
 import ConnectButton from "../components/ConnectButton";
 import StatsBar from "../components/StatsBar";
@@ -25,7 +23,6 @@ export default function Home({ onProfile }: Props) {
   const pushToast = useStore((s) => s.pushToast);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  // 首次进入拉取节点列表。
   useEffect(() => {
     (async () => {
       try {
@@ -55,11 +52,13 @@ export default function Home({ onProfile }: Props) {
       }
       return;
     }
+
     if (!selectedNodeId) {
       pushToast("error", "请先选择线路");
       setPickerOpen(true);
       return;
     }
+
     try {
       await api.connect(selectedNodeId, mode);
     } catch (e) {
@@ -85,7 +84,6 @@ export default function Home({ onProfile }: Props) {
 
   return (
     <div className="relative flex h-full flex-col px-6 pb-6">
-      {/* 顶部：用户入口 + 模式切换 */}
       <div className="flex items-center justify-between py-2">
         <button
           onClick={onProfile}
@@ -100,7 +98,8 @@ export default function Home({ onProfile }: Props) {
         </button>
         <div className="flex rounded-lg bg-white/5 p-0.5 text-xs">
           {([
-            ["tun", "全局"],
+            ["global", "全局"],
+            ["rule", "规则"],
             ["systemproxy", "代理"],
           ] as const).map(([m, label]) => (
             <button
@@ -116,7 +115,6 @@ export default function Home({ onProfile }: Props) {
         </div>
       </div>
 
-      {/* 中部：连接按钮 */}
       <div className="flex flex-1 flex-col items-center justify-center gap-6">
         <ConnectButton conn={conn} onClick={onConnectToggle} />
         <div className="text-center text-sm text-white/60">
@@ -126,7 +124,6 @@ export default function Home({ onProfile }: Props) {
         </div>
       </div>
 
-      {/* 底部：当前线路 + 统计 */}
       <div className="space-y-3">
         <button
           onClick={() => setPickerOpen(true)}

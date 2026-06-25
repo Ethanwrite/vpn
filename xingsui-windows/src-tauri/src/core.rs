@@ -64,7 +64,7 @@ fn start_with_config(
         config_path.display()
     )?;
 
-    if mode == NetMode::Tun {
+    if mode.is_tun() {
         copy_wintun(app, &config_dir)?;
     }
 
@@ -231,7 +231,7 @@ fn singbox_exit_message(output: &str) -> String {
         .trim();
 
     if important.contains("Access is denied") {
-        "全局模式需要管理员权限，请右键以管理员身份运行，或切换到代理模式。".into()
+        "全局/TUN 模式创建虚拟网卡被 Windows 拒绝。请安装新版后从开始菜单正常启动，若仍失败请卸载残留虚拟网卡或暂用代理模式。".into()
     } else {
         format!("连接已断开：{important}")
     }
@@ -271,7 +271,7 @@ fn spawn_connectivity_check(app: AppHandle, generation: u64, proxy_port: u16) {
         let _ = stop(&app);
         emit_status(
             &app,
-            Some("连接失败：内核已启动，但代理流量没有打通，请更换节点或稍后重试。".into()),
+            Some("连接失败：内核已启动，但网络连通性检查未通过，请切换线路或稍后重试。".into()),
         );
     });
 }
