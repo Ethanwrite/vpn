@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from app.db_models import UserRow
+from app.db_models import UserRow, VpnNodeRow
 from app.main import (
     FREE_TRAFFIC_QUOTA_BYTES,
     admin_password_valid,
@@ -12,6 +12,7 @@ from app.main import (
     free_traffic_remaining,
     is_online,
     to_admin_user,
+    to_vpn_node_summary,
 )
 
 
@@ -78,6 +79,27 @@ def test_vpn_entitlement_allows_free_trial_and_vip() -> None:
     entitlement = build_vpn_entitlement(user)
     assert entitlement.allowed
     assert entitlement.reason == "vip_active"
+
+
+def test_node_summary_locks_when_free_trial_exhausted() -> None:
+    node = VpnNodeRow(
+        id="node-free",
+        name="Free Node",
+        region="Japan",
+        endpoint="203.0.113.10:443",
+        agent_host="203.0.113.10",
+        server_public_key="SRVPUB",
+    )
+
+    summary = to_vpn_node_summary(
+        node,
+        health=None,
+        vip=False,
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+        entitlement_allowed=False,
+    )
+
+    assert summary.locked
 
 
 def test_admin_user_summary_prefers_email_and_online_window() -> None:

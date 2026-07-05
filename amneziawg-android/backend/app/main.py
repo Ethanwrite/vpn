@@ -1030,17 +1030,23 @@ def agent_add_node_peer(node: VpnNodeRow, public_key: str, client_ip: str) -> No
         raise HTTPException(status_code=503, detail=f"Node agent unreachable: {exc}") from exc
 
 
-def to_vpn_node_summary(node: VpnNodeRow, health: VpnNodeHealthRow | None, vip: bool, now: datetime) -> VpnNodeSummary:
+def to_vpn_node_summary(
+    node: VpnNodeRow,
+    health: VpnNodeHealthRow | None,
+    vip: bool,
+    now: datetime,
+    entitlement_allowed: bool = True,
+) -> VpnNodeSummary:
     peer_count = int(getattr(health, "peer_count", 0) or 0) if health is not None else 0
-    load_percent = int(round(node_service.node_load_ratio(peer_count, node.max_clients) * 100))
+    load_percent = int(round(node_service.node_load_ratio(peer_count, int(node.max_clients or 0)) * 100))
     return VpnNodeSummary(
         id=node.id,
         name=node.name,
         region=node.region,
-        vip_only=node.vip_only,
+        vip_only=bool(node.vip_only),
         status=node_service.node_status_label(health, now),
         load_percent=load_percent,
-        locked=node.vip_only and not vip,
+        locked=(not entitlement_allowed) or (bool(node.vip_only) and not vip),
     )
 
 
@@ -2297,13 +2303,20 @@ def list_vpn_nodes(
     db: Session = Depends(get_db),
 ) -> list[VpnNodeSummary]:
     user = get_current_user(db, authorization)
+    if ensure_free_traffic_quota(user):
+        db.commit()
+        db.refresh(user)
+    entitlement = build_vpn_entitlement(user)
     vip = user_is_vip(user)
     now = datetime.now(UTC)
     health = node_health_map(db)
     nodes = db.scalars(
         select(VpnNodeRow).where(VpnNodeRow.enabled.is_(True)).order_by(VpnNodeRow.weight.desc())
     ).all()
-    return [to_vpn_node_summary(node, health.get(node.id), vip, now) for node in nodes]
+    return [
+        to_vpn_node_summary(node, health.get(node.id), vip, now, entitlement.allowed)
+        for node in nodes
+    ]
 
 
 @app.get("/vpn/nodes/{node_id}/config", response_model=VpnNodeConfig)

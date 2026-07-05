@@ -67,6 +67,23 @@ pub struct VpnNodeConfig {
     pub config_text: String,
     #[serde(default)]
     pub vless_config: Option<VlessConfig>,
+    pub entitlement: Entitlement,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Entitlement {
+    pub allowed: bool,
+    pub reason: String,
+    #[serde(default = "default_inactive")]
+    pub vip_status: String,
+    #[serde(default)]
+    pub vip_expired_at: Option<String>,
+    #[serde(default)]
+    pub free_traffic_quota_bytes: i64,
+    #[serde(default)]
+    pub free_traffic_used_bytes: i64,
+    #[serde(default)]
+    pub free_traffic_remaining_bytes: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

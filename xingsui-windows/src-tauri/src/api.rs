@@ -2,13 +2,13 @@
 //! 多域名按序回退；严禁硬编码节点信息，节点全部通过 API 动态获取。
 
 use crate::error::{AppError, AppResult};
-use crate::models::{AuthResponse, User, VpnNodeConfig, VpnNodeSummary};
+use crate::models::{AuthResponse, Entitlement, User, VpnNodeConfig, VpnNodeSummary};
 use reqwest::{Client, Method};
 use serde_json::json;
 use std::time::Duration;
 
 const VERSION_CODE: &str = "1";
-const VERSION_NAME: &str = "1.0.0";
+const VERSION_NAME: &str = "1.0.14";
 
 /// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退。
 pub const BASE_URLS: &[&str] = &[
@@ -121,6 +121,24 @@ impl ApiClient {
     pub async fn get_node_config(&self, token: &str, node_id: &str) -> AppResult<VpnNodeConfig> {
         let path = format!("/vpn/nodes/{node_id}/config");
         let text = self.request(Method::GET, &path, Some(token), None).await?;
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    pub async fn report_usage(
+        &self,
+        token: &str,
+        tunnel_name: Option<&str>,
+        rx_bytes_delta: u64,
+        tx_bytes_delta: u64,
+    ) -> AppResult<Entitlement> {
+        let body = json!({
+            "tunnel_name": tunnel_name,
+            "rx_bytes_delta": rx_bytes_delta,
+            "tx_bytes_delta": tx_bytes_delta,
+        });
+        let text = self
+            .request(Method::POST, "/usage/report", Some(token), Some(body))
+            .await?;
         Ok(serde_json::from_str(&text)?)
     }
 }
