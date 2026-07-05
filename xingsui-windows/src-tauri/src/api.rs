@@ -8,7 +8,7 @@ use serde_json::json;
 use std::time::Duration;
 
 const VERSION_CODE: &str = "1";
-const VERSION_NAME: &str = "1.0.14";
+const VERSION_NAME: &str = "1.0.15";
 
 /// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退。
 pub const BASE_URLS: &[&str] = &[
@@ -66,10 +66,7 @@ impl ApiClient {
                     }
                     // 4xx 客户端错误无需切换域名，直接返回。
                     if status.is_client_error() {
-                        return Err(AppError::Api {
-                            status: status.as_u16(),
-                            message: extract_detail(&text),
-                        });
+                        return Err(AppError::other(user_facing_detail(&extract_detail(&text))));
                     }
                     last_err = Some(AppError::Api {
                         status: status.as_u16(),
@@ -155,4 +152,18 @@ fn extract_detail(text: &str) -> String {
                 text.chars().take(200).collect()
             }
         })
+}
+
+fn user_facing_detail(detail: &str) -> String {
+    if detail.starts_with("Node agent unreachable") {
+        return "当前线路暂不可用，请切换其他线路。".into();
+    }
+    match detail {
+        "free_traffic_exhausted" => "30MB 免费体验流量已用完，请开通 VIP 后继续使用。".into(),
+        "vip_expired" => "VIP 已过期，请续费后继续使用。".into(),
+        "vip_required" => "该线路为 VIP 专属线路，请开通 VIP 后使用。".into(),
+        "node_disabled" => "当前线路维护中，请切换其他线路。".into(),
+        "VPN node is not configured" => "当前线路暂不可用，请稍后重试或联系客服。".into(),
+        _ => detail.to_string(),
+    }
 }

@@ -843,8 +843,6 @@ def remove_wireguard_peer(public_key: str) -> None:
 
 
 def revoke_vpn_devices(db: Session, user: UserRow) -> None:
-    if not env_flag("VPN_AUTO_PROVISION", False):
-        return
     rows = db.scalars(
         select(VpnDeviceRow)
         .where(VpnDeviceRow.user_id == user.id)
@@ -852,10 +850,18 @@ def revoke_vpn_devices(db: Session, user: UserRow) -> None:
     ).all()
     changed = False
     for row in rows:
-        try:
-            remove_wireguard_peer(row.client_public_key)
-        except HTTPException:
-            pass
+        if row.node_id:
+            node = db.get(VpnNodeRow, row.node_id)
+            if node is not None:
+                try:
+                    node_service.agent_remove_peer(node, row.client_public_key)
+                except Exception:
+                    pass
+        else:
+            try:
+                remove_wireguard_peer(row.client_public_key)
+            except HTTPException:
+                pass
         row.status = "revoked"
         changed = True
     if changed:
