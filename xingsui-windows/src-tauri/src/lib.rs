@@ -33,6 +33,7 @@ pub fn run() {
             commands::get_me,
             commands::logout,
             commands::list_nodes,
+            commands::measure_latency,
             commands::connect,
             commands::disconnect,
             commands::switch_mode,

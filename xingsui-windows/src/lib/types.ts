@@ -21,6 +21,9 @@ export interface VpnNodeSummary {
   status: string;
   load_percent: number;
   locked: boolean;
+  probe_host?: string | null;
+  probe_port?: number | null;
+  latency_ms?: number | null;
 }
 
 export type NetMode = "global" | "rule" | "systemproxy";

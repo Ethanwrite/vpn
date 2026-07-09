@@ -62,7 +62,11 @@ export default function NodeList({ open, nodes, selectedId, onPick, onClose }: P
                   </div>
                   <div className="mt-0.5 text-[11px] text-white/40">{n.region}</div>
                 </div>
-                <span className="font-mono text-[11px] text-white/50">{n.load_percent}%</span>
+                <span className="font-mono text-[11px] text-white/50">
+                  {typeof n.latency_ms === "number" && n.latency_ms < 9999
+                    ? `${n.latency_ms}ms`
+                    : `${n.load_percent}%`}
+                </span>
               </button>
             );
           })}

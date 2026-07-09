@@ -2,23 +2,25 @@ from collections.abc import Generator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+import base64
 import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import secrets
 import subprocess
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +33,7 @@ from app.db_models import (
     OrderRow,
     PaymentSettingRow,
     PromotionActivityRow,
+    SubscriptionAuditLogRow,
     UserRow,
     VipPlanRow,
     VpnDeviceRow,
@@ -40,12 +43,15 @@ from app.db_models import (
 )
 from app.site_page import SITE_HTML
 
+logger = logging.getLogger("xingsui.subscription")
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_database()
     seed_database()
-    restore_active_vpn_peers()
+    if env_flag("RESTORE_ACTIVE_PEERS_ON_START", False):
+        restore_active_vpn_peers()
     yield
 
 
@@ -62,11 +68,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class SubscriptionApiException(Exception):
+    def __init__(self, status_code: int, code: str, message: str):
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+
+@app.exception_handler(SubscriptionApiException)
+async def subscription_api_exception_handler(_: Request, exc: SubscriptionApiException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "code": exc.code, "message": exc.message},
+    )
+
 ADMIN_SESSION_COOKIE = "xingsui_admin_session"
 ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 8
 APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "13"))
 APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.3")
 MIN_SUPPORTED_APP_VERSION_CODE = int(os.getenv("MIN_SUPPORTED_APP_VERSION_CODE", "13"))
+MAX_ACTIVE_AUTH_SESSIONS = int(os.getenv("MAX_ACTIVE_AUTH_SESSIONS", "2"))
 
 
 def admin_password() -> str:
@@ -349,6 +371,14 @@ class VipStatusResponse(BaseModel):
     entitlement: Entitlement
 
 
+class SubscriptionLinkResponse(BaseModel):
+    success: bool = True
+    subscription_url: str
+    masked_token: str
+    expires_at: datetime
+    plan: str
+
+
 class VpnNodeConfig(BaseModel):
     id: str
     name: str
@@ -367,6 +397,13 @@ class VpnNodeSummary(BaseModel):
     status: str
     load_percent: int
     locked: bool
+    probe_host: str | None = None
+    probe_port: int | None = None
+
+
+VLESS_OSAKA_NODE_ID = "vless-osaka"
+VLESS_OSAKA_NODE_NAME = "大阪 CN2 优化线路"
+VLESS_OSAKA_NODE_REGION = "日本大阪"
 
 
 class NodeHeartbeatRequest(BaseModel):
@@ -456,6 +493,8 @@ class AdminUserSummary(BaseModel):
     last_login_at: datetime | None = None
     last_seen_at: datetime | None = None
     online: bool
+    invited_count: int = 0
+    paid_invite_count: int = 0
 
 
 class SystemHealthSummary(BaseModel):
@@ -481,6 +520,11 @@ FREE_TRAFFIC_QUOTA_BYTES = 30 * 1024 * 1024
 ONLINE_WINDOW_SECONDS = 5 * 60
 EXPIRING_SOON_DAYS = 7
 SEEN_TOUCH_MIN_INTERVAL_SECONDS = 60
+SUBSCRIPTION_EXPORT_LIMIT_COUNT = 5
+SUBSCRIPTION_EXPORT_LIMIT_SECONDS = 60
+SUBSCRIPTION_RESET_LIMIT_COUNT = 1
+SUBSCRIPTION_RESET_LIMIT_SECONDS = 10 * 60
+SUBSCRIPTION_RATE_LIMITS: dict[tuple[str, str], list[datetime]] = {}
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -522,11 +566,435 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def subscription_token_secret() -> str:
+    return os.getenv("SUBSCRIPTION_TOKEN_SECRET", admin_session_secret())
+
+
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def make_subscription_token(user_id: str, version: int) -> str:
+    payload = f"{user_id}:{version}"
+    signature = hmac.new(
+        subscription_token_secret().encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return f"{b64url(payload.encode('utf-8'))}.{b64url(signature)}"
+
+
+def mask_token(token: str) -> str:
+    if len(token) <= 12:
+        return "****"
+    return f"{token[:4]}****{token[-4:]}"
+
+
+def subscription_public_base_url(request: Request) -> str:
+    configured = os.getenv("SUBSCRIPTION_PUBLIC_BASE_URL") or os.getenv("SITE_BASE_URL")
+    if configured:
+        return configured.rstrip("/")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    if host:
+        return f"{proto}://{host}".rstrip("/")
+    return "https://xingsuico.com"
+
+
+def subscription_url_for_token(request: Request, token: str) -> str:
+    return f"{subscription_public_base_url(request)}/api/sub?token={token}"
+
+
+def client_ip(request: Request) -> str:
+    if env_flag("TRUST_PROXY_HEADERS", True):
+        real_ip = (request.headers.get("x-real-ip") or "").strip()
+        if real_ip:
+            return real_ip[:64]
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip()
+        if forwarded:
+            return forwarded[:64]
+    return (request.client.host if request.client else "")[:64]
+
+
+def enforce_subscription_rate_limit(user_id: str, action: str, limit: int, window_seconds: int) -> None:
+    now = datetime.now(UTC)
+    key = (user_id, action)
+    window_start = now - timedelta(seconds=window_seconds)
+    recent = [stamp for stamp in SUBSCRIPTION_RATE_LIMITS.get(key, []) if stamp >= window_start]
+    if len(recent) >= limit:
+        SUBSCRIPTION_RATE_LIMITS[key] = recent
+        raise SubscriptionApiException(429, "RATE_LIMITED", "请求过于频繁，请稍后再试。")
+    recent.append(now)
+    SUBSCRIPTION_RATE_LIMITS[key] = recent
+
+
+def require_subscription_user(db: Session, authorization: str | None) -> UserRow:
+    try:
+        user = get_current_user(db, authorization)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            raise SubscriptionApiException(401, "UNAUTHORIZED", "请先登录后查看订阅链接。") from exc
+        raise
+    return user
+
+
+def require_active_subscription_vip(user: UserRow) -> None:
+    if user.status != "active":
+        raise SubscriptionApiException(403, "ACCOUNT_FROZEN", "账号状态异常，请联系客服。")
+    vip_status = effective_vip_status(user.vip_status, user.vip_expired_at)
+    if vip_status == "expired":
+        raise SubscriptionApiException(403, "VIP_EXPIRED", "VIP 已过期，请续费后继续使用。")
+    if vip_status != "active" or user.vip_expired_at is None:
+        raise SubscriptionApiException(403, "VIP_REQUIRED", "开通 VIP 后即可导出订阅链接。")
+
+
+def ensure_subscription_token(db: Session, user: UserRow) -> str:
+    if not user.subscription_token_version:
+        user.subscription_token_version = 1
+    token = make_subscription_token(user.id, int(user.subscription_token_version))
+    token_hash = hash_token(token)
+    if user.subscription_token_hash != token_hash:
+        user.subscription_token_hash = token_hash
+        user.subscription_token_masked = mask_token(token)
+        user.subscription_token_created_at = datetime.now(UTC)
+        db.flush()
+    return token
+
+
+def reset_subscription_token(db: Session, user: UserRow) -> str:
+    user.subscription_token_version = int(user.subscription_token_version or 0) + 1
+    token = make_subscription_token(user.id, user.subscription_token_version)
+    user.subscription_token_hash = hash_token(token)
+    user.subscription_token_masked = mask_token(token)
+    user.subscription_token_created_at = datetime.now(UTC)
+    db.flush()
+    return token
+
+
+def record_subscription_audit(
+    db: Session,
+    user: UserRow,
+    action: str,
+    token: str,
+    request: Request,
+) -> None:
+    token_hash = hash_token(token)
+    db.add(
+        SubscriptionAuditLogRow(
+            id=str(uuid4()),
+            user_id=user.id,
+            action=action,
+            token_hash_prefix=token_hash[:16],
+            masked_token=mask_token(token),
+            ip_address=client_ip(request),
+            user_agent=(request.headers.get("user-agent") or "")[:255],
+        )
+    )
+
+
+def current_subscription_plan(db: Session, user: UserRow) -> str:
+    order = db.scalar(
+        select(OrderRow)
+        .where(OrderRow.user_id == user.id)
+        .where(OrderRow.status == OrderStatus.completed.value)
+        .order_by(func.coalesce(OrderRow.confirmed_at, OrderRow.created_at).desc())
+    )
+    return order.plan_id if order is not None else "vip"
+
+
+def build_subscription_response(db: Session, user: UserRow, token: str, request: Request) -> SubscriptionLinkResponse:
+    expires_at = coerce_utc(user.vip_expired_at)
+    if expires_at is None:
+        raise SubscriptionApiException(403, "VIP_REQUIRED", "开通 VIP 后即可导出订阅链接。")
+    return SubscriptionLinkResponse(
+        subscription_url=subscription_url_for_token(request, token),
+        masked_token=mask_token(token),
+        expires_at=expires_at,
+        plan=current_subscription_plan(db, user),
+    )
+
+
+def subscription_links_path() -> Path:
+    return Path(os.getenv("SUBSCRIPTION_PROXY_LINKS_PATH", "/opt/xingsui/download/subscription-links.txt")).resolve()
+
+
+def read_subscription_links() -> list[str]:
+    path = subscription_links_path()
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+    if len(lines) == 1 and "://" not in lines[0]:
+        try:
+            decoded = base64.b64decode(lines[0] + "=" * (-len(lines[0]) % 4)).decode("utf-8")
+            lines = [line.strip() for line in decoded.splitlines() if line.strip() and not line.strip().startswith("#")]
+        except Exception:
+            return []
+    return lines
+
+
+def osaka_vless_link() -> str | None:
+    preferred_host = os.getenv("WINDOWS_OSAKA_VLESS_HOST", "212.50.232.111").strip()
+    for link in read_subscription_links():
+        parsed = urlparse(link)
+        if parsed.scheme.lower() != "vless":
+            continue
+        if parsed.hostname == preferred_host or unquote(parsed.fragment).lower() in {"xingsui-osaka", "osaka"}:
+            return link
+    return None
+
+
+def osaka_vless_config(link: str) -> dict[str, str] | None:
+    parsed = urlparse(link)
+    if parsed.scheme.lower() != "vless" or not parsed.username or not parsed.hostname:
+        return None
+    query = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
+    return {
+        "server": parsed.hostname,
+        "server_port": str(parsed.port or 8443),
+        "uuid": parsed.username,
+        "flow": query.get("flow", "").strip(),
+        "public_key": query.get("pbk", "").strip(),
+        "short_id": query.get("sid", "").strip(),
+        "server_name": (query.get("sni") or "www.microsoft.com").strip(),
+        "utls_fingerprint": (query.get("fp") or "chrome").strip(),
+    }
+
+
+def osaka_vless_node_summary(entitlement_allowed: bool = True) -> VpnNodeSummary | None:
+    link = osaka_vless_link()
+    if link is None:
+        return None
+    parsed = urlparse(link)
+    return VpnNodeSummary(
+        id=VLESS_OSAKA_NODE_ID,
+        name=VLESS_OSAKA_NODE_NAME,
+        region=VLESS_OSAKA_NODE_REGION,
+        vip_only=False,
+        status="online",
+        load_percent=0,
+        locked=not entitlement_allowed,
+        probe_host=parsed.hostname,
+        probe_port=parsed.port,
+    )
+
+
+def supports_windows_vless(version_code: str | None) -> bool:
+    try:
+        return int((version_code or "0").strip()) >= 2
+    except ValueError:
+        return False
+
+
+def yaml_scalar(value: object) -> str:
+    text = str(value)
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def yaml_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def unique_proxy_name(name: str, used: set[str]) -> str:
+    cleaned = unquote(name).strip() or f"星隧节点 {len(used) + 1}"
+    candidate = cleaned
+    index = 2
+    while candidate in used:
+        candidate = f"{cleaned} {index}"
+        index += 1
+    used.add(candidate)
+    return candidate
+
+
+def decode_ss_userinfo(value: str) -> tuple[str, str]:
+    decoded = value
+    if ":" not in decoded:
+        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode("utf-8")
+    method, password = decoded.split(":", 1)
+    return method, password
+
+
+def parse_proxy_link(link: str, used_names: set[str]) -> dict[str, object] | None:
+    parsed = urlparse(link)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"vless", "trojan", "ss"}:
+        return None
+    name = unique_proxy_name(parsed.fragment, used_names)
+    query = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
+
+    if scheme == "vless":
+        if not parsed.username or not parsed.hostname or parsed.port is None:
+            return None
+        security = (query.get("security") or "").lower()
+        proxy: dict[str, object] = {
+            "name": name,
+            "type": "vless",
+            "server": parsed.hostname,
+            "port": parsed.port,
+            "uuid": parsed.username,
+            "network": (query.get("type") or "tcp").lower(),
+            "udp": True,
+            "tls": security in {"tls", "reality"},
+        }
+        if query.get("sni"):
+            proxy["servername"] = query["sni"]
+        if query.get("fp"):
+            proxy["client-fingerprint"] = query["fp"]
+        if query.get("flow"):
+            proxy["flow"] = query["flow"]
+        if security == "reality":
+            reality_opts: dict[str, str] = {}
+            if query.get("pbk"):
+                reality_opts["public-key"] = query["pbk"]
+            if query.get("sid"):
+                reality_opts["short-id"] = query["sid"]
+            if query.get("spx"):
+                reality_opts["spider-x"] = query["spx"]
+            if reality_opts:
+                proxy["reality-opts"] = reality_opts
+        return proxy
+
+    if scheme == "trojan":
+        if not parsed.username or not parsed.hostname or parsed.port is None:
+            return None
+        proxy = {
+            "name": name,
+            "type": "trojan",
+            "server": parsed.hostname,
+            "port": parsed.port,
+            "password": parsed.username,
+            "udp": True,
+            "sni": query.get("sni") or query.get("peer") or parsed.hostname,
+            "skip-cert-verify": False,
+        }
+        return proxy
+
+    if scheme == "ss":
+        if not parsed.hostname or parsed.port is None:
+            return None
+        userinfo = parsed.netloc.rsplit("@", 1)[0]
+        try:
+            method, password = decode_ss_userinfo(unquote(userinfo))
+        except Exception:
+            return None
+        return {
+            "name": name,
+            "type": "ss",
+            "server": parsed.hostname,
+            "port": parsed.port,
+            "cipher": method,
+            "password": password,
+            "udp": True,
+        }
+    return None
+
+
+def render_yaml_value(key: str, value: object, indent: str = "    ") -> list[str]:
+    if isinstance(value, bool):
+        return [f"{indent}{key}: {yaml_bool(value)}"]
+    if isinstance(value, int):
+        return [f"{indent}{key}: {value}"]
+    if isinstance(value, dict):
+        lines = [f"{indent}{key}:"]
+        for nested_key, nested_value in value.items():
+            lines.extend(render_yaml_value(nested_key, nested_value, indent + "  "))
+        return lines
+    return [f"{indent}{key}: {yaml_scalar(value)}"]
+
+
+def render_clash_yaml(user: UserRow, proxies: list[dict[str, object]]) -> str:
+    expires_at = fmt_subscription_datetime(user.vip_expired_at)
+    names = [str(proxy["name"]) for proxy in proxies]
+    lines = [
+        "# 星隧订阅",
+        f"# 账号: {user.email}",
+        f"# VIP 到期: {expires_at}",
+        f"# 节点数量: {len(proxies)}",
+        "mixed-port: 7890",
+        "allow-lan: false",
+        "mode: rule",
+        "log-level: warning",
+        "proxies:",
+    ]
+    for proxy in proxies:
+        lines.append(f"  - name: {yaml_scalar(proxy['name'])}")
+        for key, value in proxy.items():
+            if key == "name":
+                continue
+            lines.extend(render_yaml_value(key, value))
+    lines.extend(
+        [
+            "proxy-groups:",
+            "  - name: 星隧",
+            "    type: select",
+            "    proxies:",
+        ]
+    )
+    lines.extend(f"      - {yaml_scalar(name)}" for name in names)
+    lines.extend(["rules:", "  - MATCH,星隧", ""])
+    return "\n".join(lines)
+
+
+def render_subscription_content(db: Session, user: UserRow) -> tuple[str, int]:
+    used_names: set[str] = set()
+    proxies = [
+        proxy
+        for link in read_subscription_links()
+        if (proxy := parse_proxy_link(link, used_names)) is not None
+    ]
+    if not proxies:
+        raise SubscriptionApiException(503, "NO_AVAILABLE_NODES", "暂无可用订阅节点，请联系客服。")
+    logger.info(
+        "subscription rendered user_id=%s vip_status=%s node_count=%s",
+        user.id,
+        effective_vip_status(user.vip_status, user.vip_expired_at),
+        len(proxies),
+    )
+    return render_clash_yaml(user, proxies), len(proxies)
+
+
+def fmt_subscription_datetime(value: datetime | None) -> str:
+    coerced = coerce_utc(value)
+    if coerced is None:
+        return "-"
+    return coerced.isoformat().replace("+00:00", "Z")
+
+
 def create_session(db: Session, user_id: str) -> str:
     token = secrets.token_urlsafe(32)
-    db.add(AuthSessionRow(token_hash=hash_token(token), user_id=user_id))
+    token_hash = hash_token(token)
+    db.add(AuthSessionRow(token_hash=token_hash, user_id=user_id))
+    db.flush()
+    prune_user_sessions(db, user_id, keep_token_hash=token_hash)
     db.commit()
     return token
+
+
+def prune_user_sessions(db: Session, user_id: str, *, keep_token_hash: str | None = None) -> None:
+    """Keep only the newest login sessions for one account.
+
+    A session is the shared auth token used by website and apps. Keeping two
+    sessions allows one phone plus one computer, while a third login invalidates
+    the oldest token immediately.
+    """
+    if MAX_ACTIVE_AUTH_SESSIONS <= 0:
+        return
+    sessions = list(
+        db.scalars(
+            select(AuthSessionRow)
+            .where(AuthSessionRow.user_id == user_id)
+            .order_by(AuthSessionRow.created_at.desc(), AuthSessionRow.token_hash.desc())
+        )
+    )
+    if keep_token_hash is not None:
+        sessions = sorted(sessions, key=lambda row: row.token_hash != keep_token_hash)
+    keep_hashes = {row.token_hash for row in sessions[:MAX_ACTIVE_AUTH_SESSIONS]}
+    stale_hashes = [row.token_hash for row in sessions if row.token_hash not in keep_hashes]
+    if stale_hashes:
+        db.execute(delete(AuthSessionRow).where(AuthSessionRow.token_hash.in_(stale_hashes)))
 
 
 def coerce_utc(value: datetime | None) -> datetime | None:
@@ -843,6 +1311,8 @@ def remove_wireguard_peer(public_key: str) -> None:
 
 
 def revoke_vpn_devices(db: Session, user: UserRow) -> None:
+    if not env_flag("VPN_AUTO_PROVISION", False):
+        return
     rows = db.scalars(
         select(VpnDeviceRow)
         .where(VpnDeviceRow.user_id == user.id)
@@ -850,18 +1320,10 @@ def revoke_vpn_devices(db: Session, user: UserRow) -> None:
     ).all()
     changed = False
     for row in rows:
-        if row.node_id:
-            node = db.get(VpnNodeRow, row.node_id)
-            if node is not None:
-                try:
-                    node_service.agent_remove_peer(node, row.client_public_key)
-                except Exception:
-                    pass
-        else:
-            try:
-                remove_wireguard_peer(row.client_public_key)
-            except HTTPException:
-                pass
+        try:
+            remove_wireguard_peer(row.client_public_key)
+        except HTTPException:
+            pass
         row.status = "revoked"
         changed = True
     if changed:
@@ -926,15 +1388,31 @@ def get_or_create_vpn_device(db: Session, user: UserRow) -> VpnDeviceRow:
 
 
 def restore_active_vpn_peers() -> None:
-    if not env_flag("VPN_AUTO_PROVISION", False):
-        return
+    agent_peers: list[tuple[VpnNodeRow, str, str]] = []
     with SessionLocal() as db:
         rows = db.scalars(select(VpnDeviceRow).where(VpnDeviceRow.status == "active")).all()
+        if env_flag("VPN_AUTO_PROVISION", False):
+            for row in rows:
+                try:
+                    add_wireguard_peer(row.client_public_key, row.client_address)
+                except HTTPException:
+                    continue
+
         for row in rows:
-            try:
-                add_wireguard_peer(row.client_public_key, row.client_address)
-            except HTTPException:
+            node = db.get(VpnNodeRow, row.node_id) if row.node_id else None
+            if node is None or not node.enabled:
                 continue
+            try:
+                client_ip = str(ipaddress.ip_interface(row.client_address).ip)
+            except Exception:
+                continue
+            agent_peers.append((node, row.client_public_key, client_ip))
+
+    for node, public_key, client_ip in agent_peers:
+        try:
+            node_service.agent_add_peer(node, public_key, client_ip, timeout=2.0)
+        except Exception:
+            continue
 
 
 def user_is_vip(user: UserRow) -> bool:
@@ -1036,6 +1514,16 @@ def agent_add_node_peer(node: VpnNodeRow, public_key: str, client_ip: str) -> No
         raise HTTPException(status_code=503, detail=f"Node agent unreachable: {exc}") from exc
 
 
+def parse_host_port(value: str) -> tuple[str | None, int | None]:
+    host, separator, port_text = (value or "").strip().rpartition(":")
+    if not separator or not host:
+        return None, None
+    try:
+        return host, int(port_text)
+    except ValueError:
+        return host, None
+
+
 def to_vpn_node_summary(
     node: VpnNodeRow,
     health: VpnNodeHealthRow | None,
@@ -1045,6 +1533,7 @@ def to_vpn_node_summary(
 ) -> VpnNodeSummary:
     peer_count = int(getattr(health, "peer_count", 0) or 0) if health is not None else 0
     load_percent = int(round(node_service.node_load_ratio(peer_count, int(node.max_clients or 0)) * 100))
+    endpoint_host, endpoint_port = parse_host_port(node.endpoint)
     return VpnNodeSummary(
         id=node.id,
         name=node.name,
@@ -1053,6 +1542,8 @@ def to_vpn_node_summary(
         status=node_service.node_status_label(health, now),
         load_percent=load_percent,
         locked=(not entitlement_allowed) or (bool(node.vip_only) and not vip),
+        probe_host=endpoint_host,
+        probe_port=endpoint_port,
     )
 
 
@@ -1163,7 +1654,13 @@ def to_withdrawal(row: WithdrawalRow, user_email: str | None = None) -> Withdraw
     )
 
 
-def to_admin_user(row: UserRow, now: datetime | None = None) -> AdminUserSummary:
+def to_admin_user(
+    row: UserRow,
+    now: datetime | None = None,
+    *,
+    invited_count: int = 0,
+    paid_invite_count: int = 0,
+) -> AdminUserSummary:
     return AdminUserSummary(
         id=row.id,
         email=row.email,
@@ -1173,6 +1670,8 @@ def to_admin_user(row: UserRow, now: datetime | None = None) -> AdminUserSummary
         last_login_at=row.last_login_at,
         last_seen_at=row.last_seen_at,
         online=is_online(row.last_seen_at, now),
+        invited_count=invited_count,
+        paid_invite_count=paid_invite_count,
     )
 
 
@@ -1340,7 +1839,7 @@ def seed_database() -> None:
                 [
                     VipPlanRow(
                         id=MONTHLY_PLAN_ID,
-                        name="月度会员",
+                        name="首月会员",
                         duration_days=30,
                         original_price_cents=2880,
                         sale_price_cents=1800,
@@ -1350,14 +1849,14 @@ def seed_database() -> None:
                         name="季度会员",
                         duration_days=90,
                         original_price_cents=8640,
-                        sale_price_cents=5800,
+                        sale_price_cents=3800,
                     ),
                     VipPlanRow(
                         id="plan_year",
                         name="年度会员",
                         duration_days=365,
                         original_price_cents=34560,
-                        sale_price_cents=19800,
+                        sale_price_cents=9800,
                     ),
                 ]
             )
@@ -1366,7 +1865,7 @@ def seed_database() -> None:
             db.add(
                 PromotionActivityRow(
                     id=PROMOTION_ID,
-                    name="星隧首月限时特惠",
+                    name="星隧首月 18 元限时特惠",
                     tag="限时特惠",
                     plan_id=MONTHLY_PLAN_ID,
                     starts_at=datetime.now(UTC) - timedelta(days=1),
@@ -1691,6 +2190,87 @@ def api_get_user_vip_status(
     return get_user_vip_status(authorization=authorization, db=db)
 
 
+@app.get("/user/subscription-link", response_model=SubscriptionLinkResponse)
+def get_user_subscription_link(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> SubscriptionLinkResponse:
+    user = require_subscription_user(db, authorization)
+    require_active_subscription_vip(user)
+    enforce_subscription_rate_limit(
+        user.id,
+        "export",
+        SUBSCRIPTION_EXPORT_LIMIT_COUNT,
+        SUBSCRIPTION_EXPORT_LIMIT_SECONDS,
+    )
+    token = ensure_subscription_token(db, user)
+    record_subscription_audit(db, user, "export", token, request)
+    response = build_subscription_response(db, user, token, request)
+    db.commit()
+    return response
+
+
+@app.post("/user/subscription-link/reset", response_model=SubscriptionLinkResponse)
+def reset_user_subscription_link(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> SubscriptionLinkResponse:
+    user = require_subscription_user(db, authorization)
+    require_active_subscription_vip(user)
+    enforce_subscription_rate_limit(
+        user.id,
+        "reset",
+        SUBSCRIPTION_RESET_LIMIT_COUNT,
+        SUBSCRIPTION_RESET_LIMIT_SECONDS,
+    )
+    token = reset_subscription_token(db, user)
+    record_subscription_audit(db, user, "reset", token, request)
+    response = build_subscription_response(db, user, token, request)
+    db.commit()
+    return response
+
+
+@app.get("/sub", include_in_schema=False)
+def subscription_feed(
+    token: str = Query(default=""),
+    db: Session = Depends(get_db),
+) -> Response:
+    token = token.strip()
+    if not token:
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "code": "UNAUTHORIZED", "message": "订阅链接无效，请重新导出。"},
+        )
+    token_hash = hash_token(token)
+    user = db.scalar(select(UserRow).where(UserRow.subscription_token_hash == token_hash))
+    if user is None:
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "code": "UNAUTHORIZED", "message": "订阅链接无效，请重新导出。"},
+        )
+    try:
+        require_active_subscription_vip(user)
+    except SubscriptionApiException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"success": False, "code": exc.code, "message": exc.message},
+        )
+    try:
+        content, _node_count = render_subscription_content(db, user)
+    except SubscriptionApiException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"success": False, "code": exc.code, "message": exc.message},
+        )
+    return PlainTextResponse(
+        content,
+        media_type="text/yaml; charset=utf-8",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
 @app.get("/vpn/config", response_model=VpnNodeConfig)
 def get_vpn_config(
     rotate: bool = Query(default=False),
@@ -1790,7 +2370,11 @@ def get_my_invitation(
 
 @app.get("/plans", response_model=list[VipPlan])
 def list_plans(db: Session = Depends(get_db)) -> list[VipPlan]:
-    rows = db.scalars(select(VipPlanRow).where(VipPlanRow.status == "active")).all()
+    rows = db.scalars(
+        select(VipPlanRow)
+        .where(VipPlanRow.status == "active")
+        .order_by(VipPlanRow.duration_days.asc())
+    ).all()
     return [to_plan(row) for row in rows]
 
 
@@ -2009,7 +2593,34 @@ def list_admin_users(
         statement = statement.where(func.lower(UserRow.email).like(keyword))
     rows = db.scalars(statement.order_by(UserRow.created_at.desc()).limit(500)).all()
     now = datetime.now(UTC)
-    return [to_admin_user(row, now) for row in rows]
+    user_ids = [row.id for row in rows]
+    invited_counts = dict.fromkeys(user_ids, 0)
+    paid_invite_counts = dict.fromkeys(user_ids, 0)
+    if user_ids:
+        invited_counts.update(
+            db.execute(
+                select(UserRow.invited_by_user_id, func.count())
+                .where(UserRow.invited_by_user_id.in_(user_ids))
+                .group_by(UserRow.invited_by_user_id)
+            ).all()
+        )
+        paid_invite_counts.update(
+            db.execute(
+                select(InvitationRow.inviter_user_id, func.count())
+                .where(InvitationRow.inviter_user_id.in_(user_ids))
+                .where(InvitationRow.status == "rewarded")
+                .group_by(InvitationRow.inviter_user_id)
+            ).all()
+        )
+    return [
+        to_admin_user(
+            row,
+            now,
+            invited_count=int(invited_counts.get(row.id, 0) or 0),
+            paid_invite_count=int(paid_invite_counts.get(row.id, 0) or 0),
+        )
+        for row in rows
+    ]
 
 
 @app.get("/admin/system-health", response_model=SystemHealthSummary)
@@ -2306,6 +2917,7 @@ def node_health_map(db: Session) -> dict[str, VpnNodeHealthRow]:
 @app.get("/vpn/nodes", response_model=list[VpnNodeSummary])
 def list_vpn_nodes(
     authorization: str | None = Header(default=None),
+    x_xingsui_version_code: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> list[VpnNodeSummary]:
     user = get_current_user(db, authorization)
@@ -2319,10 +2931,15 @@ def list_vpn_nodes(
     nodes = db.scalars(
         select(VpnNodeRow).where(VpnNodeRow.enabled.is_(True)).order_by(VpnNodeRow.weight.desc())
     ).all()
-    return [
+    summaries = [
         to_vpn_node_summary(node, health.get(node.id), vip, now, entitlement.allowed)
         for node in nodes
     ]
+    if supports_windows_vless(x_xingsui_version_code):
+        osaka = osaka_vless_node_summary(entitlement.allowed)
+        if osaka is not None:
+            summaries.insert(0, osaka)
+    return summaries
 
 
 @app.get("/vpn/nodes/{node_id}/config", response_model=VpnNodeConfig)
@@ -2338,6 +2955,22 @@ def get_vpn_node_config(
     entitlement = build_vpn_entitlement(user)
     if not entitlement.allowed:
         raise HTTPException(status_code=403, detail=entitlement.reason)
+    if node_id == VLESS_OSAKA_NODE_ID:
+        link = osaka_vless_link()
+        if link is None:
+            raise HTTPException(status_code=503, detail="osaka_vless_unavailable")
+        vless_config = osaka_vless_config(link)
+        if vless_config is None:
+            raise HTTPException(status_code=503, detail="osaka_vless_unavailable")
+        return VpnNodeConfig(
+            id=VLESS_OSAKA_NODE_ID,
+            name=VLESS_OSAKA_NODE_NAME,
+            region=VLESS_OSAKA_NODE_REGION,
+            tunnel_name="xingsui-vless",
+            config_text=link,
+            vless_config=vless_config,
+            entitlement=entitlement,
+        )
     node = require_node(db, node_id)
     if not node.enabled:
         raise HTTPException(status_code=403, detail="node_disabled")
@@ -2461,7 +3094,13 @@ def delete_admin_node(node_id: str, db: Session = Depends(get_db)) -> Response:
     return Response(status_code=204)
 
 
-USER_PAGE_PATHS = {"login", "register", "center", "vip", "download", "guide"}
+USER_PAGE_PATHS = {"login", "register", "center", "dashboard", "vip", "download", "guide"}
+
+
+@app.get("/account/subscription", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/user/subscription", response_class=HTMLResponse, include_in_schema=False)
+def user_subscription_page() -> str:
+    return SITE_HTML
 
 
 @app.get("/{page_name}", response_class=HTMLResponse, include_in_schema=False)

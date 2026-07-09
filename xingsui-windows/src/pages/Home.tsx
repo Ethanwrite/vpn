@@ -10,6 +10,47 @@ interface Props {
   onProfile: () => void;
 }
 
+function bestNode(nodes: VpnNodeSummary[]): VpnNodeSummary | undefined {
+  return nodes
+    .filter((n) => !n.locked && n.status === "online")
+    .slice()
+    .sort((a, b) => {
+      const latencyA = a.latency_ms ?? 9999;
+      const latencyB = b.latency_ms ?? 9999;
+      if (latencyA !== latencyB) return latencyA - latencyB;
+      return a.load_percent - b.load_percent;
+    })[0];
+}
+
+function orderNodes(nodes: VpnNodeSummary[]): VpnNodeSummary[] {
+  return nodes.slice().sort((a, b) => {
+    const availableA = !a.locked && a.status === "online";
+    const availableB = !b.locked && b.status === "online";
+    if (availableA !== availableB) return availableA ? -1 : 1;
+    const latencyA = a.latency_ms ?? 9999;
+    const latencyB = b.latency_ms ?? 9999;
+    if (latencyA !== latencyB) return latencyA - latencyB;
+    return a.load_percent - b.load_percent;
+  });
+}
+
+async function measureNodes(nodes: VpnNodeSummary[]): Promise<VpnNodeSummary[]> {
+  const measured = await Promise.all(
+    nodes.map(async (node) => {
+      if (node.locked || node.status !== "online" || !node.probe_host || !node.probe_port) {
+        return node;
+      }
+      try {
+        const latency = await api.measureLatency(node.probe_host, node.probe_port);
+        return { ...node, latency_ms: latency };
+      } catch {
+        return { ...node, latency_ms: 9999 };
+      }
+    })
+  );
+  return orderNodes(measured);
+}
+
 export default function Home({ onProfile }: Props) {
   const user = useStore((s) => s.user);
   const nodes = useStore((s) => s.nodes);
@@ -26,17 +67,15 @@ export default function Home({ onProfile }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        const list = await api.listNodes();
+        const list = await measureNodes(await api.listNodes());
         setNodes(list);
-        if (!selectedNodeId) {
-          const first = list.find((n) => !n.locked && n.status === "online");
-          if (first) selectNode(first.id);
-        }
+        const fastest = bestNode(list);
+        if (fastest) selectNode(fastest.id);
       } catch (e) {
         pushToast("error", errText(e));
       }
     })();
-  }, [setNodes, selectNode, selectedNodeId, pushToast]);
+  }, [setNodes, selectNode, pushToast]);
 
   const selected: VpnNodeSummary | undefined = useMemo(
     () => nodes.find((n) => n.id === selectedNodeId),
@@ -53,14 +92,19 @@ export default function Home({ onProfile }: Props) {
       return;
     }
 
-    if (!selectedNodeId) {
+    const fastest = bestNode(nodes);
+    const targetNodeId = fastest?.id || selectedNodeId;
+    if (!targetNodeId) {
       pushToast("error", "请先选择线路");
       setPickerOpen(true);
       return;
     }
 
     try {
-      await api.connect(selectedNodeId, mode);
+      if (fastest && fastest.id !== selectedNodeId) {
+        selectNode(fastest.id);
+      }
+      await api.connect(targetNodeId, mode);
     } catch (e) {
       pushToast("error", errText(e));
     }

@@ -63,7 +63,11 @@ pub fn spawn_traffic_poller(app: AppHandle, clash_port: u16, generation: u64) {
     });
 }
 
-fn should_report_usage(pending_up: u64, pending_down: u64, last_report: std::time::Instant) -> bool {
+fn should_report_usage(
+    pending_up: u64,
+    pending_down: u64,
+    last_report: std::time::Instant,
+) -> bool {
     let pending_total = pending_up.saturating_add(pending_down);
     pending_total >= USAGE_REPORT_MIN_BYTES
         || (pending_total > 0 && last_report.elapsed().as_secs() >= USAGE_REPORT_INTERVAL_SECS)

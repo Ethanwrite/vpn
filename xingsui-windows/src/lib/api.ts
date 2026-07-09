@@ -25,6 +25,9 @@ export const api = {
 
   listNodes: () => invoke<VpnNodeSummary[]>("list_nodes"),
 
+  measureLatency: (host: string, port: number) =>
+    invoke<number>("measure_latency", { host, port }),
+
   connect: (nodeId: string, mode: NetMode) =>
     invoke<void>("connect", { nodeId, mode }),
 

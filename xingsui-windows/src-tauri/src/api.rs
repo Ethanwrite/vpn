@@ -7,8 +7,8 @@ use reqwest::{Client, Method};
 use serde_json::json;
 use std::time::Duration;
 
-const VERSION_CODE: &str = "1";
-const VERSION_NAME: &str = "1.0.15";
+const VERSION_CODE: &str = "2";
+const VERSION_NAME: &str = "1.0.16";
 
 /// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退。
 pub const BASE_URLS: &[&str] = &[

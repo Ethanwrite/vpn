@@ -27,6 +27,10 @@ class UserRow(Base):
     free_traffic_quota_bytes: Mapped[int] = mapped_column(BigInteger, default=31_457_280)
     free_traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(24), default="active")
+    subscription_token_version: Mapped[int] = mapped_column(Integer, default=0)
+    subscription_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    subscription_token_masked: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    subscription_token_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -40,6 +44,19 @@ class AuthSessionRow(Base):
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SubscriptionAuditLogRow(Base):
+    __tablename__ = "subscription_audit_logs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(24), index=True)
+    token_hash_prefix: Mapped[str] = mapped_column(String(16), default="")
+    masked_token: Mapped[str] = mapped_column(String(32), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class VipPlanRow(Base):

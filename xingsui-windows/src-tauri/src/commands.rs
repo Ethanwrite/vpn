@@ -5,6 +5,8 @@ use crate::error::{AppError, AppResult};
 use crate::models::{ConnState, NetMode, StatusPayload, User, VpnNodeSummary};
 use crate::state::AppState;
 use crate::{awg, store};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 #[tauri::command]
@@ -73,6 +75,21 @@ pub async fn list_nodes(app: AppHandle) -> AppResult<Vec<VpnNodeSummary>> {
     let state = app.state::<AppState>();
     let token = state.require_token()?;
     state.api.list_nodes(&token).await
+}
+
+#[tauri::command]
+pub fn measure_latency(host: String, port: u16) -> u32 {
+    let Ok(mut addrs) = (host.as_str(), port).to_socket_addrs() else {
+        return 9999;
+    };
+    let Some(addr) = addrs.next() else {
+        return 9999;
+    };
+    let start = Instant::now();
+    match TcpStream::connect_timeout(&addr, Duration::from_millis(1500)) {
+        Ok(_) => start.elapsed().as_millis().min(9999) as u32,
+        Err(_) => 9999,
+    }
 }
 
 /// 一键连接指定节点（按 mode 选择 TUN / 系统代理）。

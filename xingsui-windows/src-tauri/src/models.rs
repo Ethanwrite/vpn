@@ -53,6 +53,10 @@ pub struct VpnNodeSummary {
     pub load_percent: i32,
     #[serde(default)]
     pub locked: bool,
+    #[serde(default)]
+    pub probe_host: Option<String>,
+    #[serde(default)]
+    pub probe_port: Option<u16>,
 }
 
 /// 节点配置（/vpn/nodes/{id}/config）。config_text 为 AmneziaWG INI。
