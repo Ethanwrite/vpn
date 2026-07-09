@@ -2,7 +2,7 @@
 
 use crate::core;
 use crate::error::{AppError, AppResult};
-use crate::models::{ConnState, NetMode, StatusPayload, User, VpnNodeSummary};
+use crate::models::{ConnState, NetMode, StatusPayload, User, VlessConfig, VpnNodeSummary};
 use crate::state::AppState;
 use crate::{awg, store};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -92,6 +92,61 @@ pub fn measure_latency(host: String, port: u16) -> u32 {
     }
 }
 
+fn vless_query_value(url: &reqwest::Url, key: &str) -> String {
+    url.query_pairs()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_default()
+}
+
+fn parse_vless_link(config_text: &str) -> AppResult<Option<VlessConfig>> {
+    let text = config_text.trim();
+    if !text.starts_with("vless://") {
+        return Ok(None);
+    }
+
+    let url = reqwest::Url::parse(text).map_err(|_| AppError::config("VLESS 链接格式错误"))?;
+    let uuid = url.username().trim().to_string();
+    if uuid.is_empty() {
+        return Err(AppError::config("VLESS 链接缺少 UUID"));
+    }
+    let server = url
+        .host_str()
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| AppError::config("VLESS 链接缺少服务器地址"))?
+        .to_string();
+    let public_key = vless_query_value(&url, "pbk");
+    if public_key.trim().is_empty() {
+        return Err(AppError::config("VLESS Reality 链接缺少 public key"));
+    }
+
+    Ok(Some(VlessConfig {
+        server,
+        server_port: url.port().unwrap_or(8443).to_string(),
+        uuid,
+        flow: vless_query_value(&url, "flow"),
+        public_key,
+        short_id: vless_query_value(&url, "sid"),
+        server_name: {
+            let sni = vless_query_value(&url, "sni");
+            if sni.trim().is_empty() {
+                "www.microsoft.com".to_string()
+            } else {
+                sni
+            }
+        },
+        utls_fingerprint: {
+            let fp = vless_query_value(&url, "fp");
+            if fp.trim().is_empty() {
+                "chrome".to_string()
+            } else {
+                fp
+            }
+        },
+    }))
+}
+
 /// 一键连接指定节点（按 mode 选择 TUN / 系统代理）。
 #[tauri::command]
 pub async fn connect(app: AppHandle, node_id: String, mode: NetMode) -> AppResult<()> {
@@ -116,7 +171,11 @@ pub async fn connect(app: AppHandle, node_id: String, mode: NetMode) -> AppResul
         }
     };
 
-    if let Some(vless_cfg) = config.vless_config {
+    let vless_config = match config.vless_config {
+        Some(vless_cfg) => Some(vless_cfg),
+        None => parse_vless_link(&config.config_text)?,
+    };
+    if let Some(vless_cfg) = vless_config {
         return core::start_vless(&app, vless_cfg, mode, config.id, config.name);
     }
 
