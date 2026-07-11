@@ -2,17 +2,21 @@
 table ip xingsui_singapore_relay {
     chain prerouting {
         type nat hook prerouting priority dstnat - 10; policy accept;
-        udp dport __LISTEN_PORT__ dnat to __UPSTREAM_IP__:__UPSTREAM_PORT__
+        udp dport __AWG_LISTEN_PORT__ dnat to __UPSTREAM_IP__:__AWG_UPSTREAM_PORT__
+        tcp dport __VLESS_LISTEN_PORT__ dnat to __UPSTREAM_IP__:__VLESS_UPSTREAM_PORT__
     }
 
     chain postrouting {
         type nat hook postrouting priority srcnat + 10; policy accept;
-        ip daddr __UPSTREAM_IP__ udp dport __UPSTREAM_PORT__ masquerade
+        ip daddr __UPSTREAM_IP__ udp dport __AWG_UPSTREAM_PORT__ masquerade
+        ip daddr __UPSTREAM_IP__ tcp dport __VLESS_UPSTREAM_PORT__ masquerade
     }
 
     chain forward {
         type filter hook forward priority filter - 10; policy accept;
-        ip daddr __UPSTREAM_IP__ udp dport __UPSTREAM_PORT__ accept
-        ip saddr __UPSTREAM_IP__ udp sport __UPSTREAM_PORT__ ct state established,related accept
+        ip daddr __UPSTREAM_IP__ udp dport __AWG_UPSTREAM_PORT__ accept
+        ip saddr __UPSTREAM_IP__ udp sport __AWG_UPSTREAM_PORT__ ct state established,related accept
+        ip daddr __UPSTREAM_IP__ tcp dport __VLESS_UPSTREAM_PORT__ accept
+        ip saddr __UPSTREAM_IP__ tcp sport __VLESS_UPSTREAM_PORT__ ct state established,related accept
     }
 }
