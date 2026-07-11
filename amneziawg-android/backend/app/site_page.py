@@ -480,7 +480,7 @@ SITE_HTML = """<!doctype html>
         <div class="heroActions">
           <a class="primary" href="/register" data-route="register">立即注册</a>
           <a class="secondary" href="/download/android">下载 Android APK</a>
-          <span class="unavailable" role="status">Windows 客户端维护中</span>
+          <a class="secondary" href="/download/windows">下载 Windows 客户端</a>
           <a class="secondary" href="/vip" data-route="vip">查看套餐</a>
         </div>
       </div>
@@ -663,7 +663,7 @@ SITE_HTML = """<!doctype html>
         </div>
         <div class="actions">
           <a class="primary" href="/download/android">下载 Android APK</a>
-          <span class="unavailable" role="status">Windows 客户端维护中</span>
+          <a class="secondary" href="/download/windows">下载 Windows 客户端</a>
         </div>
       </div>
       <div class="grid three">
