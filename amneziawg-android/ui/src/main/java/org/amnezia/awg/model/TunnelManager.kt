@@ -455,8 +455,6 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
                     val now = Instant.now()
                     val renewedExpiry = entitlement.leaseExpiresAt
                     if (!entitlement.allowed ||
-                        entitlement.vipStatus != VIP_STATUS_ACTIVE ||
-                        entitlement.vipExpiredAt?.isAfter(now) != true ||
                         renewedExpiry?.isAfter(now) != true ||
                         renewedExpiry.isAfter(now.plusSeconds(MAX_RENEWED_LEASE_SECONDS))
                     ) {
@@ -502,7 +500,6 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     companion object {
         private const val TAG = "AmneziaWG/TunnelManager"
         private const val XINGSUI_MANAGED_TUNNEL_NAME = "xingsui"
-        private const val VIP_STATUS_ACTIVE = "active"
         private const val USAGE_REPORT_INTERVAL_MS = 10_000L
         private const val MAX_RENEWED_LEASE_SECONDS = 15 * 60L
     }

@@ -94,7 +94,15 @@ class XingsuiProfileActivity : AppCompatActivity() {
         } else {
             getString(R.string.xingsui_profile_not_active)
         }
-        binding.profileTraffic.setText(R.string.xingsui_profile_synced)
+        binding.profileTraffic.text = if (isVip) {
+            getString(R.string.xingsui_profile_traffic_vip)
+        } else {
+            getString(
+                R.string.xingsui_profile_traffic_remaining,
+                XingsuiTraffic.formatBytes(user.freeTrafficRemainingBytes),
+                XingsuiTraffic.formatBytes(user.freeTrafficQuotaBytes),
+            )
+        }
         binding.profileInviteDetail.text = user.inviteCode
     }
 

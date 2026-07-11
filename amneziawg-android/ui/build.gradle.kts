@@ -8,14 +8,13 @@ val appId: String = providers.gradleProperty("xingsuiApplicationId").get()
 val debugApiBaseUrl: String = providers.gradleProperty("xingsuiDebugApiBaseUrl").orElse("http://10.0.2.2:8000").get()
 val releaseApiBaseUrlProvider = providers.gradleProperty("xingsuiReleaseApiBaseUrl")
     .orElse(providers.environmentVariable("XINGSUI_RELEASE_API_BASE_URL"))
-val releaseApiBaseUrl: String? = releaseApiBaseUrlProvider.orNull
+val releaseApiBaseUrl: String = releaseApiBaseUrlProvider.orNull
+    ?.takeIf { it.isNotBlank() }
+    ?: "https://xingsui.org"
 val requestedTasks = gradle.startParameter.taskNames.joinToString(" ").lowercase()
 val needsReleaseApiBaseUrl = listOf("release", "googleplay", "bundle").any { requestedTasks.contains(it) }
 
-if (needsReleaseApiBaseUrl && releaseApiBaseUrl.isNullOrBlank()) {
-    throw GradleException("Set -PxingsuiReleaseApiBaseUrl=https://your-api-domain before building a release/googleplay artifact.")
-}
-if (needsReleaseApiBaseUrl && releaseApiBaseUrl?.trimEnd('/') !in setOf("https://xingsui.org", "https://xingsui.org/api")) {
+if (needsReleaseApiBaseUrl && releaseApiBaseUrl.trimEnd('/') !in setOf("https://xingsui.org", "https://xingsui.org/api")) {
     throw GradleException("Release builds must use the canonical production API: https://xingsui.org")
 }
 
@@ -82,7 +81,7 @@ android {
             buildConfigField(
                 "String",
                 "XINGSUI_API_BASE_URL",
-                buildConfigString(releaseApiBaseUrl ?: "https://api.xingsui.invalid"),
+                buildConfigString(releaseApiBaseUrl),
             )
             proguardFiles("proguard-android-optimize.txt")
             packaging {

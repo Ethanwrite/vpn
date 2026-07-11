@@ -219,7 +219,15 @@ class XingsuiHomeActivity : AppCompatActivity() {
         }
         binding.vipExpiry.text = user.vipExpiredAt?.atZone(ZoneId.systemDefault())?.format(DATE_FORMATTER)
             ?: getString(R.string.xingsui_home_no_expiry)
-        binding.trafficRemaining.setText(R.string.xingsui_home_account_synced)
+        binding.trafficRemaining.text = if (user.vipStatus == VIP_ACTIVE) {
+            getString(R.string.xingsui_home_traffic_vip)
+        } else {
+            getString(
+                R.string.xingsui_home_traffic_remaining,
+                XingsuiTraffic.formatBytes(user.freeTrafficRemainingBytes),
+                XingsuiTraffic.formatBytes(user.freeTrafficQuotaBytes),
+            )
+        }
         binding.loginButton.isEnabled = false
         binding.registerButton.isEnabled = false
         binding.authActions.visibility = View.GONE

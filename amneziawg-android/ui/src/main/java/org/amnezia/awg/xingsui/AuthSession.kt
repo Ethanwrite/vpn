@@ -25,7 +25,9 @@ class XingsuiSessionStore(context: Context) {
         val accessToken = loadEncryptedAccessToken() ?: return null
         val userId = preferences.getString(KEY_USER_ID, null) ?: return null
         val email = preferences.getString(KEY_EMAIL, null) ?: return null
-        val inviteCode = preferences.getString(KEY_INVITE_CODE, null) ?: return null
+        // Invite metadata was optional in older builds. Missing it must not
+        // invalidate a perfectly good encrypted token after an app restart.
+        val inviteCode = preferences.getString(KEY_INVITE_CODE, "").orEmpty()
         return AuthSession(accessToken, userId, email, inviteCode)
     }
 

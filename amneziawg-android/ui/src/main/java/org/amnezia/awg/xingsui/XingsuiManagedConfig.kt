@@ -82,8 +82,6 @@ object XingsuiManagedConfigValidator {
 
     fun validate(response: VpnNodeConfig, now: Instant = Instant.now()) {
         require(response.entitlement.allowed) { "managed_config_entitlement_denied" }
-        require(response.entitlement.vipStatus == VIP_STATUS_ACTIVE) { "managed_config_vip_required" }
-        require(response.entitlement.vipExpiredAt?.isAfter(now) == true) { "managed_config_vip_expired" }
         require(response.protocol.trim().lowercase(Locale.US) == PROTOCOL_AMNEZIAWG) {
             "managed_config_protocol_rejected"
         }
@@ -155,7 +153,6 @@ object XingsuiManagedConfigValidator {
     }
 
     private const val PROTOCOL_AMNEZIAWG = "amneziawg"
-    private const val VIP_STATUS_ACTIVE = "active"
     private const val SECTION_INTERFACE = "Interface"
     private const val SECTION_PEER = "Peer"
     private const val IPV4_DEFAULT_ROUTE = "0.0.0.0/0"

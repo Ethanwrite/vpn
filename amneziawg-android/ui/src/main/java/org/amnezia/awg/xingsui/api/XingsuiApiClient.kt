@@ -149,7 +149,10 @@ class XingsuiApiClient(
                     activeBaseUrl = requestBaseUrl
                 }
             } catch (error: XingsuiHttpException) {
-                if (!error.isRetriable) throw error
+                // A stale API path may return 404 even though the canonical
+                // production endpoint is healthy. Retry only that routing case;
+                // authentication and validation failures remain authoritative.
+                if (!error.isRetriable && error.statusCode != HttpURLConnection.HTTP_NOT_FOUND) throw error
                 lastError = error
                 Log.w(TAG, "Retriable HTTP error from $requestBaseUrl$path: ${error.statusCode}")
             } catch (error: IOException) {
