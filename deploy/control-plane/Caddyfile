@@ -8,7 +8,31 @@
 }
 
 xingsuico.com, www.xingsuico.com, api.xingsuico.com {
-	respond "Not Found" 404
+	encode zstd gzip
+
+	# Keep previously released Android clients online while downloads migrate to
+	# xingsui.org. Only the historical /api namespace is forwarded; the backend
+	# still enforces the same login, VIP and short-lived node-lease checks.
+	handle /api/* {
+		reverse_proxy api:8000 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "no-referrer-when-downgrade"
+		-Server
+	}
+
 	log {
 		output stdout
 		format console

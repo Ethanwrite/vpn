@@ -68,7 +68,9 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"   # HTTP/3
+      # HTTP/3 (UDP 443) intentionally disabled: UDP 443 is reused as the
+      # firewall-friendly endpoint for the co-located Osaka awg node
+      # (nftables REDIRECT udp/443 -> awg0:51820, see edge-node awg0.conf PostUp).
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
