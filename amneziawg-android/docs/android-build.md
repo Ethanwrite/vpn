@@ -37,6 +37,12 @@ Release and Google Play artifacts must provide a real HTTPS API endpoint. The bu
 ./gradlew :ui:assembleRelease -PxingsuiReleaseApiBaseUrl=https://xingsui.org
 ```
 
+Upload only through the repository-root validation script so a stale APK from a sibling checkout cannot be published:
+
+```bash
+../scripts/upload-android-apk.sh
+```
+
 If Android Studio is used, install:
 
 - Android SDK Platform 35
