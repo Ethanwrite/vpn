@@ -2,8 +2,11 @@ package org.amnezia.awg.xingsui
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.app.Activity
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.TypedValue
@@ -19,7 +22,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,20 +37,14 @@ import org.amnezia.awg.Application
 import org.amnezia.awg.R
 import org.amnezia.awg.backend.GoBackend
 import org.amnezia.awg.backend.Tunnel
-import org.amnezia.awg.config.Config
 import org.amnezia.awg.databinding.XingsuiHomeActivityBinding
 import org.amnezia.awg.model.ObservableTunnel
-import org.amnezia.awg.util.ErrorMessages
 import org.amnezia.awg.xingsui.api.XingsuiApiClient
 import org.amnezia.awg.xingsui.api.XingsuiHttpException
 import org.amnezia.awg.xingsui.model.UserAccount
-import org.amnezia.awg.xingsui.model.VpnNodeConfig
 import org.amnezia.awg.xingsui.model.VpnNodeSummary
-import java.io.ByteArrayInputStream
-import java.nio.charset.StandardCharsets
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 class XingsuiHomeActivity : AppCompatActivity() {
     private lateinit var binding: XingsuiHomeActivityBinding
@@ -55,22 +55,28 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private var isBusy = false
     private var selectedNodeId: String? = null
     private var selectedNodeName: String? = null
-    private var pendingTunnelToStart: ObservableTunnel? = null
+    private var selectedNodeDetail: String? = null
+    private var pendingConnectAfterPermission = false
     private var pulseAnimator: AnimatorSet? = null
     private var spinAnimator: ObjectAnimator? = null
     private var statusMonitorJob: Job? = null
-    private var connectWatchdogJob: Job? = null
-    private var lastEntitlementCheckAtMs = 0L
     private var connectStartedAtMs = 0L
     private var connectAttemptId = 0L
-    private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val tunnel = pendingTunnelToStart
-        pendingTunnelToStart = null
-        if (tunnel == null) {
+    private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (!pendingConnectAfterPermission) {
             setBusy(false)
             return@registerForActivityResult
         }
-        lifecycleScope.launch { startPreparedTunnel(tunnel) }
+        pendingConnectAfterPermission = false
+        lifecycleScope.launch {
+            if (result.resultCode != Activity.RESULT_OK) {
+                stopAndDeleteManagedTunnel()
+                setBusy(false)
+                showConnectionSyncFailure()
+                return@launch
+            }
+            connectWithFreshManagedConfig()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,14 +88,26 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
         binding.loginButton.setOnClickListener { startActivity(Intent(this, XingsuiAuthActivity::class.java)) }
         binding.registerButton.setOnClickListener { startActivity(Intent(this, XingsuiAuthActivity::class.java)) }
+        binding.accountCard.setOnClickListener { openProfile() }
         binding.vipButton.setOnClickListener { openVipCenter() }
-        binding.userCenterButton.setOnClickListener { openVipCenter() }
         binding.refreshButton.setOnClickListener { lifecycleScope.launch { refreshHome() } }
         binding.smartModeSwitch.setOnClickListener {
-            val message = if (binding.smartModeSwitch.isChecked) {
-                R.string.xingsui_home_smart_mode_enabled
-            } else {
-                R.string.xingsui_home_smart_mode_disabled
+            val message = when {
+                binding.smartModeSwitch.isChecked -> {
+                    selectedNodeId = null
+                    selectedNodeName = null
+                    selectedNodeDetail = null
+                    renderSelectedNode(
+                        getString(R.string.xingsui_node_auto_title),
+                        getString(R.string.xingsui_node_auto_detail),
+                    )
+                    R.string.xingsui_home_smart_mode_enabled
+                }
+                selectedNodeId == null -> {
+                    binding.smartModeSwitch.isChecked = true
+                    R.string.xingsui_home_select_manual_node
+                }
+                else -> R.string.xingsui_home_smart_mode_disabled
             }
             Snackbar.make(binding.root, message, Snackbar.LENGTH_SHORT).show()
         }
@@ -114,7 +132,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopStatusMonitor()
-        stopConnectWatchdog()
         stopPulse()
         super.onDestroy()
     }
@@ -122,9 +139,9 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private suspend fun refreshHome() {
         val session = sessionStore.load()
         if (session == null) {
+            stopAndDeleteManagedTunnel()
             apiClient = null
             account = null
-            managedTunnel = null
             renderSignedOut()
             return
         }
@@ -134,7 +151,13 @@ class XingsuiHomeActivity : AppCompatActivity() {
         runCatching {
             val me = requireNotNull(apiClient).getMe()
             account = me
-            managedTunnel = findManagedTunnel()
+            managedTunnel = findManagedTunnel()?.let { tunnel ->
+                if (tunnel.state == Tunnel.State.UP) tunnel else {
+                    runCatching { tunnel.deleteAsync() }
+                        .onFailure { XingsuiCrashReporter.recordException("home-remove-stale-config", it) }
+                    null
+                }
+            }
             me
         }.onSuccess { me ->
             setBusy(false)
@@ -147,7 +170,9 @@ class XingsuiHomeActivity : AppCompatActivity() {
                 clearExpiredSession()
                 return
             }
-            Snackbar.make(binding.root, R.string.xingsui_vip_verify_failed, Snackbar.LENGTH_LONG).show()
+            account = null
+            stopAndDeleteManagedTunnel()
+            Snackbar.make(binding.root, R.string.xingsui_account_sync_failed, Snackbar.LENGTH_LONG).show()
             renderSessionOffline(session.email)
         }
     }
@@ -156,13 +181,19 @@ class XingsuiHomeActivity : AppCompatActivity() {
         binding.accountEmail.setText(R.string.xingsui_home_guest)
         binding.vipStatus.setText(R.string.xingsui_home_not_logged_in)
         binding.vipExpiry.setText(R.string.xingsui_home_login_to_sync)
-        binding.trafficRemaining.setText(R.string.xingsui_home_trial_hint)
-        binding.nodeName.setText(R.string.xingsui_home_auto_node)
+        binding.trafficRemaining.setText(R.string.xingsui_home_login_to_sync)
+        selectedNodeId = null
+        selectedNodeName = null
+        selectedNodeDetail = null
+        binding.smartModeSwitch.isChecked = true
+        renderSelectedNode(
+            getString(R.string.xingsui_node_auto_title),
+            getString(R.string.xingsui_node_auto_detail),
+        )
         binding.connectionState.setText(R.string.xingsui_home_disconnected)
         binding.connectButton.setText(R.string.xingsui_home_login_connect)
         binding.authActions.visibility = View.VISIBLE
         binding.vipButton.isEnabled = true
-        binding.userCenterButton.isEnabled = false
         binding.connectButton.isEnabled = true
         stopPulse()
     }
@@ -170,11 +201,12 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private fun renderSessionOffline(email: String) {
         binding.accountEmail.text = email
         binding.vipStatus.setText(R.string.xingsui_home_syncing)
-        binding.vipExpiry.setText(R.string.xingsui_vip_verify_failed)
+        binding.vipExpiry.setText(R.string.xingsui_account_sync_failed)
         binding.trafficRemaining.setText(R.string.xingsui_home_login_to_sync)
         binding.authActions.visibility = View.GONE
-        binding.userCenterButton.isEnabled = true
-        binding.connectButton.isEnabled = true
+        binding.connectButton.isEnabled = false
+        binding.nodeManageButton.isEnabled = false
+        binding.smartModeSwitch.isEnabled = false
         renderTunnelState(managedTunnel)
     }
 
@@ -187,24 +219,25 @@ class XingsuiHomeActivity : AppCompatActivity() {
         }
         binding.vipExpiry.text = user.vipExpiredAt?.atZone(ZoneId.systemDefault())?.format(DATE_FORMATTER)
             ?: getString(R.string.xingsui_home_no_expiry)
-        binding.trafficRemaining.text = getString(
-            R.string.xingsui_home_free_remaining,
-            formatMegabytes(user.freeTrafficRemainingBytes),
-        )
+        binding.trafficRemaining.setText(R.string.xingsui_home_account_synced)
         binding.loginButton.isEnabled = false
         binding.registerButton.isEnabled = false
         binding.authActions.visibility = View.GONE
-        binding.userCenterButton.isEnabled = true
+        binding.connectButton.isEnabled = true
+        binding.nodeManageButton.isEnabled = true
+        binding.smartModeSwitch.isEnabled = true
     }
 
     private fun renderTunnelState(tunnel: ObservableTunnel?) {
         val state = tunnel?.state ?: Tunnel.State.DOWN
         val isUp = state == Tunnel.State.UP
-        binding.nodeName.text = when {
-            tunnel == null && selectedNodeId == null -> getString(R.string.xingsui_home_auto_node)
-            selectedNodeName != null -> getString(R.string.xingsui_home_node_template, selectedNodeName!!)
-            else -> getString(R.string.xingsui_home_node_template, DISPLAY_NODE_NAME)
+        val nodeTitle = selectedNodeName ?: if (selectedNodeId == null) {
+            getString(R.string.xingsui_node_auto_title)
+        } else {
+            DISPLAY_NODE_NAME
         }
+        val nodeDetail = selectedNodeDetail ?: getString(R.string.xingsui_node_auto_detail)
+        renderSelectedNode(nodeTitle, nodeDetail)
         binding.connectionState.text = when {
             isBusy -> binding.connectionState.text
             isUp && tunnel?.connectionStatus == ObservableTunnel.ConnectionStatus.CONNECTED -> getString(R.string.xingsui_home_connected)
@@ -228,12 +261,10 @@ class XingsuiHomeActivity : AppCompatActivity() {
     }
 
     private suspend fun toggleConnection() {
-        val session = sessionStore.load()
-        if (session == null) {
+        if (sessionStore.load() == null) {
             startActivity(Intent(this, XingsuiAuthActivity::class.java))
             return
         }
-        val client = apiClient ?: XingsuiApiClient(accessToken = session.accessToken).also { apiClient = it }
         val tunnel = managedTunnel ?: findManagedTunnel()
         if (tunnel?.state == Tunnel.State.UP) {
             setBusy(true, getString(R.string.xingsui_home_disconnecting))
@@ -243,64 +274,38 @@ class XingsuiHomeActivity : AppCompatActivity() {
                 }
             }
                 .onSuccess {
-                    managedTunnel = tunnel
+                    runCatching { tunnel.deleteAsync() }
+                        .onFailure { XingsuiCrashReporter.recordException("home-disconnect-delete-config", it) }
+                    managedTunnel = null
                     setBusy(false)
-                    renderTunnelState(tunnel)
+                    renderTunnelState(null)
                 }
                 .onFailure {
-                    setBusy(false)
                     XingsuiCrashReporter.recordException("home-disconnect", it)
-                    Snackbar.make(binding.root, R.string.xingsui_home_disconnect_failed, Snackbar.LENGTH_LONG).show()
+                    stopAndDeleteManagedTunnel(tunnel)
+                    setBusy(false)
+                    showConnectionSyncFailure()
                 }
             return
         }
 
         setBusy(true, getString(R.string.xingsui_home_authorizing))
-        runCatching {
-            withTimeout(CONNECTION_OPERATION_TIMEOUT_MS) {
-                val entitlement = client.authorizeVpn()
-                if (!entitlement.allowed) {
-                    throw XingsuiVipRequiredException(entitlement.reason)
-                }
-                val readyTunnel = ensureManagedTunnel(client)
-                withContext(Dispatchers.Main.immediate) {
-                    binding.connectionState.setText(R.string.xingsui_home_connecting)
-                }
-                prepareAndStartTunnel(readyTunnel)
-                readyTunnel
-            }
-        }.onSuccess { readyTunnel ->
-            if (pendingTunnelToStart == null) {
-                managedTunnel = readyTunnel
+        runCatching { prepareVpnPermissionOrConnect() }
+            .onFailure {
+                if (it is CancellationException && it !is TimeoutCancellationException) throw it
+                XingsuiCrashReporter.recordException("home-permission-prepare", it)
+                stopAndDeleteManagedTunnel()
                 setBusy(false)
-                renderTunnelState(readyTunnel)
-                refreshAccountQuietly(client)
+                renderTunnelState(null)
+                showConnectionSyncFailure()
             }
-        }.onFailure { error ->
-            setBusy(false)
-            XingsuiCrashReporter.recordException("home-connect", error)
-            if (error.isUnauthorized()) {
-                clearExpiredSession()
-                renderTunnelState(managedTunnel)
-                return@onFailure
-            }
-            val message = when (error) {
-                is XingsuiVipRequiredException -> entitlementMessage(error.message)
-                else -> error.message ?: getString(R.string.xingsui_home_connect_failed)
-            }
-            Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
-            if (message == getString(R.string.xingsui_free_trial_exhausted)) {
-                openVipCenter()
-            }
-            renderTunnelState(managedTunnel)
-        }
     }
 
-    private suspend fun prepareAndStartTunnel(tunnel: ObservableTunnel) {
+    private suspend fun prepareVpnPermissionOrConnect() {
         if (Application.getBackend() is GoBackend) {
             val permissionIntent = GoBackend.VpnService.prepare(this)
             if (permissionIntent != null) {
-                pendingTunnelToStart = tunnel
+                pendingConnectAfterPermission = true
                 withContext(Dispatchers.Main.immediate) {
                     binding.connectionState.setText(R.string.xingsui_home_waiting_permission)
                     vpnPermissionLauncher.launch(permissionIntent)
@@ -308,54 +313,36 @@ class XingsuiHomeActivity : AppCompatActivity() {
                 return
             }
         }
-        startPreparedTunnel(tunnel)
+        connectWithFreshManagedConfig()
     }
 
-    private suspend fun startPreparedTunnel(tunnel: ObservableTunnel) {
-        val client = apiClient
+    private suspend fun connectWithFreshManagedConfig() {
         val attemptId = ++connectAttemptId
         runCatching {
             withTimeout(CONNECTION_OPERATION_TIMEOUT_MS) {
                 withContext(Dispatchers.Main.immediate) {
-                    connectStartedAtMs = System.currentTimeMillis()
                     binding.connectionState.setText(R.string.xingsui_home_connecting)
-                    scheduleConnectWatchdog(tunnel, attemptId)
                 }
-                tunnel.setStateAsync(Tunnel.State.UP)
-                tunnel
+                Application.getTunnelManager().connectManagedTunnel(selectedNodeId)
             }
         }.onSuccess {
             if (attemptId != connectAttemptId) {
                 runCatching { it.setStateAsync(Tunnel.State.DOWN) }
                 return@onSuccess
             }
-            stopConnectWatchdog()
             managedTunnel = it
+            connectStartedAtMs = System.currentTimeMillis()
             setBusy(false)
             renderTunnelState(it)
-            if (client != null) refreshAccountQuietly(client)
         }.onFailure { error ->
+            if (error is CancellationException && error !is TimeoutCancellationException) throw error
             if (attemptId != connectAttemptId) return@onFailure
-            stopConnectWatchdog()
             connectStartedAtMs = 0L
             setBusy(false)
             XingsuiCrashReporter.recordException("home-start-prepared", error)
-            val errorText = ErrorMessages[error]
-            val message = getString(R.string.error_up, errorText)
-            Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
-            renderTunnelState(managedTunnel)
-        }
-    }
-
-    private suspend fun refreshAccountQuietly(client: XingsuiApiClient) {
-        runCatching { client.getMe() }.onSuccess {
-            account = it
-            renderAccount(it)
-        }.onFailure {
-            XingsuiCrashReporter.recordException("home-refresh-account-quiet", it)
-            if (it.isUnauthorized()) {
-                clearExpiredSession()
-            }
+            stopAndDeleteManagedTunnel()
+            renderTunnelState(null)
+            showConnectionSyncFailure()
         }
     }
 
@@ -369,26 +356,28 @@ class XingsuiHomeActivity : AppCompatActivity() {
                     if (tunnel != null) {
                         Application.getTunnelManager().getTunnelState(tunnel)
                         if (tunnel.state == Tunnel.State.UP) {
-                            runCatching {
-                                val statistics = tunnel.getStatisticsAsync()
-                                val latestHandshakeAt = statistics.peers().maxOfOrNull { peer ->
-                                    statistics.peer(peer)?.latestHandshakeEpochMillis() ?: 0L
-                                } ?: 0L
-                                if (latestHandshakeAt > 0L) {
-                                    connectStartedAtMs = 0L
-                                    tunnel.onConnectionStatusChanged(ObservableTunnel.ConnectionStatus.CONNECTED)
-                                } else if (connectStartedAtMs > 0L) {
-                                    tunnel.onConnectionStatusChanged(ObservableTunnel.ConnectionStatus.CONNECTING)
-                                }
-                                Unit
+                            check(sessionStore.load() != null) { "missing_session" }
+                            val statistics = tunnel.getStatisticsAsync()
+                            val latestHandshakeAt = statistics.peers().maxOfOrNull { peer ->
+                                statistics.peer(peer)?.latestHandshakeEpochMillis() ?: 0L
+                            } ?: 0L
+                            if (latestHandshakeAt > 0L) {
+                                connectStartedAtMs = 0L
+                                tunnel.onConnectionStatusChanged(ObservableTunnel.ConnectionStatus.CONNECTED)
+                            } else if (connectStartedAtMs > 0L) {
+                                tunnel.onConnectionStatusChanged(ObservableTunnel.ConnectionStatus.CONNECTING)
                             }
-                            maybeRefreshEntitlement(tunnel)
                             maybeStopHandshakeTimeout(tunnel)
                         }
                     }
                     renderTunnelState(tunnel)
                 }.onFailure {
                     XingsuiCrashReporter.recordException("home-status-monitor", it)
+                    if (managedTunnel != null) {
+                        stopAndDeleteManagedTunnel(managedTunnel)
+                        renderTunnelState(null)
+                        showConnectionSyncFailure()
+                    }
                 }
                 delay(STATUS_POLL_INTERVAL_MS)
             }
@@ -400,60 +389,11 @@ class XingsuiHomeActivity : AppCompatActivity() {
         statusMonitorJob = null
     }
 
-    private fun scheduleConnectWatchdog(tunnel: ObservableTunnel, attemptId: Long) {
-        stopConnectWatchdog()
-        connectWatchdogJob = lifecycleScope.launch {
-            delay(CONNECTION_OPERATION_TIMEOUT_MS + STATUS_POLL_INTERVAL_MS)
-            if (attemptId != connectAttemptId || connectStartedAtMs <= 0L) return@launch
-            connectAttemptId++
-            connectStartedAtMs = 0L
-            XingsuiCrashReporter.recordEvent("home-connect-start-timeout", "Stopping tunnel after backend start timeout")
-            setBusy(false)
-            binding.connectionState.setText(R.string.xingsui_home_disconnected)
-            Snackbar.make(binding.root, R.string.xingsui_home_connect_timeout, Snackbar.LENGTH_LONG).show()
-            runCatching {
-                withTimeout(CONNECTION_OPERATION_TIMEOUT_MS) {
-                    tunnel.setStateAsync(Tunnel.State.DOWN)
-                }
-            }.onFailure {
-                XingsuiCrashReporter.recordException("home-connect-start-timeout-stop", it)
-            }
-            renderTunnelState(tunnel)
-        }
-    }
-
-    private fun stopConnectWatchdog() {
-        connectWatchdogJob?.cancel()
-        connectWatchdogJob = null
-    }
-
-    private suspend fun maybeRefreshEntitlement(tunnel: ObservableTunnel) {
-        val now = System.currentTimeMillis()
-        if (now - lastEntitlementCheckAtMs < ENTITLEMENT_CHECK_INTERVAL_MS) return
-        lastEntitlementCheckAtMs = now
-        val session = sessionStore.load() ?: return
-        val client = apiClient ?: XingsuiApiClient(accessToken = session.accessToken).also { apiClient = it }
-        val entitlement = try {
-            client.authorizeVpn()
-        } catch (error: Throwable) {
-            if (error.isUnauthorized()) {
-                tunnel.setStateAsync(Tunnel.State.DOWN)
-                clearExpiredSession()
-            }
-            throw error
-        }
-        if (!entitlement.allowed) {
-            tunnel.setStateAsync(Tunnel.State.DOWN)
-            Snackbar.make(binding.root, entitlementMessage(entitlement.reason), Snackbar.LENGTH_LONG).show()
-        }
-    }
-
     private suspend fun maybeStopHandshakeTimeout(tunnel: ObservableTunnel) {
         if (tunnel.state != Tunnel.State.UP) return
         val startedAt = connectStartedAtMs
         if (startedAt <= 0L) return
         if (System.currentTimeMillis() - startedAt < HANDSHAKE_TIMEOUT_MS) return
-        stopConnectWatchdog()
         connectStartedAtMs = 0L
         XingsuiCrashReporter.recordEvent("home-handshake-timeout", "Stopping tunnel and rotating config after handshake timeout")
         runCatching {
@@ -462,62 +402,23 @@ class XingsuiHomeActivity : AppCompatActivity() {
             XingsuiCrashReporter.recordException("home-handshake-timeout-stop", it)
         }
 
-        val client = apiClient ?: sessionStore.load()?.let {
-            XingsuiApiClient(accessToken = it.accessToken).also { createdClient -> apiClient = createdClient }
-        }
-        if (client == null) {
-            Snackbar.make(binding.root, R.string.xingsui_home_connect_timeout, Snackbar.LENGTH_LONG).show()
-            renderTunnelState(tunnel)
-            return
-        }
-
-        runCatching {
-            val node = client.getDefaultVpnConfig(rotate = true)
-            updateManagedTunnel(tunnel, node)
-            managedTunnel = tunnel
-            binding.nodeName.text = getString(R.string.xingsui_home_node_template, node.name)
-            Snackbar.make(binding.root, R.string.xingsui_home_config_refreshed, Snackbar.LENGTH_LONG).show()
-        }.onFailure {
-            XingsuiCrashReporter.recordException("home-handshake-timeout-rotate", it)
-            Snackbar.make(binding.root, R.string.xingsui_home_connect_timeout, Snackbar.LENGTH_LONG).show()
-        }
-        renderTunnelState(tunnel)
+        stopAndDeleteManagedTunnel(tunnel)
+        showConnectionSyncFailure()
+        renderTunnelState(null)
     }
 
-    private fun clearExpiredSession() {
+    private suspend fun clearExpiredSession() {
+        stopAndDeleteManagedTunnel()
         sessionStore.clear()
         apiClient = null
         account = null
-        Snackbar.make(binding.root, R.string.xingsui_session_expired, Snackbar.LENGTH_LONG).show()
+        showConnectionSyncFailure()
         renderSignedOut()
     }
 
     private fun Throwable.isUnauthorized(): Boolean =
         (this as? XingsuiHttpException)?.isUnauthorized == true ||
             (cause as? XingsuiHttpException)?.isUnauthorized == true
-
-    private suspend fun ensureManagedTunnel(client: XingsuiApiClient): ObservableTunnel {
-        val node = if (selectedNodeId != null) {
-            runCatching { client.getNodeConfig(selectedNodeId!!) }
-                .getOrElse { client.getDefaultVpnConfig() }
-        } else {
-            client.getDefaultVpnConfig()
-        }
-        findManagedTunnel()?.let { existing ->
-            updateManagedTunnel(existing, node)
-            managedTunnel = existing
-            withContext(Dispatchers.Main.immediate) {
-                binding.nodeName.text = getString(R.string.xingsui_home_node_template, node.name)
-            }
-            return existing
-        }
-        return createManagedTunnel(node).also {
-            managedTunnel = it
-            withContext(Dispatchers.Main.immediate) {
-                binding.nodeName.text = getString(R.string.xingsui_home_node_template, node.name)
-            }
-        }
-    }
 
     private suspend fun showNodePicker() {
         val client = apiClient ?: run {
@@ -526,92 +427,174 @@ class XingsuiHomeActivity : AppCompatActivity() {
         }
         val dialog = BottomSheetDialog(this)
         val dp = resources.displayMetrics.density
-
-        // Root scroll view
         val scroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            isFillViewport = true
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0xFF1B1829.toInt(), 0xFF0D0D16.toInt()),
+            ).apply {
+                cornerRadii = floatArrayOf(
+                    28 * dp, 28 * dp,
+                    28 * dp, 28 * dp,
+                    0f, 0f,
+                    0f, 0f,
+                )
+                setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF343047.toInt())
+            }
         }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (24 * dp).toInt())
+            setPadding((18 * dp).toInt(), (10 * dp).toInt(), (18 * dp).toInt(), (30 * dp).toInt())
         }
         scroll.addView(root)
 
-        // Title
-        root.addView(TextView(this).apply {
-            text = "选择线路"
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, (14 * dp).toInt())
+        root.addView(View(this).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = 999f
+                setColor(0xFF545064.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams((42 * dp).toInt(), (4 * dp).toInt()).also {
+                it.gravity = Gravity.CENTER_HORIZONTAL
+                it.bottomMargin = (18 * dp).toInt()
+            }
         })
-
-        // Loading indicator
-        val spinner = ProgressBar(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).also { it.gravity = Gravity.CENTER_HORIZONTAL }
+        root.addView(TextView(this).apply {
+            setText(R.string.xingsui_node_picker_title)
+            setTextColor(0xFFF7F5FF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 21f)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        val subtitle = TextView(this).apply {
+            setText(R.string.xingsui_node_picker_loading)
+            setTextColor(0xFFA7AEC2.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setPadding(0, (5 * dp).toInt(), 0, (18 * dp).toInt())
         }
-        root.addView(spinner)
+        root.addView(subtitle)
 
+        val spinnerBox = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, (22 * dp).toInt(), 0, (30 * dp).toInt())
+        }
+        val spinner = ProgressBar(this).apply {
+            indeterminateTintList = ColorStateList.valueOf(0xFF8B5CF6.toInt())
+            layoutParams = LinearLayout.LayoutParams((34 * dp).toInt(), (34 * dp).toInt())
+        }
+        spinnerBox.addView(spinner)
+        root.addView(spinnerBox)
+
+        dialog.setOnShowListener {
+            dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
+                sheet.setBackgroundColor(Color.TRANSPARENT)
+                sheet.elevation = 24 * dp
+                BottomSheetBehavior.from(sheet).state = BottomSheetBehavior.STATE_EXPANDED
+            }
+            dialog.window?.setDimAmount(0.72f)
+        }
         dialog.setContentView(scroll)
         dialog.show()
 
-        // Load nodes in background
         val nodes = runCatching {
             withContext(Dispatchers.IO) { client.listNodes() }
         }.getOrNull()
 
-        root.removeView(spinner)
+        root.removeView(spinnerBox)
 
         if (nodes == null || nodes.isEmpty()) {
-            root.addView(TextView(this).apply {
-                text = "暂无可用线路，请稍后重试"
-                setTextColor(0xFF7a9bb5.toInt())
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            })
+            subtitle.setText(R.string.xingsui_node_picker_empty)
+            subtitle.setTextColor(0xFFFF9A9A.toInt())
             return
         }
 
-        // "Auto" row
+        subtitle.setText(R.string.xingsui_node_picker_count)
+        val canonicalSelection = selectedNodeId?.let { selectedId ->
+            nodes.firstOrNull { it.id == selectedId && isAndroidNodeSupported(it) }
+        }
+        if (selectedNodeId != null && canonicalSelection == null) {
+            selectedNodeId = null
+            selectedNodeName = null
+            selectedNodeDetail = null
+            binding.smartModeSwitch.isChecked = true
+            renderSelectedNode(
+                getString(R.string.xingsui_node_auto_title),
+                getString(R.string.xingsui_node_auto_detail),
+            )
+        } else if (canonicalSelection != null) {
+            selectedNodeName = canonicalSelection.name
+            selectedNodeDetail = nodeDetail(canonicalSelection)
+            renderSelectedNode(canonicalSelection.name, requireNotNull(selectedNodeDetail))
+        }
+
         root.addView(buildNodeRow(
             dp = dp,
-            label = "自动（智能线路）",
-            sublabel = "由后端自动选择最优节点",
+            label = getString(R.string.xingsui_node_auto_title),
+            sublabel = getString(R.string.xingsui_node_auto_detail),
             isOnline = true,
-            isVipOnly = false,
             isLocked = false,
             isSelected = selectedNodeId == null,
+            badge = if (selectedNodeId == null) getString(R.string.xingsui_node_selected_badge) else "",
             onClick = {
                 selectedNodeId = null
                 selectedNodeName = null
-                binding.nodeName.setText(R.string.xingsui_home_auto_node)
+                selectedNodeDetail = null
+                binding.smartModeSwitch.isChecked = true
+                renderSelectedNode(
+                    getString(R.string.xingsui_node_auto_title),
+                    getString(R.string.xingsui_node_auto_detail),
+                )
                 dialog.dismiss()
             }
         ))
 
-        // Node rows
         nodes.forEach { node ->
+            val isSupported = isAndroidNodeSupported(node)
+            val isSelected = selectedNodeId == node.id && isSupported
+            val isLocked = node.locked || !isSupported
+            val badge = when {
+                isSelected -> getString(R.string.xingsui_node_selected_badge)
+                !isSupported -> getString(R.string.xingsui_node_unavailable_short)
+                node.locked && node.vipOnly -> "VIP"
+                node.locked -> getString(R.string.xingsui_node_unavailable_short)
+                node.status == "online" -> getString(R.string.xingsui_node_choose)
+                else -> getString(R.string.xingsui_node_maintenance)
+            }
             root.addView(buildNodeRow(
                 dp = dp,
                 label = node.name,
-                sublabel = "${node.region}  ${if (node.vipOnly) "· VIP 专属" else ""}",
+                sublabel = nodeListDetail(node),
                 isOnline = node.status == "online",
-                isVipOnly = node.vipOnly,
-                isLocked = node.locked,
-                isSelected = selectedNodeId == node.id,
+                isLocked = isLocked,
+                isSelected = isSelected,
+                badge = badge,
                 onClick = {
-                    if (!node.locked) {
-                        selectedNodeId = node.id
-                        selectedNodeName = node.name
-                        binding.nodeName.text = getString(R.string.xingsui_home_node_template, node.name)
-                        dialog.dismiss()
-                    } else {
-                        Snackbar.make(binding.root, R.string.xingsui_vip_required_active, Snackbar.LENGTH_SHORT).show()
+                    when {
+                        !isSupported -> Snackbar.make(
+                            binding.root,
+                            R.string.xingsui_node_android_unsupported,
+                            Snackbar.LENGTH_LONG,
+                        ).show()
+                        node.locked && node.vipOnly -> Snackbar.make(
+                            binding.root,
+                            R.string.xingsui_vip_required_active,
+                            Snackbar.LENGTH_SHORT,
+                        ).show()
+                        node.locked -> Snackbar.make(
+                            binding.root,
+                            R.string.xingsui_node_unavailable,
+                            Snackbar.LENGTH_SHORT,
+                        ).show()
+                        else -> {
+                            selectedNodeId = node.id
+                            selectedNodeName = node.name
+                            selectedNodeDetail = nodeDetail(node)
+                            binding.smartModeSwitch.isChecked = false
+                            renderSelectedNode(node.name, requireNotNull(selectedNodeDetail))
+                            dialog.dismiss()
+                        }
                     }
                 }
             ))
@@ -623,76 +606,118 @@ class XingsuiHomeActivity : AppCompatActivity() {
         label: String,
         sublabel: String,
         isOnline: Boolean,
-        isVipOnly: Boolean,
         isLocked: Boolean,
         isSelected: Boolean,
+        badge: String,
         onClick: () -> Unit,
     ): LinearLayout {
-        val rowBg = GradientDrawable().apply {
-            cornerRadius = (8 * dp)
-            setColor(if (isSelected) 0x1520e6d2.toInt() else Color.TRANSPARENT)
+        val rowBg = if (isSelected) {
+            GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(0xFF30265E.toInt(), 0xFF211B43.toInt()),
+            ).apply {
+                cornerRadius = 16 * dp
+                setStroke((2 * dp).toInt().coerceAtLeast(1), 0xFF8B5CF6.toInt())
+            }
+        } else {
+            GradientDrawable().apply {
+                cornerRadius = 16 * dp
+                setColor(0xFF171720.toInt())
+                setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF302E40.toInt())
+            }
         }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = rowBg
-            setPadding((12 * dp).toInt(), (11 * dp).toInt(), (12 * dp).toInt(), (11 * dp).toInt())
-            alpha = if (isLocked && !isSelected) 0.55f else 1f
+            minimumHeight = (76 * dp).toInt()
+            setPadding((15 * dp).toInt(), (13 * dp).toInt(), (14 * dp).toInt(), (13 * dp).toInt())
+            alpha = if (isLocked && !isSelected) 0.72f else 1f
             setOnClickListener { onClick() }
+            elevation = if (isSelected) 8 * dp else 0f
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).also { it.bottomMargin = (4 * dp).toInt() }
+            ).also { it.bottomMargin = (10 * dp).toInt() }
         }
 
-        // Status dot
-        val dotColor = when {
-            isOnline -> 0xFF4ade80.toInt()
-            else -> 0xFF2d4a63.toInt()
-        }
+        val dotColor = if (isOnline) 0xFF34D399.toInt() else 0xFF646579.toInt()
         val dot = View(this).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(dotColor) }
-            layoutParams = LinearLayout.LayoutParams((9 * dp).toInt(), (9 * dp).toInt()).also {
-                it.marginEnd = (10 * dp).toInt()
+            layoutParams = LinearLayout.LayoutParams((10 * dp).toInt(), (10 * dp).toInt()).also {
+                it.marginEnd = (12 * dp).toInt()
             }
         }
         row.addView(dot)
 
-        // Text block
         val textCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         textCol.addView(TextView(this).apply {
             text = label
-            setTextColor(if (isLocked) 0xFF7a9bb5.toInt() else Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(if (isLocked) 0xFFC3C4D2.toInt() else 0xFFF8F7FF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
         })
         if (sublabel.isNotBlank()) {
             textCol.addView(TextView(this).apply {
                 text = sublabel.trim()
-                setTextColor(0xFF7a9bb5.toInt())
+                setTextColor(if (isSelected) 0xFFD7D1F8.toInt() else 0xFFA7AEC2.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(0, (5 * dp).toInt(), 0, 0)
+                maxLines = 2
             })
         }
         row.addView(textCol)
 
-        // Right badge
-        val badge = when {
-            isSelected -> "✓"
-            isLocked -> "🔒"
-            isVipOnly -> "VIP"
-            else -> ""
-        }
         if (badge.isNotEmpty()) {
             row.addView(TextView(this).apply {
-                text = badge
-                setTextColor(if (isSelected) 0xFF20e6d2.toInt() else 0xFF7a9bb5.toInt())
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setPadding((8 * dp).toInt(), 0, 0, 0)
+                text = if (isSelected) "✓  $badge" else badge
+                setTextColor(if (isSelected) Color.WHITE else 0xFFC2B9F5.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    cornerRadius = 999f
+                    setColor(if (isSelected) 0xFF7C3AED.toInt() else 0xFF27223D.toInt())
+                    setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF4A416A.toInt())
+                }
+                setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).also { it.marginStart = (10 * dp).toInt() }
             })
         }
         return row
+    }
+
+    private fun isAndroidNodeSupported(node: VpnNodeSummary): Boolean =
+        node.protocol.equals(PROTOCOL_AMNEZIAWG, ignoreCase = true)
+
+    private fun nodeDetail(node: VpnNodeSummary): String = publicNodeRegion(node.region)
+
+    private fun nodeListDetail(node: VpnNodeSummary): String {
+        val status = if (node.status == "online") {
+            getString(R.string.xingsui_node_available)
+        } else {
+            getString(R.string.xingsui_node_maintenance)
+        }
+        return listOf(publicNodeRegion(node.region), status)
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+    }
+
+    private fun publicNodeRegion(region: String): String {
+        return region.replace(Regex("\\s*·\\s*大阪中转落地"), "").trim()
+    }
+
+    private fun renderSelectedNode(name: String, detail: String) {
+        binding.nodeName.text = getString(R.string.xingsui_home_node_template, name)
+        binding.nodeDetail.text = detail
     }
 
     private suspend fun findManagedTunnel(): ObservableTunnel? {
@@ -700,25 +725,22 @@ class XingsuiHomeActivity : AppCompatActivity() {
         return tunnels.firstOrNull { it.name == MANAGED_TUNNEL_NAME }
     }
 
-    private suspend fun createManagedTunnel(node: VpnNodeConfig): ObservableTunnel {
-        val config = parseNodeConfig(node)
-        val name = node.tunnelName.takeIf { it.matches(TUNNEL_NAME_PATTERN) } ?: MANAGED_TUNNEL_NAME
-        return runCatching {
-            Application.getTunnelManager().create(name, config)
-        }.getOrElse {
-            findManagedTunnel() ?: throw it
+    private suspend fun stopAndDeleteManagedTunnel(tunnel: ObservableTunnel? = null) {
+        val targetTunnel = tunnel ?: managedTunnel ?: findManagedTunnel()
+        if (targetTunnel == null) {
+            managedTunnel = null
+            return
         }
-    }
-
-    private suspend fun updateManagedTunnel(tunnel: ObservableTunnel, node: VpnNodeConfig) {
-        tunnel.setConfigAsync(parseNodeConfig(node))
-    }
-
-    private suspend fun parseNodeConfig(node: VpnNodeConfig): Config {
-        val config = withContext(Dispatchers.IO) {
-            ByteArrayInputStream(node.configText.toByteArray(StandardCharsets.UTF_8)).use { Config.parse(it) }
+        if (targetTunnel.state == Tunnel.State.UP) {
+            runCatching {
+                withTimeout(CONNECTION_OPERATION_TIMEOUT_MS) {
+                    targetTunnel.setStateAsync(Tunnel.State.DOWN)
+                }
+            }.onFailure { XingsuiCrashReporter.recordException("home-security-stop", it) }
         }
-        return config
+        runCatching { targetTunnel.deleteAsync() }
+            .onFailure { XingsuiCrashReporter.recordException("home-security-delete-config", it) }
+        managedTunnel = null
     }
 
     private fun setBusy(busy: Boolean, status: String? = null) {
@@ -726,7 +748,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
         binding.connectButton.isEnabled = !busy
         binding.refreshButton.isEnabled = !busy
         binding.vipButton.isEnabled = !busy
-        binding.userCenterButton.isEnabled = !busy
         binding.smartModeSwitch.isEnabled = !busy
         if (status != null) {
             binding.connectionState.text = status
@@ -736,6 +757,10 @@ class XingsuiHomeActivity : AppCompatActivity() {
         } else if (managedTunnel?.state != Tunnel.State.UP) {
             stopPulse()
         }
+    }
+
+    private fun showConnectionSyncFailure() {
+        Snackbar.make(binding.root, R.string.xingsui_account_sync_failed, Snackbar.LENGTH_LONG).show()
     }
 
     private fun startConnectingAnimation() {
@@ -780,32 +805,28 @@ class XingsuiHomeActivity : AppCompatActivity() {
         binding.powerRing.rotation = 0f
     }
 
-    private fun entitlementMessage(reason: String?): String = when (reason) {
-        REASON_FREE_TRAFFIC_EXHAUSTED -> getString(R.string.xingsui_free_trial_exhausted)
-        REASON_VIP_EXPIRED -> getString(R.string.xingsui_vip_expired)
-        else -> getString(R.string.xingsui_vip_required_active)
-    }
-
     private fun openVipCenter() {
         startActivity(Intent(this, XingsuiVipActivity::class.java))
     }
 
-    private fun formatMegabytes(bytes: Long): String {
-        return String.format(Locale.US, "%.1f", bytes.coerceAtLeast(0L) / 1024.0 / 1024.0)
+    private fun openProfile() {
+        val destination = if (sessionStore.load() == null) {
+            XingsuiAuthActivity::class.java
+        } else {
+            XingsuiProfileActivity::class.java
+        }
+        startActivity(Intent(this, destination))
     }
 
     companion object {
         private const val MANAGED_TUNNEL_NAME = "xingsui"
         private const val DISPLAY_NODE_NAME = "星隧智能节点"
+        private const val PROTOCOL_AMNEZIAWG = "amneziawg"
         private const val VIP_ACTIVE = "active"
         private const val VIP_EXPIRED = "expired"
-        private const val REASON_FREE_TRAFFIC_EXHAUSTED = "free_traffic_exhausted"
-        private const val REASON_VIP_EXPIRED = "vip_expired"
         private const val CONNECTION_OPERATION_TIMEOUT_MS = 30_000L
         private const val HANDSHAKE_TIMEOUT_MS = 25_000L
         private const val STATUS_POLL_INTERVAL_MS = 5_000L
-        private const val ENTITLEMENT_CHECK_INTERVAL_MS = 30_000L
-        private val TUNNEL_NAME_PATTERN = Regex("[a-zA-Z0-9_=+.-]{1,15}")
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     }
 }

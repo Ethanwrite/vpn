@@ -57,6 +57,12 @@ data class UserAccount(
     val freeTrafficRemainingBytes: Long,
 )
 
+data class AppVersionInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val downloadUrl: String,
+)
+
 data class EntitlementStatus(
     val allowed: Boolean,
     val reason: String,
@@ -65,6 +71,7 @@ data class EntitlementStatus(
     val freeTrafficQuotaBytes: Long,
     val freeTrafficUsedBytes: Long,
     val freeTrafficRemainingBytes: Long,
+    val leaseExpiresAt: Instant?,
 )
 
 data class VpnNodeConfig(
@@ -72,6 +79,10 @@ data class VpnNodeConfig(
     val name: String,
     val region: String,
     val tunnelName: String,
+    val protocol: String,
+    val leaseId: String,
+    val issuedAt: Instant,
+    val expiresAt: Instant,
     val configText: String,
     val entitlement: EntitlementStatus,
 )
@@ -80,6 +91,7 @@ data class VpnNodeSummary(
     val id: String,
     val name: String,
     val region: String,
+    val protocol: String,
     val vipOnly: Boolean,
     val status: String,
     val loadPercent: Int,

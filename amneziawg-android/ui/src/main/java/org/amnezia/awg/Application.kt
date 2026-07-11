@@ -29,7 +29,6 @@ import org.amnezia.awg.util.ToolsInstaller
 import org.amnezia.awg.util.UserKnobs
 import org.amnezia.awg.util.applicationScope
 import org.amnezia.awg.xingsui.XingsuiCrashReporter
-import org.amnezia.awg.xingsui.XingsuiVipGate
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -172,16 +171,12 @@ class Application : android.app.Application() {
                     return@launch
                 }
 
-                XingsuiVipGate.requireActiveVip(applicationContext)
                 Log.i(TAG, "Reconnecting ${activeTunnels.size} Xingsui tunnel(s) after network change: $oldType -> $newType")
 
                 for (tunnel in activeTunnels) {
                     try {
-                        Log.d(TAG, "Disconnecting tunnel: ${tunnel.name}")
-                        tunnel.setStateAsync(org.amnezia.awg.backend.Tunnel.State.DOWN)
-                        kotlinx.coroutines.delay(RECONNECT_TOGGLE_DELAY_MS)
-                        Log.d(TAG, "Reconnecting tunnel: ${tunnel.name}")
-                        tunnel.setStateAsync(org.amnezia.awg.backend.Tunnel.State.UP)
+                        Log.d(TAG, "Refreshing managed configuration before reconnect: ${tunnel.name}")
+                        tunnelManager.reconnectManagedTunnel(tunnel)
                         Log.i(TAG, "Successfully reconnected tunnel: ${tunnel.name}")
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
@@ -202,7 +197,6 @@ class Application : android.app.Application() {
         private const val TAG = "AmneziaWG/Application"
         private const val XINGSUI_MANAGED_TUNNEL_NAME = "xingsui"
         private const val RECONNECT_DEBOUNCE_MS = 1500L
-        private const val RECONNECT_TOGGLE_DELAY_MS = 800L
         private lateinit var weakSelf: WeakReference<Application>
 
         fun get(): Application {

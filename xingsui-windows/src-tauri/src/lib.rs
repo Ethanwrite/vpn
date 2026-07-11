@@ -1,7 +1,6 @@
 //! 星隧 VPN Windows 客户端 Rust 壳入口。
 
 mod api;
-mod awg;
 mod commands;
 mod core;
 mod error;
@@ -11,6 +10,7 @@ mod state;
 mod stats;
 mod store;
 mod sysproxy;
+mod vless;
 
 use state::AppState;
 use tauri::Manager;
@@ -23,6 +23,7 @@ pub fn run() {
             // AppData 目录用于存放加密登录态与运行时配置。
             let app_dir = app.path().app_data_dir().expect("无法解析 AppData 目录");
             std::fs::create_dir_all(&app_dir).ok();
+            core::cleanup_stale_runtime_files(&app_dir).expect("无法清理遗留的敏感运行配置");
             app.manage(AppState::new(app_dir));
             Ok(())
         })
@@ -33,7 +34,6 @@ pub fn run() {
             commands::get_me,
             commands::logout,
             commands::list_nodes,
-            commands::measure_latency,
             commands::connect,
             commands::disconnect,
             commands::switch_mode,

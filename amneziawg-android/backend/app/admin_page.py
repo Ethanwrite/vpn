@@ -205,7 +205,7 @@ ADMIN_HTML = """<!doctype html>
         <span class="muted small">最近 500 位用户</span>
       </div>
       <div class="panel"><table>
-        <thead><tr><th>邮箱</th><th>注册</th><th>VIP</th><th>到期</th><th>最近登录</th><th>操作</th></tr></thead>
+        <thead><tr><th>邮箱</th><th>注册</th><th>VIP</th><th>到期</th><th>最近登录</th><th>邀请</th><th>操作</th></tr></thead>
         <tbody id="users"></tbody>
       </table></div>
     </div>
@@ -252,13 +252,14 @@ ADMIN_HTML = """<!doctype html>
           <div class="form-group"><label>节点 ID <span class="muted">(留空自动生成)</span></label><input id="node_id" placeholder="auto"/></div>
           <div class="form-group"><label>名称 *</label><input id="node_name" placeholder="大阪 CN2 GIA"/></div>
           <div class="form-group"><label>区域</label><input id="node_region" value="智能线路"/></div>
+          <div class="form-group"><label>协议</label><select id="node_protocol"><option value="awg">AmneziaWG (Android)</option><option value="vless">VLESS Reality (Windows)</option><option value="dual">AmneziaWG + VLESS</option></select></div>
           <div class="form-group"><label>入口 Endpoint *</label><input id="node_endpoint" placeholder="1.2.3.4:443"/></div>
           <div class="form-group"><label>Agent 主机 *</label><input id="node_agent_host" placeholder="1.2.3.4"/></div>
           <div class="form-group"><label>Agent 端口</label><input id="node_agent_port" type="number" value="51821"/></div>
           <div class="form-group full-col"><label>服务端公钥 *</label><input id="node_server_public_key" placeholder="base64"/></div>
           <div class="form-group"><label>客户端网段</label><input id="node_client_network" value="10.66.66.0/24"/></div>
           <div class="form-group"><label>DNS</label><input id="node_dns" value="1.1.1.1"/></div>
-          <div class="form-group"><label>AllowedIPs</label><input id="node_allowed_ips" value="0.0.0.0/0"/></div>
+          <div class="form-group"><label>AllowedIPs</label><input id="node_allowed_ips" value="0.0.0.0/0, ::/0"/></div>
           <div class="form-group"><label>Keepalive (秒)</label><input id="node_keepalive" type="number" value="25"/></div>
           <div class="form-group"><label>MTU</label><input id="node_mtu" type="number" value="1420"/></div>
           <div class="form-group"><label>权重</label><input id="node_weight" type="number" value="100"/></div>
@@ -399,11 +400,12 @@ ADMIN_HTML = """<!doctype html>
           <td><span class="tag ${vipCls[u.vip_status]||'tag-muted'}">${vipText[u.vip_status]||u.vip_status}</span></td>
           <td class="small">${fmtDate(u.vip_expired_at)}</td>
           <td class="small">${fmtDate(u.last_login_at)}</td>
+          <td><strong>${u.invited_count||0}</strong><br><span class="muted small">有效 ${u.paid_invite_count||0}</span></td>
           <td><div class="actions">
             <button class="btn-sm btn-primary" onclick="grantVip('${u.id}','${u.email.replace(/'/g,"\\'")}')">授 VIP</button>
             ${u.vip_status==='active'?`<button class="btn-sm btn-danger" onclick="revokeVip('${u.id}')">撤销</button>`:''}
           </div></td>
-        </tr>`).join('')||`<tr><td colspan="6" class="empty">暂无用户</td></tr>`;
+        </tr>`).join('')||`<tr><td colspan="7" class="empty">暂无用户</td></tr>`;
     }
 
     async function grantVip(id, email) {
@@ -452,7 +454,7 @@ ADMIN_HTML = """<!doctype html>
             <div><div class="nc-stat-label">内存</div><div>${n.mem_used_percent!=null?n.mem_used_percent+'%':'-'}</div></div>
           </div>
           <div style="margin-bottom:10px"><div class="nc-stat-label">负载</div>${loadBar(pct)}</div>
-          <div class="muted small" style="margin-bottom:10px">Agent: ${n.agent_host}:${n.agent_port} · 心跳: ${hb}</div>
+          <div class="muted small" style="margin-bottom:10px">协议: ${(n.protocol||'awg').toUpperCase()} · Agent: ${n.agent_host}:${n.agent_port} · 心跳: ${hb}</div>
           <div class="nc-actions">
             <button class="btn-sm" onclick="openNodeModal('${n.id}')">编辑</button>
             <button class="btn-sm ${n.enabled?'btn-danger':'btn-primary'}" onclick="toggleNode('${n.id}',${!n.enabled})">${n.enabled?'停用':'启用'}</button>
@@ -470,13 +472,14 @@ ADMIN_HTML = """<!doctype html>
       document.getElementById('node_id').readOnly=!!n;
       document.getElementById('node_name').value=n?.name||'';
       document.getElementById('node_region').value=n?.region||'智能线路';
+      document.getElementById('node_protocol').value=n?.protocol||'awg';
       document.getElementById('node_endpoint').value=n?.endpoint||'';
       document.getElementById('node_agent_host').value=n?.agent_host||'';
       document.getElementById('node_agent_port').value=n?.agent_port??51821;
       document.getElementById('node_server_public_key').value=n?.server_public_key||'';
       document.getElementById('node_client_network').value=n?.client_network||'10.66.66.0/24';
       document.getElementById('node_dns').value=n?.dns||'1.1.1.1';
-      document.getElementById('node_allowed_ips').value=n?.allowed_ips||'0.0.0.0/0';
+      document.getElementById('node_allowed_ips').value=n?.allowed_ips||'0.0.0.0/0, ::/0';
       document.getElementById('node_keepalive').value=n?.persistent_keepalive??25;
       document.getElementById('node_mtu').value=n?.mtu??1420;
       document.getElementById('node_weight').value=n?.weight??100;
@@ -494,7 +497,7 @@ ADMIN_HTML = """<!doctype html>
       if(raw){try{params=JSON.parse(raw);}catch(e){toast('混淆参数 JSON 格式有误','error');return;}}
       const g=id=>document.getElementById(id).value.trim();
       const body={
-        name:g('node_name'),region:g('node_region')||'智能线路',endpoint:g('node_endpoint'),
+        name:g('node_name'),region:g('node_region')||'智能线路',protocol:g('node_protocol')||'awg',endpoint:g('node_endpoint'),
         agent_host:g('node_agent_host'),agent_port:Number(g('node_agent_port')||51821),
         server_public_key:g('node_server_public_key'),client_network:g('node_client_network'),
         dns:g('node_dns'),allowed_ips:g('node_allowed_ips'),
@@ -504,7 +507,7 @@ ADMIN_HTML = """<!doctype html>
         max_clients:Number(g('node_max_clients')||0),
         enabled:document.getElementById('node_enabled').value==='true'
       };
-      if(!body.name||!body.endpoint||!body.agent_host||!body.server_public_key){toast('名称、入口、Agent 主机与服务端公钥为必填项','error');return;}
+      if(!body.name||!body.endpoint||!body.agent_host||((body.protocol==='awg'||body.protocol==='dual')&&!body.server_public_key)){toast('名称、入口与 Agent 主机为必填项；AWG 还必须填写服务端公钥。','error');return;}
       try{
         if(_editNid) await api(`/admin/nodes/${_editNid}`,{method:'PUT',body:JSON.stringify(body)});
         else{ const id=document.getElementById('node_id').value.trim(); await api('/admin/nodes',{method:'POST',body:JSON.stringify({...body,id:id||null})}); }

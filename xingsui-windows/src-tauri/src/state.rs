@@ -16,6 +16,8 @@ pub struct ConnRuntime {
     pub node_name: Option<String>,
     /// sing-box 子进程句柄；断开时 kill。
     pub child: Option<CommandChild>,
+    /// 仅在内核读取配置前短暂存在；ready 后立即删除。
+    pub config_path: Option<PathBuf>,
     /// clash api 端口，用于轮询流量。
     pub clash_port: u16,
     /// 系统代理模式下备份的原注册表值，用于恢复。

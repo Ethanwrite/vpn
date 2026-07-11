@@ -6,6 +6,7 @@
 package org.amnezia.awg.activity
 
 import android.Manifest
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -86,10 +87,22 @@ class TvMainActivity : AppCompatActivity() {
         }
     }
     private var pendingTunnel: ObservableTunnel? = null
-    private val permissionActivityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+    private val permissionActivityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val tunnel = pendingTunnel
-        if (tunnel != null)
+        if (result.resultCode == Activity.RESULT_OK && tunnel != null) {
             setTunnelStateWithPermissionsResult(tunnel)
+        } else if (tunnel != null) {
+            lifecycleScope.launch {
+                if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+                    runCatching { tunnel.deleteAsync() }
+                }
+                Toast.makeText(
+                    this@TvMainActivity,
+                    R.string.xingsui_account_sync_failed,
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
         pendingTunnel = null
     }
 
@@ -98,10 +111,9 @@ class TvMainActivity : AppCompatActivity() {
             try {
                 tunnel.setStateAsync(Tunnel.State.TOGGLE)
             } catch (e: Throwable) {
-                val error = ErrorMessages[e]
-                val message = getString(R.string.error_up, error)
+                val message = getString(R.string.xingsui_account_sync_failed)
                 Toast.makeText(this@TvMainActivity, message, Toast.LENGTH_LONG).show()
-                Log.e(TAG, message, e)
+                Log.e(TAG, "Managed tunnel state change failed", e)
             }
             updateStats()
         }
@@ -156,13 +168,29 @@ class TvMainActivity : AppCompatActivity() {
                                 Log.e(TAG, message, e)
                             }
                         } else {
-                            if (Application.getBackend() is GoBackend) {
-                                val intent = GoBackend.VpnService.prepare(binding.root.context)
-                                if (intent != null) {
-                                    pendingTunnel = item
-                                    permissionActivityResultLauncher.launch(intent)
-                                    return@launch
+                            try {
+                                if (item.name == XINGSUI_MANAGED_TUNNEL_NAME &&
+                                    item.state != Tunnel.State.UP &&
+                                    Application.getBackend() is GoBackend
+                                ) {
+                                    val intent = GoBackend.VpnService.prepare(binding.root.context)
+                                    if (intent != null) {
+                                        pendingTunnel = item
+                                        permissionActivityResultLauncher.launch(intent)
+                                        return@launch
+                                    }
                                 }
+                            } catch (error: Throwable) {
+                                if (item.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+                                    runCatching { item.deleteAsync() }
+                                }
+                                Log.e(TAG, "Managed VPN permission preparation failed", error)
+                                Toast.makeText(
+                                    this@TvMainActivity,
+                                    R.string.xingsui_account_sync_failed,
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                                return@launch
                             }
                             setTunnelStateWithPermissionsResult(item)
                         }
@@ -427,5 +455,6 @@ class TvMainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "AmneziaWG/TvMainActivity"
+        private const val XINGSUI_MANAGED_TUNNEL_NAME = "xingsui"
     }
 }

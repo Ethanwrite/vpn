@@ -44,9 +44,11 @@
     "externalBin": [
       "binaries/sing-box"
     ],
-    "resources": [
-      "resources/wintun.dll"
-    ],
+    "resources": {
+      "resources/wintun.dll": "wintun.dll",
+      "resources/LICENSE-sing-box.txt": "LICENSE-sing-box.txt",
+      "resources/LICENSE-wintun.txt": "LICENSE-wintun.txt"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "skip"
@@ -64,7 +66,7 @@
   },
   "plugins": {
     "shell": {
-      "open": false
+      "open": "https://xingsui\\.org(?:/.*)?"
     }
   }
 }

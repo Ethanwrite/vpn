@@ -11,11 +11,7 @@ const VERSION_CODE: &str = "2";
 const VERSION_NAME: &str = "1.0.17";
 
 /// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退。
-pub const BASE_URLS: &[&str] = &[
-    "https://api.xingsuico.com/api",
-    "https://xingsui.org/api",
-    "https://api.xingsui.org/api",
-];
+pub const BASE_URLS: &[&str] = &["https://xingsui.org/api"];
 
 pub struct ApiClient {
     http: Client,
@@ -46,6 +42,7 @@ impl ApiClient {
                 .http
                 .request(method.clone(), &url)
                 .header("Accept", "application/json")
+                .header("X-Xingsui-Platform", "windows")
                 .header("X-Xingsui-Version-Code", VERSION_CODE)
                 .header("X-Xingsui-Version-Name", VERSION_NAME);
             if let Some(t) = token {
@@ -66,7 +63,11 @@ impl ApiClient {
                     }
                     // 4xx 客户端错误无需切换域名，直接返回。
                     if status.is_client_error() {
-                        return Err(AppError::other(user_facing_detail(&extract_detail(&text))));
+                        return if token.is_some() {
+                            Err(AppError::connection_sync())
+                        } else {
+                            Err(AppError::other(extract_detail(&text)))
+                        };
                     }
                     last_err = Some(AppError::Api {
                         status: status.as_u16(),
@@ -76,7 +77,11 @@ impl ApiClient {
                 Err(e) => last_err = Some(AppError::Network(e.to_string())),
             }
         }
-        Err(last_err.unwrap_or_else(|| AppError::Network("所有线路均不可达".into())))
+        if token.is_some() {
+            Err(AppError::connection_sync())
+        } else {
+            Err(last_err.unwrap_or_else(|| AppError::Network("所有线路均不可达".into())))
+        }
     }
 
     pub async fn login(&self, email: &str, password: &str) -> AppResult<AuthResponse> {
@@ -112,7 +117,9 @@ impl ApiClient {
         let text = self
             .request(Method::GET, "/vpn/nodes", Some(token), None)
             .await?;
-        Ok(serde_json::from_str(&text)?)
+        let mut nodes: Vec<VpnNodeSummary> = serde_json::from_str(&text)?;
+        nodes.retain(|node| node.protocol == "vless");
+        Ok(nodes)
     }
 
     pub async fn get_node_config(&self, token: &str, node_id: &str) -> AppResult<VpnNodeConfig> {
@@ -124,11 +131,13 @@ impl ApiClient {
     pub async fn report_usage(
         &self,
         token: &str,
+        lease_id: &str,
         tunnel_name: Option<&str>,
         rx_bytes_delta: u64,
         tx_bytes_delta: u64,
     ) -> AppResult<Entitlement> {
         let body = json!({
+            "lease_id": lease_id,
             "tunnel_name": tunnel_name,
             "rx_bytes_delta": rx_bytes_delta,
             "tx_bytes_delta": tx_bytes_delta,
@@ -152,18 +161,4 @@ fn extract_detail(text: &str) -> String {
                 text.chars().take(200).collect()
             }
         })
-}
-
-fn user_facing_detail(detail: &str) -> String {
-    if detail.starts_with("Node agent unreachable") {
-        return "当前线路暂不可用，请切换其他线路。".into();
-    }
-    match detail {
-        "free_traffic_exhausted" => "30MB 免费体验流量已用完，请开通 VIP 后继续使用。".into(),
-        "vip_expired" => "VIP 已过期，请续费后继续使用。".into(),
-        "vip_required" => "该线路为 VIP 专属线路，请开通 VIP 后使用。".into(),
-        "node_disabled" => "当前线路维护中，请切换其他线路。".into(),
-        "VPN node is not configured" => "当前线路暂不可用，请稍后重试或联系客服。".into(),
-        _ => detail.to_string(),
-    }
 }

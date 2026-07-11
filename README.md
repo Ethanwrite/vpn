@@ -24,7 +24,7 @@
 
 ```bash
 cd amneziawg-android
-./gradlew :ui:assembleRelease -PxingsuiReleaseApiBaseUrl=https://xingsuico.com/api
+./gradlew :ui:assembleRelease -PxingsuiReleaseApiBaseUrl=https://xingsui.org/api
 ```
 
 ## 后端部署

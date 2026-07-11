@@ -1,4 +1,4 @@
-# 星隧 VPN 控制面（大阪 212.50.232.111 / 2GB RAM）
+# 星隧 VPN 控制面（资源受限的生产主机）
 # 组件：PostgreSQL 16 + FastAPI 后端 + Caddy(自动 TLS / 反代)
 # 用法：
 #   1) cp .env.example .env 并填好真实值（DATABASE_URL/POSTGRES_PASSWORD/ADMIN_*/SITE_DOMAIN ...）
@@ -48,6 +48,7 @@ services:
     environment:
       # 容器内连库用服务名 db；覆盖 .env 里可能写成 localhost 的值
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      WINDOWS_CLIENT_ENABLED: ${WINDOWS_CLIENT_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -55,6 +56,9 @@ services:
       - "8000"
     volumes:
       - /opt/xingsui/download:/opt/xingsui/download:ro,Z
+      - /opt/xingsui/secrets:/run/secrets:ro,Z
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     mem_limit: 640m
     networks: [internal]
 

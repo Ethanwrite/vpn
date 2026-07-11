@@ -1,8 +1,10 @@
 from collections.abc import Generator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 import base64
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -18,9 +20,9 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
-from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +32,7 @@ from app.database import SessionLocal, init_database
 from app.db_models import (
     AuthSessionRow,
     InvitationRow,
+    NodeRequestNonceRow,
     OrderRow,
     PaymentSettingRow,
     PromotionActivityRow,
@@ -41,9 +44,15 @@ from app.db_models import (
     VpnNodeRow,
     WithdrawalRow,
 )
+from app.payment_page import render_payment_page
 from app.site_page import SITE_HTML
 
 logger = logging.getLogger("xingsui.subscription")
+security_logger = logging.getLogger("uvicorn.error")
+
+
+def production_environment() -> bool:
+    return os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "production")).strip().lower() in {"prod", "production"}
 
 
 @asynccontextmanager
@@ -52,10 +61,24 @@ async def lifespan(_: FastAPI):
     seed_database()
     if env_flag("RESTORE_ACTIVE_PEERS_ON_START", False):
         restore_active_vpn_peers()
-    yield
+    cleanup_task = asyncio.create_task(vpn_lease_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
-app = FastAPI(title="Xingsui Commercial API", version="0.1.0", lifespan=lifespan)
+api_docs_enabled = os.getenv("ENABLE_API_DOCS", "false").strip().lower() in {"1", "true", "yes", "on"}
+app = FastAPI(
+    title="Xingsui Commercial API",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if api_docs_enabled else None,
+    redoc_url="/redoc" if api_docs_enabled else None,
+    openapi_url="/openapi.json" if api_docs_enabled else None,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -85,6 +108,23 @@ async def subscription_api_exception_handler(_: Request, exc: SubscriptionApiExc
 
 ADMIN_SESSION_COOKIE = "xingsui_admin_session"
 ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 8
+ADMIN_MAX_GRANT_DAYS = int(os.getenv("ADMIN_MAX_GRANT_DAYS", "3660"))
+ADMIN_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+SENSITIVE_RESPONSE_PATHS = {
+    "/auth/email/login",
+    "/auth/email/register",
+    "/me",
+    "/auth/logout",
+    "/usage/authorize",
+    "/usage/report",
+    "/vpn/authorize",
+    "/vpn/config",
+    "/vpn/nodes",
+    "/user/vip/status",
+    "/user/subscription-link",
+    "/user/subscription-link/reset",
+    "/sub",
+}
 APP_VERSION_CODE = int(os.getenv("APP_VERSION_CODE", "13"))
 APP_VERSION_NAME = os.getenv("APP_VERSION_NAME", "2.0.3")
 MIN_SUPPORTED_APP_VERSION_CODE = int(os.getenv("MIN_SUPPORTED_APP_VERSION_CODE", "13"))
@@ -99,20 +139,103 @@ def admin_session_secret() -> str:
     return os.getenv("ADMIN_SESSION_SECRET", admin_password())
 
 
-def admin_session_token() -> str:
-    return hmac.new(
+def admin_writes_enabled() -> bool:
+    return os.getenv("ADMIN_WRITES_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def windows_client_enabled() -> bool:
+    return os.getenv("WINDOWS_CLIENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def windows_client_block_reason(path: str, user_agent: str, platform: str = "") -> str | None:
+    if windows_client_enabled():
+        return None
+    if platform.strip().lower() == "windows":
+        return "platform_header"
+    if user_agent.strip().lower().startswith("xingsuiwindows/"):
+        return "native_user_agent"
+    if path == "/download/windows":
+        return "download_disabled"
+    return None
+
+
+def sensitive_response_path(path: str) -> bool:
+    return path in SENSITIVE_RESPONSE_PATHS or path.startswith("/vpn/nodes/")
+
+
+def apply_no_store_headers(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+
+
+def admin_session_token(issued_at: int | None = None) -> str:
+    issued_at = issued_at or int(datetime.now(UTC).timestamp())
+    payload = f"v1.{issued_at}"
+    signature = hmac.new(
         admin_session_secret().encode("utf-8"),
-        admin_password().encode("utf-8"),
+        f"{payload}:{admin_password()}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+    return f"{payload}.{signature}"
 
 
 def admin_password_valid(password: str | None) -> bool:
-    return bool(password) and secrets.compare_digest(password, admin_password())
+    configured = admin_password()
+    if configured == "CHANGE_ME_ADMIN_PASSWORD":
+        return False
+    return bool(password) and secrets.compare_digest(password, configured)
 
 
-def admin_session_valid(token: str | None) -> bool:
-    return bool(token) and secrets.compare_digest(token, admin_session_token())
+def admin_session_valid(token: str | None, now: int | None = None) -> bool:
+    if not token:
+        return False
+    try:
+        version, issued_at_text, signature = token.split(".", 2)
+        issued_at = int(issued_at_text)
+    except (TypeError, ValueError):
+        return False
+    if version != "v1":
+        return False
+    current = now or int(datetime.now(UTC).timestamp())
+    if issued_at > current + 60 or current - issued_at > ADMIN_SESSION_MAX_AGE_SECONDS:
+        return False
+    return secrets.compare_digest(token, admin_session_token(issued_at))
+
+
+def security_audit(event: str, request: Request, **details: object) -> None:
+    payload = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "event": event,
+        "request_id": getattr(request.state, "security_request_id", ""),
+        "ip": client_ip(request),
+        "method": request.method,
+        "path": request.url.path,
+        "user_agent": request.headers.get("user-agent", "")[:255],
+        **details,
+    }
+    security_logger.warning("SECURITY_AUDIT %s", json.dumps(payload, ensure_ascii=False, default=str))
+
+
+SECURITY_RATE_LIMITS: dict[tuple[str, str], list[datetime]] = {}
+
+
+def enforce_security_rate_limit(
+    request: Request,
+    action: str,
+    *,
+    limit: int,
+    window_seconds: int,
+) -> None:
+    now = datetime.now(UTC)
+    key = (action, client_ip(request))
+    window_start = now - timedelta(seconds=window_seconds)
+    recent = [stamp for stamp in SECURITY_RATE_LIMITS.get(key, []) if stamp >= window_start]
+    if len(recent) >= limit:
+        SECURITY_RATE_LIMITS[key] = recent
+        security_audit("rate_limit_blocked", request, action=action)
+        raise HTTPException(status_code=429, detail="Too many requests")
+    recent.append(now)
+    SECURITY_RATE_LIMITS[key] = recent
 
 
 def render_admin_login(error: bool = False) -> str:
@@ -152,6 +275,7 @@ def render_admin_login(error: bool = False) -> str:
 
 @app.middleware("http")
 async def protect_admin_routes(request: Request, call_next):
+    request.state.security_request_id = request.headers.get("x-request-id") or uuid4().hex
     path = request.url.path
     if path == "/api":
         request.scope["path"] = "/"
@@ -159,14 +283,47 @@ async def protect_admin_routes(request: Request, call_next):
     elif path.startswith("/api/"):
         request.scope["path"] = path[4:]
         path = request.scope["path"]
+    windows_block_reason = windows_client_block_reason(
+        path,
+        request.headers.get("user-agent", ""),
+        request.headers.get("x-xingsui-platform", ""),
+    )
+    if windows_block_reason is not None:
+        security_audit("windows_client_blocked", request, reason=windows_block_reason)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Windows client is temporarily disabled"},
+            headers={"Cache-Control": "no-store", "Retry-After": "3600"},
+        )
     if path == "/admin/login" or path == "/admin/logout":
         return await call_next(request)
     if path == "/admin" or path.startswith("/admin/"):
         if not admin_session_valid(request.cookies.get(ADMIN_SESSION_COOKIE)):
+            security_audit("admin_auth_denied", request)
             if path == "/admin":
                 return HTMLResponse(render_admin_login(), status_code=200)
             return Response("Admin authentication required", status_code=401)
-    return await call_next(request)
+        if request.method in ADMIN_WRITE_METHODS:
+            origin = request.headers.get("origin")
+            if origin and urlparse(origin).netloc != request.headers.get("host", ""):
+                security_audit("admin_origin_blocked", request, origin=origin[:255])
+                return Response("Admin origin rejected", status_code=403)
+            if not admin_writes_enabled():
+                security_audit("admin_write_blocked", request, reason="emergency_read_only")
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Admin writes are temporarily disabled during security review"},
+                )
+    response = await call_next(request)
+    if sensitive_response_path(path):
+        apply_no_store_headers(response)
+    if (path == "/admin" or path.startswith("/admin/")) and request.method in ADMIN_WRITE_METHODS:
+        security_audit("admin_write", request, status_code=response.status_code)
+    return response
+
+
+class StrictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class PayChannel(StrEnum):
@@ -211,7 +368,7 @@ class PromotionActivity(BaseModel):
     status: str = "active"
 
 
-class AdminPromotionRequest(BaseModel):
+class AdminPromotionRequest(StrictRequest):
     id: str | None = None
     name: str
     tag: str = "限时特惠"
@@ -234,17 +391,16 @@ class PaymentSetting(BaseModel):
     updated_at: datetime
 
 
-class AdminPaymentSettingRequest(BaseModel):
+class AdminPaymentSettingRequest(StrictRequest):
     display_name: str | None = None
     qr_url: str
     enabled: bool = True
 
 
-class CreateOrderRequest(BaseModel):
+class CreateOrderRequest(StrictRequest):
     plan_id: str
     promotion_id: str | None = None
     pay_channel: PayChannel
-    user_id: str | None = None
     invite_code: str | None = None
 
 
@@ -283,7 +439,7 @@ class User(BaseModel):
     free_traffic_remaining_bytes: int = 0
 
 
-class AdminOrderAction(BaseModel):
+class AdminOrderAction(StrictRequest):
     reviewed_by: str = "admin"
     note: str | None = None
 
@@ -313,7 +469,7 @@ class AppVersionResponse(BaseModel):
     must_update: bool
 
 
-class AuthRequest(BaseModel):
+class AuthRequest(StrictRequest):
     email: str
     password: str
     invite_code: str | None = None
@@ -344,7 +500,7 @@ class InvitationRecord(BaseModel):
     created_at: datetime
 
 
-class CreateWithdrawalRequest(BaseModel):
+class CreateWithdrawalRequest(StrictRequest):
     amount_cents: int
     account_type: str = "alipay"
     account_masked: str
@@ -358,6 +514,7 @@ class Entitlement(BaseModel):
     free_traffic_quota_bytes: int
     free_traffic_used_bytes: int
     free_traffic_remaining_bytes: int
+    lease_expires_at: datetime | None = None
 
 
 class VipStatusResponse(BaseModel):
@@ -383,9 +540,13 @@ class VpnNodeConfig(BaseModel):
     id: str
     name: str
     region: str = "智能线路"
+    protocol: str
     tunnel_name: str = "xingsui"
     config_text: str
     vless_config: dict[str, str] | None = None
+    lease_id: str
+    issued_at: datetime
+    expires_at: datetime
     entitlement: Entitlement
 
 
@@ -393,46 +554,41 @@ class VpnNodeSummary(BaseModel):
     id: str
     name: str
     region: str
+    protocol: str
     vip_only: bool
     status: str
     load_percent: int
     locked: bool
-    probe_host: str | None = None
-    probe_port: int | None = None
 
 
-VLESS_OSAKA_NODE_ID = "vless-osaka"
-VLESS_OSAKA_NODE_NAME = "大阪 CN2 优化线路"
-VLESS_OSAKA_NODE_REGION = "日本大阪"
+class NodeHeartbeatRequest(StrictRequest):
+    node_id: str = Field(min_length=1, max_length=64)
+    peer_count: int = Field(default=0, ge=0, le=1_000_000)
+    cpu_load: float = Field(default=0.0, ge=0.0, le=1024.0)
+    mem_used_percent: float = Field(default=0.0, ge=0.0, le=100.0)
+    rx_bytes: int = Field(default=0, ge=0)
+    tx_bytes: int = Field(default=0, ge=0)
+    agent_version: str = Field(default="", max_length=32)
 
 
-class NodeHeartbeatRequest(BaseModel):
-    node_id: str
-    peer_count: int = 0
-    cpu_load: float = 0.0
-    mem_used_percent: float = 0.0
-    rx_bytes: int = 0
-    tx_bytes: int = 0
-    agent_version: str = ""
-
-
-class AdminNodeRequest(BaseModel):
+class AdminNodeRequest(StrictRequest):
     id: str | None = None
     name: str
     region: str = "智能线路"
+    protocol: str = Field(default="awg", pattern="^(awg|vless|dual)$")
     endpoint: str
     agent_host: str
-    agent_port: int = 51821
+    agent_port: int = Field(default=51821, ge=1, le=65535)
     server_public_key: str
     client_network: str = "10.66.66.0/24"
     dns: str = "1.1.1.1"
-    allowed_ips: str = "0.0.0.0/0"
-    persistent_keepalive: int = 25
-    mtu: int = 1420
-    params: dict[str, str] = {}
-    weight: int = 100
+    allowed_ips: str = "0.0.0.0/0, ::/0"
+    persistent_keepalive: int = Field(default=25, ge=0, le=65535)
+    mtu: int = Field(default=1420, ge=576, le=9000)
+    params: dict[str, str] = Field(default_factory=dict)
+    weight: int = Field(default=100, ge=0, le=1_000_000)
     vip_only: bool = False
-    max_clients: int = 0
+    max_clients: int = Field(default=0, ge=0, le=1_000_000)
     enabled: bool = True
 
 
@@ -440,6 +596,7 @@ class AdminNodeSummary(BaseModel):
     id: str
     name: str
     region: str
+    protocol: str
     endpoint: str
     agent_host: str
     agent_port: int
@@ -465,10 +622,11 @@ class AdminNodeSummary(BaseModel):
     updated_at: datetime
 
 
-class UsageReportRequest(BaseModel):
-    tunnel_name: str | None = None
-    rx_bytes_delta: int = 0
-    tx_bytes_delta: int = 0
+class UsageReportRequest(StrictRequest):
+    lease_id: str = Field(min_length=1, max_length=64)
+    tunnel_name: str | None = Field(default=None, max_length=128)
+    rx_bytes_delta: int = Field(default=0, ge=0, le=2**63 - 1)
+    tx_bytes_delta: int = Field(default=0, ge=0, le=2**63 - 1)
 
 
 class Withdrawal(BaseModel):
@@ -517,6 +675,10 @@ PAYMENT_QR = {
 EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 PASSWORD_ITERATIONS = 120_000
 FREE_TRAFFIC_QUOTA_BYTES = 30 * 1024 * 1024
+ACCESS_TOKEN_TTL_SECONDS = max(300, int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "86400")))
+VPN_LEASE_TTL_SECONDS = min(3600, max(60, int(os.getenv("VPN_LEASE_TTL_SECONDS", "300"))))
+VPN_LEASE_SWEEP_SECONDS = max(10, int(os.getenv("VPN_LEASE_SWEEP_SECONDS", "30")))
+SUPPORTED_VPN_PLATFORMS = {"android": "awg", "windows": "vless"}
 ONLINE_WINDOW_SECONDS = 5 * 60
 EXPIRING_SOON_DAYS = 7
 SEEN_TOUCH_MIN_INTERVAL_SECONDS = 60
@@ -540,6 +702,21 @@ def normalize_email(email: str) -> str:
     if not EMAIL_PATTERN.fullmatch(normalized):
         raise HTTPException(status_code=422, detail="Invalid email format")
     return normalized
+
+
+def reserved_test_email(email: str) -> bool:
+    domain = email.rsplit("@", 1)[-1].lower()
+    return (
+        domain == "example.com"
+        or domain.endswith(".test")
+        or domain.endswith(".invalid")
+        or domain.endswith(".local")
+    )
+
+
+def reject_production_test_user(user: UserRow) -> None:
+    if production_environment() and (user.id == "demo_user" or reserved_test_email(user.email)):
+        raise HTTPException(status_code=403, detail="Account disabled")
 
 
 def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
@@ -598,7 +775,7 @@ def subscription_public_base_url(request: Request) -> str:
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     if host:
         return f"{proto}://{host}".rstrip("/")
-    return "https://xingsuico.com"
+    return "https://xingsui.org"
 
 
 def subscription_url_for_token(request: Request, token: str) -> str:
@@ -733,59 +910,6 @@ def read_subscription_links() -> list[str]:
         except Exception:
             return []
     return lines
-
-
-def osaka_vless_link() -> str | None:
-    preferred_host = os.getenv("WINDOWS_OSAKA_VLESS_HOST", "212.50.232.111").strip()
-    for link in read_subscription_links():
-        parsed = urlparse(link)
-        if parsed.scheme.lower() != "vless":
-            continue
-        if parsed.hostname == preferred_host or unquote(parsed.fragment).lower() in {"xingsui-osaka", "osaka"}:
-            return link
-    return None
-
-
-def osaka_vless_config(link: str) -> dict[str, str] | None:
-    parsed = urlparse(link)
-    if parsed.scheme.lower() != "vless" or not parsed.username or not parsed.hostname:
-        return None
-    query = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
-    return {
-        "server": parsed.hostname,
-        "server_port": str(parsed.port or 8443),
-        "uuid": parsed.username,
-        "flow": query.get("flow", "").strip(),
-        "public_key": query.get("pbk", "").strip(),
-        "short_id": query.get("sid", "").strip(),
-        "server_name": (query.get("sni") or "www.microsoft.com").strip(),
-        "utls_fingerprint": (query.get("fp") or "chrome").strip(),
-    }
-
-
-def osaka_vless_node_summary(entitlement_allowed: bool = True) -> VpnNodeSummary | None:
-    link = osaka_vless_link()
-    if link is None:
-        return None
-    parsed = urlparse(link)
-    return VpnNodeSummary(
-        id=VLESS_OSAKA_NODE_ID,
-        name=VLESS_OSAKA_NODE_NAME,
-        region=VLESS_OSAKA_NODE_REGION,
-        vip_only=False,
-        status="online",
-        load_percent=0,
-        locked=not entitlement_allowed,
-        probe_host=parsed.hostname,
-        probe_port=parsed.port,
-    )
-
-
-def supports_windows_vless(version_code: str | None) -> bool:
-    try:
-        return int((version_code or "0").strip()) >= 2
-    except ValueError:
-        return False
 
 
 def yaml_scalar(value: object) -> str:
@@ -966,7 +1090,14 @@ def fmt_subscription_datetime(value: datetime | None) -> str:
 def create_session(db: Session, user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     token_hash = hash_token(token)
-    db.add(AuthSessionRow(token_hash=token_hash, user_id=user_id))
+    db.add(
+        AuthSessionRow(
+            token_hash=token_hash,
+            user_id=user_id,
+            status="active",
+            expires_at=datetime.now(UTC) + timedelta(seconds=ACCESS_TOKEN_TTL_SECONDS),
+        )
+    )
     db.flush()
     prune_user_sessions(db, user_id, keep_token_hash=token_hash)
     db.commit()
@@ -986,9 +1117,12 @@ def prune_user_sessions(db: Session, user_id: str, *, keep_token_hash: str | Non
         db.scalars(
             select(AuthSessionRow)
             .where(AuthSessionRow.user_id == user_id)
+            .where(AuthSessionRow.status == "active")
             .order_by(AuthSessionRow.created_at.desc(), AuthSessionRow.token_hash.desc())
         )
     )
+    now = datetime.now(UTC)
+    sessions = [row for row in sessions if coerce_utc(row.expires_at) is not None and coerce_utc(row.expires_at) > now]
     if keep_token_hash is not None:
         sessions = sorted(sessions, key=lambda row: row.token_hash != keep_token_hash)
     keep_hashes = {row.token_hash for row in sessions[:MAX_ACTIVE_AUTH_SESSIONS]}
@@ -1051,18 +1185,52 @@ def resolve_inviter(db: Session, invite_code: str | None) -> UserRow | None:
     return inviter
 
 
-def get_current_user(db: Session, authorization: str | None) -> UserRow:
+def get_current_auth(db: Session, authorization: str | None) -> tuple[AuthSessionRow, UserRow]:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
     session = db.get(AuthSessionRow, hash_token(token))
-    if session is None:
+    now = datetime.now(UTC)
+    expires_at = coerce_utc(session.expires_at) if session is not None else None
+    if session is None or session.status != "active" or expires_at is None or expires_at <= now:
         raise HTTPException(status_code=401, detail="Invalid bearer token")
     user = db.get(UserRow, session.user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid bearer token")
+    reject_production_test_user(user)
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="Account disabled")
     touch_user_seen(db, user)
-    return user
+    return session, user
+
+
+def get_current_user(db: Session, authorization: str | None) -> UserRow:
+    return get_current_auth(db, authorization)[1]
+
+
+@dataclass(frozen=True)
+class VpnPrincipal:
+    session: AuthSessionRow
+    user: UserRow
+    platform: str
+    protocol: str
+
+
+def require_vpn_principal(
+    db: Session,
+    authorization: str | None,
+    x_xingsui_platform: str | None,
+) -> VpnPrincipal:
+    session, user = get_current_auth(db, authorization)
+    platform = (x_xingsui_platform or "").strip().lower()
+    protocol = SUPPORTED_VPN_PLATFORMS.get(platform)
+    if protocol is None:
+        raise HTTPException(status_code=400, detail="Unsupported or missing client platform")
+    if effective_vip_status(user.vip_status, user.vip_expired_at) != "active":
+        raise HTTPException(status_code=403, detail="vip_required")
+    return VpnPrincipal(session=session, user=user, platform=platform, protocol=protocol)
 
 
 def to_user(row: UserRow) -> User:
@@ -1114,32 +1282,20 @@ def free_traffic_remaining(user: UserRow) -> int:
     return max(0, int(user.free_traffic_quota_bytes or 0) - int(user.free_traffic_used_bytes or 0))
 
 
-def build_entitlement(user: UserRow) -> Entitlement:
-    ensure_free_traffic_quota(user)
+def build_vpn_entitlement(user: UserRow, lease_expires_at: datetime | None = None) -> Entitlement:
     vip_status = effective_vip_status(user.vip_status, user.vip_expired_at)
-    remaining = free_traffic_remaining(user)
-    if vip_status == "active":
-        allowed = True
-        reason = "vip_active"
-    elif remaining > 0:
-        allowed = True
-        reason = "free_trial"
-    else:
-        allowed = False
-        reason = "vip_expired" if vip_status == "expired" else "free_traffic_exhausted"
     return Entitlement(
-        allowed=allowed,
-        reason=reason,
+        allowed=vip_status == "active" and user.status == "active",
+        reason="vip_active" if vip_status == "active" and user.status == "active" else (
+            "vip_expired" if vip_status == "expired" else "vip_required"
+        ),
         vip_status=vip_status,
         vip_expired_at=user.vip_expired_at,
         free_traffic_quota_bytes=int(user.free_traffic_quota_bytes or 0),
         free_traffic_used_bytes=int(user.free_traffic_used_bytes or 0),
-        free_traffic_remaining_bytes=remaining,
+        free_traffic_remaining_bytes=free_traffic_remaining(user),
+        lease_expires_at=lease_expires_at,
     )
-
-
-def build_vpn_entitlement(user: UserRow) -> Entitlement:
-    return build_entitlement(user)
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -1147,18 +1303,6 @@ def env_flag(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def vpn_default_config_template() -> str | None:
-    value = os.getenv("VPN_DEFAULT_CONFIG", "").strip()
-    return value.replace("\\n", "\n") if value else None
-
-
-def vpn_required_setting(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise HTTPException(status_code=503, detail=f"{name} is not configured")
-    return value
 
 
 def run_vpn_command(command: list[str], input_text: str | None = None) -> str:
@@ -1171,10 +1315,11 @@ def run_vpn_command(command: list[str], input_text: str | None = None) -> str:
             check=True,
         )
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=f"{command[0]} is not installed") from exc
+        security_logger.error("VPN helper is unavailable")
+        raise HTTPException(status_code=503, detail="VPN credential generation is unavailable") from exc
     except subprocess.CalledProcessError as exc:
-        message = exc.stderr.strip() or exc.stdout.strip() or str(exc)
-        raise HTTPException(status_code=503, detail=f"VPN node command failed: {message}") from exc
+        security_logger.error("VPN helper command failed")
+        raise HTTPException(status_code=503, detail="VPN credential generation failed") from exc
     return result.stdout.strip()
 
 
@@ -1218,201 +1363,126 @@ def generate_wireguard_keypair() -> tuple[str, str]:
     return private_key, public_key
 
 
-def allocate_client_address(db: Session) -> str:
-    network = ipaddress.ip_network(os.getenv("VPN_CLIENT_NETWORK", "10.66.66.0/24"), strict=False)
-    used = {
-        ipaddress.ip_interface(row.client_address).ip
-        for row in db.scalars(select(VpnDeviceRow)).all()
-    }
-    for address in network.hosts():
-        if address == network.network_address + 1:
-            continue
-        if address not in used:
-            prefix = 32 if network.version == 4 else 128
-            return f"{address}/{prefix}"
-    raise HTTPException(status_code=503, detail="VPN node address pool is full")
+def revoke_vpn_device(db: Session, row: VpnDeviceRow) -> bool:
+    """Revoke a credential on its owning edge node; never use a local fallback."""
+    node = db.get(VpnNodeRow, row.node_id) if row.node_id else None
+    row.config_text = ""
+    row.client_private_key = ""
+    if node is None:
+        row.status = "pending_revoke"
+        return False
+    try:
+        if row.protocol == "vless":
+            if row.vless_uuid:
+                node_service.agent_remove_vless_user(node, row.vless_uuid)
+        elif row.client_public_key:
+            node_service.agent_remove_peer(node, row.client_public_key)
+        else:
+            raise RuntimeError("missing peer identity")
+    except Exception:
+        row.status = "pending_revoke"
+        return False
+    row.status = "revoked"
+    row.lease_expires_at = datetime.now(UTC)
+    return True
 
 
-def vpn_endpoint_for_user(user_id: str | None = None) -> str:
-    endpoints = [
-        item.strip()
-        for item in os.getenv("VPN_ENDPOINTS", os.getenv("VPN_ENDPOINT", "xingsuico.com:51820")).split(",")
-        if item.strip()
-    ]
-    if not endpoints:
-        raise HTTPException(status_code=503, detail="VPN_ENDPOINT is not configured")
-    if user_id and len(endpoints) > 1:
-        digest = hashlib.sha256(user_id.encode("utf-8")).digest()
-        return endpoints[int.from_bytes(digest[:2], "big") % len(endpoints)]
-    return endpoints[0]
-
-
-def render_client_config(private_key: str, client_address: str, user_id: str | None = None) -> str:
-    server_public_key = vpn_required_setting("VPN_SERVER_PUBLIC_KEY")
-    endpoint = vpn_endpoint_for_user(user_id)
-    dns = os.getenv("VPN_DNS", "1.1.1.1").strip()
-    allowed_ips = os.getenv("VPN_ALLOWED_IPS", "0.0.0.0/0").strip()
-    persistent_keepalive = os.getenv("VPN_PERSISTENT_KEEPALIVE", "25").strip()
-    mtu = os.getenv("VPN_MTU", "1420").strip()
-    lines = [
-        "[Interface]",
-        f"PrivateKey = {private_key}",
-        f"Address = {client_address}",
-    ]
-    if dns:
-        lines.append(f"DNS = {dns}")
-    if mtu:
-        lines.append(f"MTU = {mtu}")
-    # Always emit AmneziaWG obfuscation fields (Jc/Jmin/...). The Amnezia client
-    # (this app) will use them for DPI resistance on censored networks (China etc.).
-    # Server (plain wg or AWG) will see the packets; for full bidirectional, set
-    # AMNEZIAWG_SERVER_ENABLED and provide awg/awg-quick tools + matching module.
-    amnezia_params = [
-        ("Jc", os.getenv("AMNEZIA_JC", "4").strip()),
-        ("Jmin", os.getenv("AMNEZIA_JMIN", "40").strip()),
-        ("Jmax", os.getenv("AMNEZIA_JMAX", "70").strip()),
-        ("S1", os.getenv("AMNEZIA_S1", "0").strip()),
-        ("S2", os.getenv("AMNEZIA_S2", "0").strip()),
-        ("H1", os.getenv("AMNEZIA_H1", "1").strip()),
-        ("H2", os.getenv("AMNEZIA_H2", "2").strip()),
-        ("H3", os.getenv("AMNEZIA_H3", "3").strip()),
-        ("H4", os.getenv("AMNEZIA_H4", "4").strip()),
-    ]
-    for key, val in amnezia_params:
-        if val:
-            lines.append(f"{key} = {val}")
-    lines.extend(
-        [
-            "",
-            "[Peer]",
-            f"PublicKey = {server_public_key}",
-            f"AllowedIPs = {allowed_ips}",
-            f"Endpoint = {endpoint}",
-        ]
-    )
-    if persistent_keepalive:
-        lines.append(f"PersistentKeepalive = {persistent_keepalive}")
-    return "\n".join(lines) + "\n"
-
-
-def add_wireguard_peer(public_key: str, client_address: str) -> None:
-    ensure_vpn_interface()
-    interface_name = os.getenv("VPN_WG_INTERFACE", "wg0").strip()
-    client_ip = str(ipaddress.ip_interface(client_address).ip)
-    run_vpn_command([vpn_control_tool(), "set", interface_name, "peer", public_key, "allowed-ips", f"{client_ip}/32"])
-    if env_flag("VPN_SAVE_PEERS", False):
-        run_vpn_command([vpn_quick_tool(), "save", interface_name])
-
-
-def remove_wireguard_peer(public_key: str) -> None:
-    ensure_vpn_interface()
-    interface_name = os.getenv("VPN_WG_INTERFACE", "wg0").strip()
-    run_vpn_command([vpn_control_tool(), "set", interface_name, "peer", public_key, "remove"])
-
-
-def revoke_vpn_devices(db: Session, user: UserRow) -> None:
-    if not env_flag("VPN_AUTO_PROVISION", False):
-        return
-    rows = db.scalars(
+def revoke_vpn_devices(
+    db: Session,
+    user: UserRow,
+    *,
+    session_token_hash: str | None = None,
+    fail_on_error: bool = True,
+) -> None:
+    statement = (
         select(VpnDeviceRow)
         .where(VpnDeviceRow.user_id == user.id)
-        .where(VpnDeviceRow.status == "active")
-    ).all()
-    changed = False
-    for row in rows:
-        try:
-            remove_wireguard_peer(row.client_public_key)
-        except HTTPException:
-            pass
-        row.status = "revoked"
-        changed = True
-    if changed:
-        db.commit()
-
-
-def get_or_create_vpn_device(db: Session, user: UserRow) -> VpnDeviceRow:
-    def get_existing_active_device() -> VpnDeviceRow | None:
-        return db.scalar(
-            select(VpnDeviceRow)
-            .where(VpnDeviceRow.user_id == user.id)
-            .where(VpnDeviceRow.status == "active")
-            .order_by(VpnDeviceRow.created_at.desc())
-        )
-
-    existing = get_existing_active_device()
-    if existing is not None:
-        add_wireguard_peer(existing.client_public_key, existing.client_address)
-        latest_config = render_client_config(existing.client_private_key, existing.client_address, user.id)
-        if existing.config_text != latest_config:
-            existing.config_text = latest_config
-            db.commit()
-            db.refresh(existing)
-        return existing
-
-    for attempt in range(5):
-        private_key, public_key = generate_wireguard_keypair()
-        client_address = allocate_client_address(db)
-        config_text = render_client_config(private_key, client_address, user.id)
-        add_wireguard_peer(public_key, client_address)
-        device = VpnDeviceRow(
-            id=str(uuid4()),
-            user_id=user.id,
-            node_id=os.getenv("VPN_NODE_ID", "default"),
-            tunnel_name="xingsui",
-            client_private_key=private_key,
-            client_public_key=public_key,
-            client_address=client_address,
-            config_text=config_text,
-            status="active",
-        )
-        db.add(device)
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            try:
-                remove_wireguard_peer(public_key)
-            except HTTPException:
-                pass
-            existing = get_existing_active_device()
-            if existing is not None:
-                add_wireguard_peer(existing.client_public_key, existing.client_address)
-                return existing
-            if attempt == 4:
-                raise HTTPException(status_code=503, detail="VPN address allocation conflict, please retry")
-            continue
-        db.refresh(device)
-        return device
-
-    raise HTTPException(status_code=503, detail="VPN address allocation failed")
+        .where(VpnDeviceRow.status.in_(("active", "pending_revoke")))
+    )
+    if session_token_hash:
+        statement = statement.where(VpnDeviceRow.session_token_hash == session_token_hash)
+    rows = db.scalars(statement).all()
+    failures = [row for row in rows if not revoke_vpn_device(db, row)]
+    db.commit()
+    if failures and fail_on_error:
+        raise HTTPException(status_code=503, detail="VPN credential revocation is pending")
 
 
 def restore_active_vpn_peers() -> None:
-    agent_peers: list[tuple[VpnNodeRow, str, str]] = []
+    """Restore only finite leases whose account and VIP state are still valid."""
+    now = datetime.now(UTC)
+    actions: list[tuple[VpnNodeRow, VpnDeviceRow]] = []
     with SessionLocal() as db:
         rows = db.scalars(select(VpnDeviceRow).where(VpnDeviceRow.status == "active")).all()
-        if env_flag("VPN_AUTO_PROVISION", False):
-            for row in rows:
-                try:
-                    add_wireguard_peer(row.client_public_key, row.client_address)
-                except HTTPException:
-                    continue
-
         for row in rows:
+            user = db.get(UserRow, row.user_id)
+            session = db.get(AuthSessionRow, row.session_token_hash) if row.session_token_hash else None
             node = db.get(VpnNodeRow, row.node_id) if row.node_id else None
-            if node is None or not node.enabled:
+            lease_expires_at = coerce_utc(row.lease_expires_at)
+            session_expires_at = coerce_utc(session.expires_at) if session is not None else None
+            if (
+                user is None
+                or user.status != "active"
+                or effective_vip_status(user.vip_status, user.vip_expired_at, now) != "active"
+                or session is None
+                or session.user_id != row.user_id
+                or session.status != "active"
+                or session_expires_at is None
+                or session_expires_at <= now
+                or lease_expires_at is None
+                or lease_expires_at <= now
+                or node is None
+                or not node.enabled
+                or not node_service.node_supports_protocol(node, row.protocol)
+            ):
+                if node is not None:
+                    revoke_vpn_device(db, row)
+                else:
+                    row.status = "pending_revoke"
                 continue
-            try:
-                client_ip = str(ipaddress.ip_interface(row.client_address).ip)
-            except Exception:
-                continue
-            agent_peers.append((node, row.client_public_key, client_ip))
+            actions.append((node, row))
+        db.commit()
 
-    for node, public_key, client_ip in agent_peers:
+    for node, row in actions:
         try:
-            node_service.agent_add_peer(node, public_key, client_ip, timeout=2.0)
+            if row.protocol == "vless" and row.vless_uuid:
+                node_service.agent_add_vless_user(node, row.vless_uuid, row.lease_id, row.lease_expires_at, timeout=2.0)
+            elif row.protocol == "awg" and row.client_public_key:
+                client_ip = str(ipaddress.ip_interface(row.client_address).ip)
+                node_service.agent_add_peer(
+                    node,
+                    row.client_public_key,
+                    client_ip,
+                    row.lease_id,
+                    row.lease_expires_at,
+                    timeout=2.0,
+                )
         except Exception:
             continue
+
+
+def sweep_expired_vpn_leases() -> None:
+    now = datetime.now(UTC)
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(VpnDeviceRow)
+            .where(VpnDeviceRow.status.in_(("active", "pending_revoke")))
+            .where(VpnDeviceRow.lease_expires_at.is_not(None))
+            .where(VpnDeviceRow.lease_expires_at <= now)
+        ).all()
+        for row in rows:
+            revoke_vpn_device(db, row)
+        if rows:
+            db.commit()
+
+
+async def vpn_lease_cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(VPN_LEASE_SWEEP_SECONDS)
+        try:
+            await asyncio.to_thread(sweep_expired_vpn_leases)
+        except Exception:
+            security_logger.error("VPN lease cleanup failed")
 
 
 def user_is_vip(user: UserRow) -> bool:
@@ -1426,9 +1496,14 @@ def require_node(db: Session, node_id: str) -> VpnNodeRow:
     return node
 
 
-def select_pool_node(db: Session, vip: bool) -> VpnNodeRow | None:
+def select_pool_node(db: Session, vip: bool, protocol: str) -> VpnNodeRow | None:
     """从节点池中选出当前最优的在线节点；池为空或全部离线时返回 None。"""
-    nodes = db.scalars(select(VpnNodeRow).where(VpnNodeRow.enabled.is_(True))).all()
+    nodes = db.scalars(
+        select(VpnNodeRow)
+        .where(VpnNodeRow.enabled.is_(True))
+        .where(VpnNodeRow.protocol.in_((protocol, "dual")))
+    ).all()
+    nodes = [node for node in nodes if node_service.node_config_is_complete(node, protocol)]
     if not nodes:
         return None
     health = node_health_map(db)
@@ -1441,7 +1516,12 @@ def allocate_node_client_address(db: Session, node: VpnNodeRow) -> str:
     network = ipaddress.ip_network(node.client_network or "10.66.66.0/24", strict=False)
     used = {
         ipaddress.ip_interface(row.client_address).ip
-        for row in db.scalars(select(VpnDeviceRow).where(VpnDeviceRow.node_id == node.id)).all()
+        for row in db.scalars(
+            select(VpnDeviceRow)
+            .where(VpnDeviceRow.node_id == node.id)
+            .where(VpnDeviceRow.protocol == "awg")
+            .where(VpnDeviceRow.status.in_(("active", "pending_revoke")))
+        ).all()
     }
     for address in network.hosts():
         if address == network.network_address + 1:
@@ -1452,24 +1532,80 @@ def allocate_node_client_address(db: Session, node: VpnNodeRow) -> str:
     raise HTTPException(status_code=503, detail="Node address pool is full")
 
 
-def provision_node_device(db: Session, user: UserRow, node: VpnNodeRow) -> VpnDeviceRow:
+def lease_window(principal: VpnPrincipal) -> tuple[str, datetime, datetime]:
+    issued_at = datetime.now(UTC)
+    requested_expiry = issued_at + timedelta(seconds=VPN_LEASE_TTL_SECONDS)
+    session_expiry = coerce_utc(principal.session.expires_at)
+    vip_expiry = coerce_utc(principal.user.vip_expired_at)
+    if session_expiry is None or vip_expiry is None:
+        raise HTTPException(status_code=403, detail="VPN lease cannot be issued")
+    return str(uuid4()), issued_at, min(requested_expiry, session_expiry, vip_expiry)
+
+
+def lock_node_credential_allocation(db: Session, node_id: str, protocol: str) -> None:
+    """Serialize credential allocation on PostgreSQL before touching an edge Agent."""
+    bind = db.get_bind()
+    if bind.dialect.name == "postgresql":
+        db.execute(
+            text("select pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": f"vpn-credential:{node_id}:{protocol}"},
+        )
+
+
+def provision_node_device(
+    db: Session,
+    principal: VpnPrincipal,
+    node: VpnNodeRow,
+    lease_id: str,
+    expires_at: datetime,
+) -> VpnDeviceRow:
     """在指定边缘节点上为用户签发设备：本地生成密钥、分配地址，
     通过 Agent 在该节点添加 peer，并渲染基于节点参数的客户端配置。"""
+    lock_node_credential_allocation(db, node.id, "awg")
+    pending = db.scalars(
+        select(VpnDeviceRow)
+        .where(VpnDeviceRow.user_id == principal.user.id)
+        .where(VpnDeviceRow.node_id == node.id)
+        .where(VpnDeviceRow.protocol == "awg")
+        .where(VpnDeviceRow.session_token_hash == principal.session.token_hash)
+        .where(VpnDeviceRow.status == "pending_revoke")
+    ).all()
+    for stale in pending:
+        if not revoke_vpn_device(db, stale):
+            db.commit()
+            raise HTTPException(status_code=503, detail="Previous AWG lease revocation is pending")
     existing = db.scalar(
         select(VpnDeviceRow)
-        .where(VpnDeviceRow.user_id == user.id)
+        .where(VpnDeviceRow.user_id == principal.user.id)
         .where(VpnDeviceRow.node_id == node.id)
+        .where(VpnDeviceRow.protocol == "awg")
+        .where(VpnDeviceRow.session_token_hash == principal.session.token_hash)
         .where(VpnDeviceRow.status == "active")
         .order_by(VpnDeviceRow.created_at.desc())
     )
     if existing is not None:
         client_ip = str(ipaddress.ip_interface(existing.client_address).ip)
-        agent_add_node_peer(node, existing.client_public_key, client_ip)
+        old_lease_id = existing.lease_id
+        old_expiry = coerce_utc(existing.lease_expires_at)
+        public_key = existing.client_public_key
+        agent_add_node_peer(node, existing.client_public_key, client_ip, lease_id, expires_at)
         latest = node_service.render_node_client_config(node, existing.client_private_key, existing.client_address)
-        if existing.config_text != latest:
-            existing.config_text = latest
+        existing.config_text = latest
+        existing.lease_id = lease_id
+        existing.lease_expires_at = expires_at
+        try:
             db.commit()
-            db.refresh(existing)
+        except Exception as exc:
+            db.rollback()
+            try:
+                if old_lease_id and old_expiry is not None and old_expiry > datetime.now(UTC):
+                    node_service.agent_add_peer(node, public_key, client_ip, old_lease_id, old_expiry)
+                else:
+                    node_service.agent_remove_peer(node, public_key)
+            except Exception:
+                pass
+            raise HTTPException(status_code=503, detail="AWG lease persistence failed") from exc
+        db.refresh(existing)
         return existing
 
     for attempt in range(5):
@@ -1477,11 +1613,15 @@ def provision_node_device(db: Session, user: UserRow, node: VpnNodeRow) -> VpnDe
         client_address = allocate_node_client_address(db, node)
         config_text = node_service.render_node_client_config(node, private_key, client_address)
         client_ip = str(ipaddress.ip_interface(client_address).ip)
-        agent_add_node_peer(node, public_key, client_ip)
+        agent_add_node_peer(node, public_key, client_ip, lease_id, expires_at)
         device = VpnDeviceRow(
             id=str(uuid4()),
-            user_id=user.id,
+            user_id=principal.user.id,
             node_id=node.id,
+            protocol="awg",
+            session_token_hash=principal.session.token_hash,
+            lease_id=lease_id,
+            lease_expires_at=expires_at,
             tunnel_name="xingsui",
             client_private_key=private_key,
             client_public_key=public_key,
@@ -1492,14 +1632,14 @@ def provision_node_device(db: Session, user: UserRow, node: VpnNodeRow) -> VpnDe
         db.add(device)
         try:
             db.commit()
-        except IntegrityError:
+        except Exception as exc:
             db.rollback()
             try:
                 node_service.agent_remove_peer(node, public_key)
             except Exception:
                 pass
             if attempt == 4:
-                raise HTTPException(status_code=503, detail="Node address allocation conflict, please retry")
+                raise HTTPException(status_code=503, detail="AWG lease persistence failed") from exc
             continue
         db.refresh(device)
         return device
@@ -1507,21 +1647,100 @@ def provision_node_device(db: Session, user: UserRow, node: VpnNodeRow) -> VpnDe
     raise HTTPException(status_code=503, detail="Node address allocation failed")
 
 
-def agent_add_node_peer(node: VpnNodeRow, public_key: str, client_ip: str) -> None:
+def provision_vless_device(
+    db: Session,
+    principal: VpnPrincipal,
+    node: VpnNodeRow,
+    lease_id: str,
+    expires_at: datetime,
+) -> VpnDeviceRow:
+    lock_node_credential_allocation(db, node.id, "vless")
+    existing_rows = db.scalars(
+        select(VpnDeviceRow)
+        .where(VpnDeviceRow.user_id == principal.user.id)
+        .where(VpnDeviceRow.node_id == node.id)
+        .where(VpnDeviceRow.protocol == "vless")
+        .where(VpnDeviceRow.session_token_hash == principal.session.token_hash)
+        .where(VpnDeviceRow.status.in_(("active", "pending_revoke")))
+    ).all()
+    for existing in existing_rows:
+        if not revoke_vpn_device(db, existing):
+            db.commit()
+            raise HTTPException(status_code=503, detail="Previous VLESS lease revocation is pending")
+    if existing_rows:
+        db.commit()
+
+    lease_uuid = str(uuid4())
+    if node_service.build_vless_config(node, lease_uuid) is None:
+        raise HTTPException(status_code=503, detail="VLESS node configuration is incomplete")
     try:
-        node_service.agent_add_peer(node, public_key, client_ip)
-    except Exception as exc:  # 网络/Agent 错误统一转 503
-        raise HTTPException(status_code=503, detail=f"Node agent unreachable: {exc}") from exc
+        node_service.agent_add_vless_user(node, lease_uuid, lease_id, expires_at)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Node agent unavailable") from exc
+
+    device = VpnDeviceRow(
+        id=str(uuid4()),
+        user_id=principal.user.id,
+        node_id=node.id,
+        protocol="vless",
+        session_token_hash=principal.session.token_hash,
+        lease_id=lease_id,
+        lease_expires_at=expires_at,
+        vless_uuid=lease_uuid,
+        tunnel_name="xingsui-vless",
+        client_private_key="",
+        client_public_key="",
+        client_address=f"vless:{lease_uuid}",
+        config_text="",
+        status="active",
+    )
+    db.add(device)
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        try:
+            node_service.agent_remove_vless_user(node, lease_uuid)
+        except Exception:
+            pass
+        raise HTTPException(status_code=503, detail="VLESS lease allocation conflict") from exc
+    db.refresh(device)
+    return device
 
 
-def parse_host_port(value: str) -> tuple[str | None, int | None]:
-    host, separator, port_text = (value or "").strip().rpartition(":")
-    if not separator or not host:
-        return None, None
+def agent_add_node_peer(
+    node: VpnNodeRow,
+    public_key: str,
+    client_ip: str,
+    lease_id: str,
+    expires_at: datetime,
+) -> None:
     try:
-        return host, int(port_text)
-    except ValueError:
-        return host, None
+        node_service.agent_add_peer(node, public_key, client_ip, lease_id, expires_at)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Node agent unavailable") from exc
+
+
+def renew_device_on_agent(node: VpnNodeRow, device: VpnDeviceRow, expires_at: datetime) -> None:
+    if device.protocol == "awg" and device.client_public_key:
+        client_ip = str(ipaddress.ip_interface(device.client_address).ip)
+        node_service.agent_add_peer(
+            node,
+            device.client_public_key,
+            client_ip,
+            device.lease_id,
+            expires_at,
+        )
+        return
+    if device.protocol == "vless" and device.vless_uuid:
+        node_service.agent_add_vless_user(
+            node,
+            device.vless_uuid,
+            device.lease_id,
+            expires_at,
+        )
+        return
+    raise RuntimeError("incomplete VPN device")
 
 
 def to_vpn_node_summary(
@@ -1529,21 +1748,20 @@ def to_vpn_node_summary(
     health: VpnNodeHealthRow | None,
     vip: bool,
     now: datetime,
+    protocol: str,
     entitlement_allowed: bool = True,
 ) -> VpnNodeSummary:
     peer_count = int(getattr(health, "peer_count", 0) or 0) if health is not None else 0
     load_percent = int(round(node_service.node_load_ratio(peer_count, int(node.max_clients or 0)) * 100))
-    endpoint_host, endpoint_port = parse_host_port(node.endpoint)
     return VpnNodeSummary(
         id=node.id,
         name=node.name,
         region=node.region,
+        protocol="amneziawg" if protocol == "awg" else protocol,
         vip_only=bool(node.vip_only),
         status=node_service.node_status_label(health, now),
         load_percent=load_percent,
         locked=(not entitlement_allowed) or (bool(node.vip_only) and not vip),
-        probe_host=endpoint_host,
-        probe_port=endpoint_port,
     )
 
 
@@ -1553,6 +1771,7 @@ def to_admin_node(node: VpnNodeRow, health: VpnNodeHealthRow | None, now: dateti
         id=node.id,
         name=node.name,
         region=node.region,
+        protocol=node_service.node_protocol(node),
         endpoint=node.endpoint,
         agent_host=node.agent_host,
         agent_port=node.agent_port,
@@ -1888,7 +2107,7 @@ def seed_database() -> None:
                     )
                 )
         db.commit()
-        if db.get(UserRow, "demo_user") is None:
+        if env_flag("SEED_DEMO_USER", not production_environment()) and db.get(UserRow, "demo_user") is None:
             salt, password_hash = hash_password("xingsui123")
             db.add(
                 UserRow(
@@ -1917,6 +2136,11 @@ def api_health() -> dict[str, str]:
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def landing_page() -> str:
     return SITE_HTML
+
+
+@app.get("/payment", response_class=HTMLResponse, include_in_schema=False)
+def payment_page() -> str:
+    return render_payment_page()
 
 
 def app_version_payload(version_code: int | None = None) -> AppVersionResponse:
@@ -2043,17 +2267,26 @@ def admin_login_page() -> str:
 
 @app.post("/admin/login", response_model=None, include_in_schema=False)
 async def admin_login(request: Request) -> Response:
-    body = (await request.body()).decode("utf-8")
+    enforce_security_rate_limit(request, "admin_login", limit=5, window_seconds=15 * 60)
+    body_bytes = await request.body()
+    if len(body_bytes) > 4096:
+        security_audit("admin_login_rejected", request, reason="body_too_large")
+        raise HTTPException(status_code=413, detail="Request body too large")
+    body = body_bytes.decode("utf-8")
     password = parse_qs(body).get("password", [""])[0]
     if not admin_password_valid(password):
+        security_audit("admin_login_failed", request)
         return HTMLResponse(render_admin_login(error=True), status_code=401)
+    security_audit("admin_login_succeeded", request)
     response = RedirectResponse("/admin", status_code=303)
     response.set_cookie(
         ADMIN_SESSION_COOKIE,
         admin_session_token(),
         max_age=ADMIN_SESSION_MAX_AGE_SECONDS,
         httponly=True,
-        samesite="lax",
+        secure=True,
+        samesite="strict",
+        path="/admin",
     )
     return response
 
@@ -2061,7 +2294,7 @@ async def admin_login(request: Request) -> Response:
 @app.get("/admin/logout", include_in_schema=False)
 def admin_logout() -> RedirectResponse:
     response = RedirectResponse("/admin/login", status_code=303)
-    response.delete_cookie(ADMIN_SESSION_COOKIE)
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/admin")
     return response
 
 
@@ -2071,8 +2304,12 @@ def admin_page() -> str:
 
 
 @app.post("/auth/email/register", response_model=AuthResponse, status_code=201)
-def register_by_email(payload: AuthRequest, db: Session = Depends(get_db)) -> AuthResponse:
+def register_by_email(payload: AuthRequest, request: Request, db: Session = Depends(get_db)) -> AuthResponse:
+    enforce_security_rate_limit(request, "email_register", limit=20, window_seconds=60 * 60)
     email = normalize_email(payload.email)
+    if production_environment() and reserved_test_email(email):
+        security_audit("reserved_registration_blocked", request)
+        raise HTTPException(status_code=422, detail="Email domain is not allowed")
     existing = db.scalar(select(UserRow).where(UserRow.email == email))
     if existing is not None:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -2109,16 +2346,32 @@ def register_by_email(payload: AuthRequest, db: Session = Depends(get_db)) -> Au
 
 
 @app.post("/auth/email/login", response_model=AuthResponse)
-def login_by_email(payload: AuthRequest, db: Session = Depends(get_db)) -> AuthResponse:
+def login_by_email(payload: AuthRequest, request: Request, db: Session = Depends(get_db)) -> AuthResponse:
+    enforce_security_rate_limit(request, "email_login", limit=20, window_seconds=5 * 60)
     email = normalize_email(payload.email)
     user = db.scalar(select(UserRow).where(UserRow.email == email))
     if user is None or not verify_password(user, payload.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    reject_production_test_user(user)
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="Account disabled")
     if ensure_free_traffic_quota(user):
         db.commit()
         db.refresh(user)
     touch_user_seen(db, user, login=True, force=True)
     return AuthResponse(access_token=create_session(db, user.id), user=to_user(user))
+
+
+@app.post("/auth/logout", status_code=204, response_class=Response)
+def logout(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Response:
+    session, user = get_current_auth(db, authorization)
+    revoke_vpn_devices(db, user, session_token_hash=session.token_hash, fail_on_error=False)
+    session.status = "revoked"
+    db.commit()
+    return Response(status_code=204, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
 
 @app.get("/me", response_model=User)
@@ -2134,30 +2387,18 @@ def get_me(
 
 
 @app.get("/usage/authorize", response_model=Entitlement)
-def authorize_usage(
-    authorization: str | None = Header(default=None),
-    db: Session = Depends(get_db),
-) -> Entitlement:
-    user = get_current_user(db, authorization)
-    if ensure_free_traffic_quota(user):
-        db.commit()
-        db.refresh(user)
-    return build_entitlement(user)
+def authorize_usage() -> Entitlement:
+    raise HTTPException(status_code=410, detail="Legacy usage authorization is disabled")
 
 
 @app.get("/vpn/authorize", response_model=Entitlement)
 def authorize_vpn(
     authorization: str | None = Header(default=None),
+    x_xingsui_platform: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> Entitlement:
-    user = get_current_user(db, authorization)
-    if ensure_free_traffic_quota(user):
-        db.commit()
-        db.refresh(user)
-    entitlement = build_vpn_entitlement(user)
-    if not entitlement.allowed:
-        revoke_vpn_devices(db, user)
-    return entitlement
+    principal = require_vpn_principal(db, authorization, x_xingsui_platform)
+    return build_vpn_entitlement(principal.user)
 
 
 @app.get("/user/vip/status", response_model=VipStatusResponse)
@@ -2196,19 +2437,7 @@ def get_user_subscription_link(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> SubscriptionLinkResponse:
-    user = require_subscription_user(db, authorization)
-    require_active_subscription_vip(user)
-    enforce_subscription_rate_limit(
-        user.id,
-        "export",
-        SUBSCRIPTION_EXPORT_LIMIT_COUNT,
-        SUBSCRIPTION_EXPORT_LIMIT_SECONDS,
-    )
-    token = ensure_subscription_token(db, user)
-    record_subscription_audit(db, user, "export", token, request)
-    response = build_subscription_response(db, user, token, request)
-    db.commit()
-    return response
+    raise HTTPException(status_code=410, detail="Long-lived subscription links are disabled")
 
 
 @app.post("/user/subscription-link/reset", response_model=SubscriptionLinkResponse)
@@ -2217,19 +2446,7 @@ def reset_user_subscription_link(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> SubscriptionLinkResponse:
-    user = require_subscription_user(db, authorization)
-    require_active_subscription_vip(user)
-    enforce_subscription_rate_limit(
-        user.id,
-        "reset",
-        SUBSCRIPTION_RESET_LIMIT_COUNT,
-        SUBSCRIPTION_RESET_LIMIT_SECONDS,
-    )
-    token = reset_subscription_token(db, user)
-    record_subscription_audit(db, user, "reset", token, request)
-    response = build_subscription_response(db, user, token, request)
-    db.commit()
-    return response
+    raise HTTPException(status_code=410, detail="Long-lived subscription links are disabled")
 
 
 @app.get("/sub", include_in_schema=False)
@@ -2237,37 +2454,10 @@ def subscription_feed(
     token: str = Query(default=""),
     db: Session = Depends(get_db),
 ) -> Response:
-    token = token.strip()
-    if not token:
-        return JSONResponse(
-            status_code=401,
-            content={"success": False, "code": "UNAUTHORIZED", "message": "订阅链接无效，请重新导出。"},
-        )
-    token_hash = hash_token(token)
-    user = db.scalar(select(UserRow).where(UserRow.subscription_token_hash == token_hash))
-    if user is None:
-        return JSONResponse(
-            status_code=401,
-            content={"success": False, "code": "UNAUTHORIZED", "message": "订阅链接无效，请重新导出。"},
-        )
-    try:
-        require_active_subscription_vip(user)
-    except SubscriptionApiException as exc:
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"success": False, "code": exc.code, "message": exc.message},
-        )
-    try:
-        content, _node_count = render_subscription_content(db, user)
-    except SubscriptionApiException as exc:
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"success": False, "code": exc.code, "message": exc.message},
-        )
-    return PlainTextResponse(
-        content,
-        media_type="text/yaml; charset=utf-8",
-        headers={"Cache-Control": "no-store, max-age=0"},
+    return JSONResponse(
+        status_code=410,
+        content={"detail": "Long-lived subscription feeds are disabled"},
+        headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"},
     )
 
 
@@ -2275,89 +2465,77 @@ def subscription_feed(
 def get_vpn_config(
     rotate: bool = Query(default=False),
     authorization: str | None = Header(default=None),
+    x_xingsui_platform: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> VpnNodeConfig:
-    user = get_current_user(db, authorization)
-    if ensure_free_traffic_quota(user):
-        db.commit()
-        db.refresh(user)
-    entitlement = build_vpn_entitlement(user)
-    if not entitlement.allowed:
-        raise HTTPException(status_code=403, detail=entitlement.reason)
-
-    # 优先走节点池智能调度：选出最优在线节点并经 Agent 远程签发。
-    # 节点池为空 / 全部离线 / Agent 不可达时安全回退到下方静态/自动签发逻辑。
-    pool_node = select_pool_node(db, user_is_vip(user))
-    if pool_node is not None:
-        if rotate:
-            revoke_vpn_devices(db, user)
-        try:
-            device = provision_node_device(db, user, pool_node)
-        except Exception:
-            device = None
-        if device is not None:
-            return VpnNodeConfig(
-                id=pool_node.id,
-                name=pool_node.name,
-                region=pool_node.region,
-                tunnel_name=device.tunnel_name,
-                config_text=device.config_text,
-                vless_config=node_service.build_vless_config(pool_node),
-                entitlement=entitlement,
-            )
-
-    static_config = vpn_default_config_template()
-    if static_config and not env_flag("VPN_AUTO_PROVISION", False):
-        return VpnNodeConfig(
-            id=os.getenv("VPN_NODE_ID", "default"),
-            name=os.getenv("VPN_NODE_NAME", "星隧智能节点"),
-            region=os.getenv("VPN_NODE_REGION", "智能线路"),
-            tunnel_name="xingsui",
-            config_text=static_config,
-            entitlement=entitlement,
-        )
-
-    if not env_flag("VPN_AUTO_PROVISION", False):
-        raise HTTPException(status_code=503, detail="VPN node is not configured")
-
+    principal = require_vpn_principal(db, authorization, x_xingsui_platform)
+    pool_node = select_pool_node(db, True, principal.protocol)
+    if pool_node is None:
+        raise HTTPException(status_code=503, detail="No eligible VPN node is available")
     if rotate:
-        revoke_vpn_devices(db, user)
-
-    device = get_or_create_vpn_device(db, user)
-    node = db.get(VpnNodeRow, device.node_id) if device.node_id else None
-    return VpnNodeConfig(
-        id=device.node_id,
-        name=os.getenv("VPN_NODE_NAME", "星隧智能节点"),
-        region=os.getenv("VPN_NODE_REGION", "智能线路"),
-        tunnel_name=device.tunnel_name,
-        config_text=device.config_text,
-        vless_config=node_service.build_vless_config(node) if node is not None else None,
-        entitlement=entitlement,
-    )
+        revoke_vpn_devices(db, principal.user, session_token_hash=principal.session.token_hash)
+    return issue_vpn_node_config(db, principal, pool_node)
 
 
 @app.post("/usage/report", response_model=Entitlement)
 def report_usage(
     payload: UsageReportRequest,
     authorization: str | None = Header(default=None),
+    x_xingsui_platform: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> Entitlement:
-    user = get_current_user(db, authorization)
-    ensure_free_traffic_quota(user)
-    if effective_vip_status(user.vip_status, user.vip_expired_at) == "active":
+    principal = require_vpn_principal(db, authorization, x_xingsui_platform)
+    now = datetime.now(UTC)
+    device = db.scalar(
+        select(VpnDeviceRow)
+        .where(VpnDeviceRow.user_id == principal.user.id)
+        .where(VpnDeviceRow.protocol == principal.protocol)
+        .where(VpnDeviceRow.session_token_hash == principal.session.token_hash)
+        .where(VpnDeviceRow.lease_id == payload.lease_id)
+        .where(VpnDeviceRow.status == "active")
+        .with_for_update()
+    )
+    if device is None:
+        raise HTTPException(status_code=403, detail="invalid_vpn_lease")
+    current_expiry = coerce_utc(device.lease_expires_at)
+    if current_expiry is None or current_expiry <= now:
+        revoke_vpn_device(db, device)
         db.commit()
-        db.refresh(user)
-        return build_entitlement(user)
-
-    rx_delta = max(0, int(payload.rx_bytes_delta))
-    tx_delta = max(0, int(payload.tx_bytes_delta))
-    user.free_traffic_used_bytes = int(user.free_traffic_used_bytes or 0) + rx_delta + tx_delta
-    db.commit()
-    db.refresh(user)
-    entitlement = build_entitlement(user)
-    if not entitlement.allowed:
-        revoke_vpn_devices(db, user)
-    return entitlement
+        raise HTTPException(status_code=403, detail="vpn_lease_expired")
+    if payload.tunnel_name and payload.tunnel_name != device.tunnel_name:
+        raise HTTPException(status_code=403, detail="invalid_vpn_lease")
+    node = db.get(VpnNodeRow, device.node_id) if device.node_id else None
+    if (
+        node is None
+        or not node.enabled
+        or not node_service.node_supports_protocol(node, principal.protocol)
+        or not node_service.node_config_is_complete(node, principal.protocol)
+    ):
+        revoke_vpn_device(db, device)
+        db.commit()
+        raise HTTPException(status_code=503, detail="vpn_node_unavailable")
+    session_expiry = coerce_utc(principal.session.expires_at)
+    vip_expiry = coerce_utc(principal.user.vip_expired_at)
+    if session_expiry is None or vip_expiry is None:
+        raise HTTPException(status_code=403, detail="vpn_lease_cannot_be_renewed")
+    renewed_expiry = min(now + timedelta(seconds=VPN_LEASE_TTL_SECONDS), session_expiry, vip_expiry)
+    if renewed_expiry <= now:
+        raise HTTPException(status_code=403, detail="vpn_lease_cannot_be_renewed")
+    try:
+        renew_device_on_agent(node, device, renewed_expiry)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="vpn_lease_renewal_failed") from exc
+    device.lease_expires_at = renewed_expiry
+    try:
+        db.commit()
+    except Exception as exc:
+        try:
+            renew_device_on_agent(node, device, current_expiry)
+        except Exception:
+            security_logger.error("Failed to compensate an Agent lease after database commit failure")
+        db.rollback()
+        raise HTTPException(status_code=503, detail="vpn_lease_renewal_failed") from exc
+    return build_vpn_entitlement(principal.user, renewed_expiry)
 
 
 @app.get("/invitations/me", response_model=InvitationSummary)
@@ -2486,20 +2664,36 @@ def list_my_withdrawals(
 
 
 @app.get("/orders/{order_id}", response_model=Order)
-def get_order(order_id: str, db: Session = Depends(get_db)) -> Order:
-    return to_order(require_order(db, order_id))
+def get_order(
+    order_id: str,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Order:
+    user = get_current_user(db, authorization)
+    return to_order(require_owned_order(db, order_id, user), user.email)
 
 
 @app.post("/orders/{order_id}/paid", response_model=Order)
-def mark_order_paid(order_id: str, db: Session = Depends(get_db)) -> Order:
-    order = require_order(db, order_id)
+def mark_order_paid(
+    order_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Order:
+    user = get_current_user(db, authorization)
+    order = require_owned_order(db, order_id, user)
     if order.status == OrderStatus.completed.value:
-        return to_order(order)
+        return to_order(order, user.email)
+    if order.status == OrderStatus.pending_confirm.value:
+        return to_order(order, user.email)
+    if order.status != OrderStatus.pending_payment.value:
+        raise HTTPException(status_code=409, detail=f"Order status is {order.status}")
     order.status = OrderStatus.pending_confirm.value
     order.paid_marked_at = datetime.now(UTC)
     db.commit()
     db.refresh(order)
-    return to_order(order)
+    security_audit("order_marked_paid", request, order_id=order.id, user_id=user.id)
+    return to_order(order, user.email)
 
 
 @app.get("/admin/dashboard", response_model=DashboardSummary)
@@ -2765,7 +2959,7 @@ def approve_admin_withdrawal(
     if row.status != WithdrawalStatus.pending.value:
         raise HTTPException(status_code=409, detail=f"Withdrawal status is {row.status}")
     row.status = WithdrawalStatus.completed.value
-    row.reviewed_by = payload.reviewed_by if payload else "admin"
+    row.reviewed_by = "admin"
     row.reviewed_at = datetime.now(UTC)
     db.commit()
     db.refresh(row)
@@ -2788,7 +2982,7 @@ def reject_admin_withdrawal(
     if user is not None:
         user.cash_balance_cents += row.amount_cents
     row.status = WithdrawalStatus.rejected.value
-    row.reviewed_by = payload.reviewed_by if payload else "admin"
+    row.reviewed_by = "admin"
     row.reviewed_at = datetime.now(UTC)
     db.commit()
     db.refresh(row)
@@ -2816,8 +3010,8 @@ def get_admin_user(user_id: str, db: Session = Depends(get_db)) -> User:
     return to_user(user)
 
 
-class AdminGrantVipRequest(BaseModel):
-    days: int = 30
+class AdminGrantVipRequest(StrictRequest):
+    days: int = Field(default=30, ge=1, le=ADMIN_MAX_GRANT_DAYS)
 
 
 @app.post("/admin/users/{user_id}/grant-vip", response_model=AdminUserSummary)
@@ -2878,7 +3072,7 @@ def confirm_order(
     apply_invitation_reward(db, user, order)
     order.status = OrderStatus.completed.value
     order.confirmed_at = now
-    order.reviewed_by = payload.reviewed_by if payload else "admin"
+    order.reviewed_by = "admin"
     order.review_note = payload.note if payload else None
     db.commit()
     db.refresh(order)
@@ -2895,7 +3089,7 @@ def reject_order(
     if order.status == OrderStatus.completed.value:
         raise HTTPException(status_code=409, detail="Completed order cannot be rejected")
     order.status = OrderStatus.rejected.value
-    order.reviewed_by = payload.reviewed_by if payload else "admin"
+    order.reviewed_by = "admin"
     order.review_note = payload.note if payload else None
     db.commit()
     db.refresh(order)
@@ -2910,6 +3104,13 @@ def require_order(db: Session, order_id: str) -> OrderRow:
     return order
 
 
+def require_owned_order(db: Session, order_id: str, user: UserRow) -> OrderRow:
+    order = require_order(db, order_id)
+    if order.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order
+
+
 def node_health_map(db: Session) -> dict[str, VpnNodeHealthRow]:
     return {row.node_id: row for row in db.scalars(select(VpnNodeHealthRow)).all()}
 
@@ -2917,73 +3118,72 @@ def node_health_map(db: Session) -> dict[str, VpnNodeHealthRow]:
 @app.get("/vpn/nodes", response_model=list[VpnNodeSummary])
 def list_vpn_nodes(
     authorization: str | None = Header(default=None),
-    x_xingsui_version_code: str | None = Header(default=None),
+    x_xingsui_platform: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> list[VpnNodeSummary]:
-    user = get_current_user(db, authorization)
-    if ensure_free_traffic_quota(user):
-        db.commit()
-        db.refresh(user)
-    entitlement = build_vpn_entitlement(user)
-    vip = user_is_vip(user)
+    principal = require_vpn_principal(db, authorization, x_xingsui_platform)
+    entitlement = build_vpn_entitlement(principal.user)
     now = datetime.now(UTC)
     health = node_health_map(db)
     nodes = db.scalars(
-        select(VpnNodeRow).where(VpnNodeRow.enabled.is_(True)).order_by(VpnNodeRow.weight.desc())
+        select(VpnNodeRow)
+        .where(VpnNodeRow.enabled.is_(True))
+        .where(VpnNodeRow.protocol.in_((principal.protocol, "dual")))
+        .order_by(VpnNodeRow.weight.desc())
     ).all()
-    summaries = [
-        to_vpn_node_summary(node, health.get(node.id), vip, now, entitlement.allowed)
+    return [
+        to_vpn_node_summary(node, health.get(node.id), True, now, principal.protocol, entitlement.allowed)
         for node in nodes
+        if node_service.node_config_is_complete(node, principal.protocol)
     ]
-    if supports_windows_vless(x_xingsui_version_code):
-        osaka = osaka_vless_node_summary(entitlement.allowed)
-        if osaka is not None:
-            summaries.insert(0, osaka)
-    return summaries
 
 
 @app.get("/vpn/nodes/{node_id}/config", response_model=VpnNodeConfig)
 def get_vpn_node_config(
     node_id: str,
     authorization: str | None = Header(default=None),
+    x_xingsui_platform: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> VpnNodeConfig:
-    user = get_current_user(db, authorization)
-    if ensure_free_traffic_quota(user):
-        db.commit()
-        db.refresh(user)
-    entitlement = build_vpn_entitlement(user)
-    if not entitlement.allowed:
-        raise HTTPException(status_code=403, detail=entitlement.reason)
-    if node_id == VLESS_OSAKA_NODE_ID:
-        link = osaka_vless_link()
-        if link is None:
-            raise HTTPException(status_code=503, detail="osaka_vless_unavailable")
-        vless_config = osaka_vless_config(link)
-        if vless_config is None:
-            raise HTTPException(status_code=503, detail="osaka_vless_unavailable")
-        return VpnNodeConfig(
-            id=VLESS_OSAKA_NODE_ID,
-            name=VLESS_OSAKA_NODE_NAME,
-            region=VLESS_OSAKA_NODE_REGION,
-            tunnel_name="xingsui-vless",
-            config_text=link,
-            vless_config=vless_config,
-            entitlement=entitlement,
-        )
+    principal = require_vpn_principal(db, authorization, x_xingsui_platform)
     node = require_node(db, node_id)
     if not node.enabled:
         raise HTTPException(status_code=403, detail="node_disabled")
-    if node.vip_only and not user_is_vip(user):
-        raise HTTPException(status_code=403, detail="vip_required")
-    device = provision_node_device(db, user, node)
+    if not node_service.node_supports_protocol(node, principal.protocol):
+        raise HTTPException(status_code=403, detail="platform_protocol_mismatch")
+    if not node_service.node_config_is_complete(node, principal.protocol):
+        raise HTTPException(status_code=503, detail="node_configuration_incomplete")
+    return issue_vpn_node_config(db, principal, node)
+
+
+def issue_vpn_node_config(db: Session, principal: VpnPrincipal, node: VpnNodeRow) -> VpnNodeConfig:
+    lease_id, issued_at, expires_at = lease_window(principal)
+    if expires_at <= issued_at:
+        raise HTTPException(status_code=403, detail="VPN lease cannot be issued")
+    if principal.protocol == "awg":
+        device = provision_node_device(db, principal, node, lease_id, expires_at)
+        vless_config = None
+    elif principal.protocol == "vless":
+        device = provision_vless_device(db, principal, node, lease_id, expires_at)
+        vless_config = node_service.build_vless_config(node, device.vless_uuid or "")
+        if vless_config is None:
+            revoke_vpn_device(db, device)
+            db.commit()
+            raise HTTPException(status_code=503, detail="VLESS node configuration is incomplete")
+    else:
+        raise HTTPException(status_code=403, detail="platform_protocol_mismatch")
+    entitlement = build_vpn_entitlement(principal.user, expires_at)
     return VpnNodeConfig(
         id=node.id,
         name=node.name,
         region=node.region,
+        protocol="amneziawg" if principal.protocol == "awg" else principal.protocol,
         tunnel_name=device.tunnel_name,
         config_text=device.config_text,
-        vless_config=node_service.build_vless_config(node),
+        vless_config=vless_config,
+        lease_id=device.lease_id,
+        issued_at=issued_at,
+        expires_at=expires_at,
         entitlement=entitlement,
     )
 
@@ -2991,15 +3191,44 @@ def get_vpn_node_config(
 @app.post("/internal/nodes/heartbeat", include_in_schema=False)
 def node_heartbeat(
     payload: NodeHeartbeatRequest,
-    x_internal_token: str | None = Header(default=None),
+    request: Request,
+    x_xingsui_node_id: str | None = Header(default=None),
+    x_xingsui_timestamp: str | None = Header(default=None),
+    x_xingsui_nonce: str | None = Header(default=None),
+    x_xingsui_signature: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    if not node_service.verify_internal_token(x_internal_token):
-        raise HTTPException(status_code=401, detail="Invalid internal token")
+    signed_payload = payload.model_dump(mode="json")
+    if x_xingsui_node_id != payload.node_id or not node_service.verify_agent_signature(
+        node_id=payload.node_id,
+        method="POST",
+        path="/internal/nodes/heartbeat",
+        payload=signed_payload,
+        timestamp=x_xingsui_timestamp,
+        nonce=x_xingsui_nonce,
+        signature=x_xingsui_signature,
+    ):
+        security_audit("node_heartbeat_denied", request, node_id=payload.node_id)
+        raise HTTPException(status_code=401, detail="Invalid node signature")
     node = db.get(VpnNodeRow, payload.node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Node not found")
     now = datetime.now(UTC)
+    db.execute(delete(NodeRequestNonceRow).where(NodeRequestNonceRow.expires_at <= now))
+    nonce_id = hash_token(f"{payload.node_id}:{x_xingsui_nonce}")
+    db.add(
+        NodeRequestNonceRow(
+            id=nonce_id,
+            node_id=payload.node_id,
+            expires_at=now + timedelta(seconds=node_service.AGENT_SIGNATURE_WINDOW_SECONDS),
+        )
+    )
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        security_audit("node_heartbeat_replay_denied", request, node_id=payload.node_id)
+        raise HTTPException(status_code=401, detail="Replayed node request") from exc
     health = db.get(VpnNodeHealthRow, payload.node_id)
     if health is None:
         health = VpnNodeHealthRow(node_id=payload.node_id)
@@ -3029,10 +3258,14 @@ def create_admin_node(payload: AdminNodeRequest, db: Session = Depends(get_db)) 
     node_id = (payload.id or f"node_{uuid4().hex[:10]}").strip()
     if db.get(VpnNodeRow, node_id) is not None:
         raise HTTPException(status_code=409, detail="Node id already exists")
+    protocol = payload.protocol.strip().lower()
+    if protocol not in {"awg", "vless", "dual"}:
+        raise HTTPException(status_code=422, detail="protocol must be awg, vless or dual")
     node = VpnNodeRow(
         id=node_id,
         name=payload.name,
         region=payload.region,
+        protocol=protocol,
         endpoint=payload.endpoint,
         agent_host=payload.agent_host,
         agent_port=payload.agent_port,
@@ -3061,8 +3294,12 @@ def update_admin_node(
     db: Session = Depends(get_db),
 ) -> AdminNodeSummary:
     node = require_node(db, node_id)
+    protocol = payload.protocol.strip().lower()
+    if protocol not in {"awg", "vless", "dual"}:
+        raise HTTPException(status_code=422, detail="protocol must be awg, vless or dual")
     node.name = payload.name
     node.region = payload.region
+    node.protocol = protocol
     node.endpoint = payload.endpoint
     node.agent_host = payload.agent_host
     node.agent_port = payload.agent_port

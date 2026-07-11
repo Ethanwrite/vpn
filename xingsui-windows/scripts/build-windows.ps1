@@ -10,7 +10,7 @@ Write-Host "Xingsui Windows build"
 Write-Host "Project: $Root"
 
 if (!(Test-Path $SingBox)) {
-  throw "Missing sing-box sidecar: $SingBox. Use an AmneziaWG-capable sing-box build."
+  throw "Missing pinned official sing-box sidecar: $SingBox."
 }
 
 if (!(Test-Path $Wintun)) {

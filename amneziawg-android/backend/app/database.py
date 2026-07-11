@@ -50,10 +50,33 @@ def run_lightweight_migrations(connection=None) -> None:
     connection.execute(text("alter table users add column if not exists subscription_token_created_at timestamptz"))
     connection.execute(text("alter table users add column if not exists last_login_at timestamptz"))
     connection.execute(text("alter table users add column if not exists last_seen_at timestamptz"))
+    connection.execute(text("alter table auth_sessions add column if not exists status varchar(24) not null default 'active'"))
+    connection.execute(text("update auth_sessions set status = 'revoked' where expires_at is null"))
+    connection.execute(text("create index if not exists ix_auth_sessions_status on auth_sessions(status)"))
     connection.execute(text("create index if not exists ix_users_created_at on users(created_at)"))
     connection.execute(text("create index if not exists ix_users_last_seen_at on users(last_seen_at)"))
     connection.execute(text("create index if not exists ix_users_vip_expired_at on users(vip_expired_at)"))
     connection.execute(text("create index if not exists ix_users_subscription_token_hash on users(subscription_token_hash)"))
+    connection.execute(
+        text(
+            "update users set subscription_token_hash = null, subscription_token_masked = null "
+            "where subscription_token_hash is not null or subscription_token_masked is not null"
+        )
+    )
+    connection.execute(
+        text(
+            """
+            create table if not exists node_request_nonces (
+                id varchar(128) primary key,
+                node_id varchar(64) not null references vpn_nodes(id),
+                expires_at timestamptz not null,
+                created_at timestamptz not null default now()
+            )
+            """
+        )
+    )
+    connection.execute(text("create index if not exists ix_node_request_nonces_node_id on node_request_nonces(node_id)"))
+    connection.execute(text("create index if not exists ix_node_request_nonces_expires_at on node_request_nonces(expires_at)"))
     connection.execute(
         text(
             """
@@ -83,7 +106,7 @@ def run_lightweight_migrations(connection=None) -> None:
                 tunnel_name varchar(32) not null default 'xingsui',
                 client_private_key text not null,
                 client_public_key text not null,
-                client_address varchar(64) not null unique,
+                client_address varchar(64) not null,
                 config_text text not null,
                 status varchar(24) not null default 'active',
                 created_at timestamptz not null default now(),
@@ -93,8 +116,41 @@ def run_lightweight_migrations(connection=None) -> None:
         )
     )
     connection.execute(text("create index if not exists ix_vpn_devices_user_id on vpn_devices(user_id)"))
+    if engine.dialect.name == "postgresql":
+        connection.execute(text("drop index if exists ix_vpn_devices_client_address"))
     connection.execute(text("create index if not exists ix_vpn_devices_client_address on vpn_devices(client_address)"))
     connection.execute(text("create index if not exists ix_vpn_devices_status on vpn_devices(status)"))
+    connection.execute(text("alter table vpn_devices add column if not exists protocol varchar(16) not null default 'awg'"))
+    connection.execute(text("alter table vpn_devices add column if not exists session_token_hash varchar(128) not null default ''"))
+    connection.execute(text("alter table vpn_devices add column if not exists lease_id varchar(64) not null default ''"))
+    connection.execute(text("alter table vpn_devices add column if not exists lease_expires_at timestamptz"))
+    connection.execute(text("alter table vpn_devices add column if not exists vless_uuid varchar(64)"))
+    connection.execute(text("create index if not exists ix_vpn_devices_protocol on vpn_devices(protocol)"))
+    connection.execute(text("create index if not exists ix_vpn_devices_session_token_hash on vpn_devices(session_token_hash)"))
+    connection.execute(text("create index if not exists ix_vpn_devices_lease_expires_at on vpn_devices(lease_expires_at)"))
+    connection.execute(text("create unique index if not exists ix_vpn_devices_lease_id_unique on vpn_devices(lease_id) where lease_id <> ''"))
+    connection.execute(
+        text(
+            "update vpn_devices set status = 'revoked', client_private_key = '', config_text = '' "
+            "where lease_expires_at is null and status = 'active'"
+        )
+    )
+    connection.execute(
+        text("update vpn_devices set client_private_key = '', config_text = '' where status <> 'active'")
+    )
+    connection.execute(
+        text(
+            "create unique index if not exists ix_vpn_devices_active_session_node "
+            "on vpn_devices(user_id, node_id, protocol, session_token_hash) where status = 'active'"
+        )
+    )
+    connection.execute(
+        text(
+            "create unique index if not exists ix_vpn_devices_active_node_address "
+            "on vpn_devices(node_id, client_address) "
+            "where protocol = 'awg' and status in ('active', 'pending_revoke')"
+        )
+    )
     connection.execute(
         text(
             """
@@ -108,7 +164,7 @@ def run_lightweight_migrations(connection=None) -> None:
                 server_public_key text not null,
                 client_network varchar(64) not null default '10.66.66.0/24',
                 dns varchar(128) not null default '1.1.1.1',
-                allowed_ips text not null default '0.0.0.0/0',
+                allowed_ips text not null default '0.0.0.0/0, ::/0',
                 persistent_keepalive integer not null default 25,
                 mtu integer not null default 1420,
                 params_json text not null default '{}',
@@ -125,6 +181,15 @@ def run_lightweight_migrations(connection=None) -> None:
     )
     connection.execute(text("create index if not exists ix_vpn_nodes_enabled on vpn_nodes(enabled)"))
     connection.execute(text("create index if not exists ix_vpn_nodes_status on vpn_nodes(status)"))
+    connection.execute(text("alter table vpn_nodes add column if not exists protocol varchar(16) not null default 'awg'"))
+    connection.execute(
+        text(
+            "update vpn_nodes set protocol = 'dual' "
+            "where params_json like '%VlessPublicKey%' or params_json like '%VlessShortId%'"
+        )
+    )
+    connection.execute(text("update vpn_nodes set allowed_ips = '0.0.0.0/0, ::/0' where trim(allowed_ips) = '0.0.0.0/0'"))
+    connection.execute(text("create index if not exists ix_vpn_nodes_protocol on vpn_nodes(protocol)"))
     connection.execute(
         text(
             """

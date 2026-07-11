@@ -20,6 +20,7 @@ target/
 *.exe
 *.msi
 *.zip
+!xingsui-windows/src-tauri/binaries/sing-box-x86_64-pc-windows-msvc.exe
 
 # Local IDE/runtime files
 local.properties
@@ -35,3 +36,9 @@ wechat.jpg
 alipay.jpg
 edge-node-*-output-*.txt
 wg-test/
+deploy/relay/*.nft
+
+# Live proxy/subscription credentials
+xingsui-shadowrocket-vless*
+subscription-links.txt
+**/subscription-links.txt

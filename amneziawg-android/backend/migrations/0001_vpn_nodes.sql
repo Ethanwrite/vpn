@@ -13,7 +13,7 @@ create table if not exists vpn_nodes (
     server_public_key text not null,
     client_network varchar(64) not null default '10.66.66.0/24',
     dns varchar(128) not null default '1.1.1.1',
-    allowed_ips text not null default '0.0.0.0/0',
+    allowed_ips text not null default '0.0.0.0/0, ::/0',
     persistent_keepalive integer not null default 25,
     mtu integer not null default 1420,
     params_json text not null default '{}',

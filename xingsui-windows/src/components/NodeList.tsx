@@ -1,6 +1,7 @@
-// 节点选择弹层：在线状态点 + 地区 + VIP 锁 + 负载。
+// 节点选择弹层：仅展示线路名称、地区、状态与操作。
 
 import type { VpnNodeSummary } from "../lib/types";
+import { formatNodeDetail } from "../lib/format";
 
 interface Props {
   open: boolean;
@@ -21,8 +22,11 @@ export default function NodeList({ open, nodes, selectedId, onPick, onClose }: P
         className="glass max-h-[70%] w-full animate-fade-in overflow-y-auto rounded-t-3xl p-5"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold">选择线路</h3>
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-white">选择线路</h3>
+            <p className="mt-1 text-xs text-white/45">选择适合你的网络线路</p>
+          </div>
           <button className="text-white/50 hover:text-white" onClick={onClose}>
             ✕
           </button>
@@ -39,7 +43,7 @@ export default function NodeList({ open, nodes, selectedId, onPick, onClose }: P
                 key={n.id}
                 disabled={n.locked}
                 onClick={() => onPick(n)}
-                className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-left transition ${
                   selected
                     ? "border-brand-glow/60 bg-brand-glow/10"
                     : "border-white/10 bg-white/5 hover:bg-white/10"
@@ -60,13 +64,24 @@ export default function NodeList({ open, nodes, selectedId, onPick, onClose }: P
                     )}
                     {n.locked && <span className="text-xs">🔒</span>}
                   </div>
-                  <div className="mt-0.5 text-[11px] text-white/40">{n.region}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-white/50">
+                    <span>{formatNodeDetail(n)}</span>
+                    <span>·</span>
+                    <span>{online ? "可用" : "维护中"}</span>
+                  </div>
                 </div>
-                <span className="font-mono text-[11px] text-white/50">
-                  {typeof n.latency_ms === "number" && n.latency_ms < 9999
-                    ? `${n.latency_ms}ms`
-                    : `${n.load_percent}%`}
-                </span>
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  <span className="font-mono text-[11px] text-white/45">
+                    {online ? "在线" : "离线"}
+                  </span>
+                  <span className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+                    selected
+                      ? "bg-brand-glow text-white"
+                      : "bg-white/10 text-white/70"
+                  }`}>
+                    {selected ? "已选择" : n.locked ? "暂不可用" : "选择"}
+                  </span>
+                </div>
               </button>
             );
           })}

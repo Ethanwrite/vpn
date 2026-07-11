@@ -92,7 +92,7 @@ SITE_HTML = """<!doctype html>
       box-shadow: 0 12px 28px rgba(42, 171, 238, .22);
     }
     .tgIcon { width: 17px; height: 17px; fill: currentColor; flex: 0 0 auto; }
-    .primary, .secondary, .danger {
+    .primary, .secondary, .unavailable, .danger {
       min-height: 46px;
       border-radius: 8px;
       border: 0;
@@ -106,6 +106,7 @@ SITE_HTML = """<!doctype html>
     }
     .primary { background: linear-gradient(135deg, #17c7a8, #43c8f4); color: #062430; box-shadow: 0 12px 28px rgba(20, 177, 164, .18); }
     .secondary { border: 1px solid var(--line); color: var(--blue); background: rgba(255,255,255,.92); }
+    .unavailable { border: 1px solid var(--line); color: var(--muted); background: #f5f7fb; cursor: not-allowed; }
     .danger { background: #fff1f1; color: var(--danger); border: 1px solid #ffd6d6; }
     .hero { min-height: calc(100vh - 70px); display: grid; grid-template-columns: 1.04fr .96fr; gap: 34px; align-items: center; padding: 44px 0 34px; }
     .tag { display: inline-flex; width: fit-content; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; color: #097160; background: #eafbf6; border: 1px solid #c7eee6; font-weight: 900; }
@@ -479,7 +480,7 @@ SITE_HTML = """<!doctype html>
         <div class="heroActions">
           <a class="primary" href="/register" data-route="register">立即注册</a>
           <a class="secondary" href="/download/android">下载 Android APK</a>
-          <a class="secondary" href="/download/windows">下载 Windows 版</a>
+          <span class="unavailable" role="status">Windows 客户端维护中</span>
           <a class="secondary" href="/vip" data-route="vip">查看套餐</a>
         </div>
       </div>
@@ -601,7 +602,6 @@ SITE_HTML = """<!doctype html>
           </div>
           <div class="centerNav">
             <a class="primary" href="/vip" data-route="vip">开通/续费 VIP</a>
-            <button class="primary" id="centerSubscriptionButton" type="button">订阅链接</button>
             <a class="secondary" href="/download" data-route="download">下载 App</a>
             <button class="secondary" id="copyInvite">复制邀请码</button>
           </div>
@@ -614,34 +614,13 @@ SITE_HTML = """<!doctype html>
           </div>
           <div class="panel">
             <h3>权益信息</h3>
-            <p id="trafficState">注册用户可用 30MB 体验流量一键连接；用完后开通 VIP 继续使用。</p>
+            <p id="trafficState">VPN 连接需要有效 VIP，每次连接都会向服务器申请短期安全配置。</p>
             <p id="balanceState" class="muted">返现余额：-</p>
           </div>
         </div>
         <div class="panel subscriptionCard" id="subscriptionCard">
-          <h3>我的订阅链接</h3>
-          <p class="muted">订阅链接用于导入 Clash、sing-box、v2rayN、Shadowrocket、Stash、Quantumult X 等客户端。</p>
-          <p class="status" id="subscriptionStatus">请先登录后查看订阅链接。</p>
-          <div class="subscriptionActions" id="subscriptionActions">
-            <button class="primary" id="exportSubscription">导出订阅链接</button>
-            <button class="secondary" id="copySubscription" disabled>复制链接</button>
-            <button class="danger" id="resetSubscription" disabled>重置订阅链接</button>
-          </div>
-          <div class="subscriptionLinkBox" id="subscriptionLinkBox">
-            <label for="subscriptionLink">订阅链接</label>
-            <input class="subscriptionInput" id="subscriptionLink" type="text" readonly />
-            <p class="muted" id="subscriptionMeta"></p>
-          </div>
-          <div class="securityHint">请勿分享订阅链接。多人同时使用可能导致账号冻结。</div>
-          <div class="importGuide">
-            <h4>如何导入客户端</h4>
-            <p class="muted">复制订阅链接后，在客户端选择“从 URL 导入”“添加订阅”或“Remote Profile”，粘贴链接并更新即可。</p>
-            <div class="clientGrid">
-              <div class="clientTip"><strong>Clash / Stash</strong><span>Profiles / 配置页添加 URL，保存后点击更新。</span></div>
-              <div class="clientTip"><strong>sing-box / v2rayN</strong><span>选择订阅分组，新增订阅地址，然后更新订阅。</span></div>
-              <div class="clientTip"><strong>Shadowrocket / Quantumult X</strong><span>右上角添加，类型选择 Subscribe / 订阅，粘贴链接。</span></div>
-            </div>
-          </div>
+          <h3>安全连接</h3>
+          <p class="muted">长期订阅链接已停用。请使用星隧官方客户端；客户端会在每次连接前在线验证账号、VIP、设备与会话，并获取短期租约。</p>
         </div>
       </div>
     </section>
@@ -684,7 +663,7 @@ SITE_HTML = """<!doctype html>
         </div>
         <div class="actions">
           <a class="primary" href="/download/android">下载 Android APK</a>
-          <a class="secondary" href="/download/windows">下载 Windows 版</a>
+          <span class="unavailable" role="status">Windows 客户端维护中</span>
         </div>
       </div>
       <div class="grid three">
@@ -707,18 +686,9 @@ SITE_HTML = """<!doctype html>
         <div class="step"><h3>开通 VIP</h3><p class="muted">选择套餐，按页面提示完成微信或支付宝付款，再点击“我已完成付款”。</p></div>
         <div class="step"><h3>同步会员</h3><p class="muted">订单完成后，会员到期时间会自动写入账号。</p></div>
         <div class="step"><h3>App 登录</h3><p class="muted">下载 APK 后用同一邮箱密码登录，首页会显示 VIP 状态和节点信息。</p></div>
-        <div class="step"><h3>连接网络</h3><p class="muted">App 会自动匹配节点并创建本地隧道，点击连接即可。30MB 体验流量用完后会提示开通会员。</p></div>
+        <div class="step"><h3>连接网络</h3><p class="muted">App 会在线验证有效 VIP，然后匹配对应平台的节点并申请短期租约。</p></div>
       </div>
-      <div class="panel guidePanel">
-        <h3>订阅链接导入教程</h3>
-        <ol class="guideList">
-          <li><strong>进入用户中心：</strong>登录官网账号，确认 VIP 状态为“已开通”。</li>
-          <li><strong>导出链接：</strong>点击“订阅链接”或“导出订阅链接”，生成后点击“复制链接”。</li>
-          <li><strong>导入客户端：</strong>在 Clash、sing-box、v2rayN、Shadowrocket、Stash、Quantumult X 中选择“添加订阅 / 从 URL 导入 / Remote Profile”，粘贴链接并保存。</li>
-          <li><strong>更新订阅：</strong>保存后点击“更新订阅”或刷新配置，客户端会拉取最新线路。</li>
-          <li><strong>注意安全：</strong>订阅链接等同账号连接凭证，请勿分享给他人；如怀疑泄露，可回到用户中心点击“重置订阅链接”。</li>
-        </ol>
-      </div>
+      <div class="panel guidePanel"><h3>为什么不提供长期订阅链接？</h3><p class="muted">长期链接无法按设备及时撤销，也容易进入浏览器和代理日志。官方客户端仅在验证通过后获得短期凭据。</p></div>
     </section>
   </main>
 
@@ -831,7 +801,7 @@ SITE_HTML = """<!doctype html>
         $('meExpiry').textContent = '-';
         $('meInvite').textContent = '-';
         $('sessionState').textContent = '当前浏览器未登录，请先登录或注册。';
-        $('trafficState').textContent = '登录后可查看体验流量和会员同步状态。';
+        $('trafficState').textContent = '登录后可查看会员同步状态。';
         $('balanceState').textContent = '返现余额：-';
         renderSubscriptionCard();
         return;
@@ -845,7 +815,7 @@ SITE_HTML = """<!doctype html>
         $('meExpiry').textContent = fmtDate(me.vip_expired_at);
         $('meInvite').textContent = me.invite_code;
         $('sessionState').textContent = `当前浏览器已登录，账号 ID：${me.id}`;
-        $('trafficState').textContent = `体验流量剩余 ${(me.free_traffic_remaining_bytes / 1024 / 1024).toFixed(1)} MB；可在 App 内一键连接。`;
+        $('trafficState').textContent = me.vip_status === 'active' ? 'VIP 有效；官方 App 将在每次连接前签发短期租约。' : '请开通有效 VIP 后连接。';
         $('balanceState').textContent = `返现余额：${money(me.cash_balance_cents)} 元`;
         renderAuthState();
         renderSubscriptionCard();
@@ -1063,23 +1033,8 @@ SITE_HTML = """<!doctype html>
         navigate('login');
         return;
       }
-      const channel = $('payChannel')?.value || 'wechat';
-      $('orderBox').classList.add('active');
-      $('orderStatus').textContent = '正在生成订单...';
-      try {
-        const promoId = state.promo?.plan_id === planId ? state.promo.id : null;
-        const order = await api('/orders', {
-          method: 'POST',
-          body: JSON.stringify({ plan_id: planId, promotion_id: promoId, pay_channel: channel }),
-        });
-        state.currentOrder = order;
-        renderOrderPayment(order);
-        $('orderStatus').className = 'status ok';
-        $('orderStatus').textContent = '订单已生成，完成付款后点击确认按钮。';
-      } catch (error) {
-        $('orderStatus').className = 'status error';
-        $('orderStatus').textContent = error.message;
-      }
+      const params = new URLSearchParams({ plan_id: planId });
+      location.href = `/payment?${params.toString()}`;
     }
 
     async function submitPaid() {
@@ -1170,22 +1125,22 @@ SITE_HTML = """<!doctype html>
       }
     });
 
-    $('logoutButton').addEventListener('click', () => {
-      clearAuth();
-      navigate('home');
+    $('logoutButton').addEventListener('click', async () => {
+      try {
+        if (state.token) await api('/auth/logout', { method: 'POST' });
+      } finally {
+        clearAuth();
+        navigate('home');
+      }
     });
     $('copyInvite').addEventListener('click', async () => {
       if (!state.user?.invite_code) return;
       await navigator.clipboard.writeText(state.user.invite_code);
     });
-    $('centerSubscriptionButton').addEventListener('click', focusSubscriptionCard);
     $('payChannel').addEventListener('change', () => {
       if (state.currentOrder) createOrder(state.currentOrder.plan_id);
     });
     $('submitPaid').addEventListener('click', submitPaid);
-    $('exportSubscription').addEventListener('click', exportSubscriptionLink);
-    $('copySubscription').addEventListener('click', copySubscriptionLink);
-    $('resetSubscription').addEventListener('click', resetSubscriptionLink);
 
     renderAuthState();
     renderSubscriptionCard();

@@ -33,7 +33,7 @@
         android:description="@string/permission_description"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/permission_label"
-        android:protectionLevel="dangerous" />
+        android:protectionLevel="signature" />
 
     <application
         android:name=".Application"
@@ -64,15 +64,11 @@
 
         <activity
             android:name=".activity.MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
-            </intent-filter>
-        </activity>
+            android:exported="false" />
 
         <activity
             android:name=".activity.TvMainActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/TvTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -88,6 +84,12 @@
         <activity
             android:name=".xingsui.XingsuiVipActivity"
             android:label="@string/xingsui_vip_center"
+            android:parentActivityName=".xingsui.XingsuiHomeActivity" />
+
+        <activity
+            android:name=".xingsui.XingsuiProfileActivity"
+            android:exported="false"
+            android:label="@string/xingsui_profile_title"
             android:parentActivityName=".xingsui.XingsuiHomeActivity" />
 
         <activity

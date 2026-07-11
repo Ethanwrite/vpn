@@ -6,14 +6,23 @@ HTTP 调用使用标准库 urllib，避免新增依赖。
 
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
+from pathlib import Path
+import re
+import secrets
+import ssl
+import time
 from typing import Any
 import urllib.error
 import urllib.request
+from uuid import UUID
 
 # AmneziaWG 混淆参数下发顺序（client/server 必须一致）。
 AMNEZIA_PARAM_KEYS = (
@@ -36,16 +45,98 @@ AMNEZIA_PARAM_KEYS = (
 )
 
 
-def internal_api_token() -> str:
-    return os.getenv("INTERNAL_API_TOKEN", "").strip()
+AGENT_SIGNATURE_WINDOW_SECONDS = 90
+AGENT_SEEN_NONCES: dict[tuple[str, str], int] = {}
 
 
-def verify_internal_token(provided: str | None) -> bool:
-    """常数时间比较内部令牌；未配置或不匹配一律拒绝。"""
-    expected = internal_api_token()
-    if not expected or not provided:
+def _load_agent_secrets() -> dict[str, str]:
+    """Load per-node secrets without storing them in the node database."""
+    configured_path = os.getenv("NODE_AGENT_SECRETS_FILE", "").strip()
+    raw = ""
+    if configured_path:
+        path = Path(configured_path)
+        if path.is_file():
+            raw = path.read_text(encoding="utf-8")
+    if not raw:
+        raw = os.getenv("NODE_AGENT_SECRETS_JSON", "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): str(value).strip() for key, value in parsed.items() if str(value).strip()}
+
+
+def agent_secret_for_node(node_id: str) -> str:
+    secret = _load_agent_secrets().get(node_id, "")
+    if not secret:
+        raise RuntimeError("node agent secret is not configured")
+    return secret
+
+
+def canonical_agent_payload(payload: dict[str, Any]) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def agent_signature(
+    secret: str,
+    *,
+    method: str,
+    path: str,
+    node_id: str,
+    timestamp: str,
+    nonce: str,
+    payload: dict[str, Any],
+) -> str:
+    body_hash = hashlib.sha256(canonical_agent_payload(payload)).hexdigest()
+    message = "\n".join((method.upper(), path, node_id, timestamp, nonce, body_hash))
+    return hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_agent_signature(
+    *,
+    node_id: str,
+    method: str,
+    path: str,
+    payload: dict[str, Any],
+    timestamp: str | None,
+    nonce: str | None,
+    signature: str | None,
+    now: int | None = None,
+) -> bool:
+    if not timestamp or not nonce or not signature or len(nonce) < 16:
         return False
-    return hmac.compare_digest(provided.strip(), expected)
+    try:
+        issued_at = int(timestamp)
+        secret = agent_secret_for_node(node_id)
+    except (ValueError, RuntimeError):
+        return False
+    current = int(time.time()) if now is None else now
+    if abs(current - issued_at) > AGENT_SIGNATURE_WINDOW_SECONDS:
+        return False
+    cutoff = current - AGENT_SIGNATURE_WINDOW_SECONDS
+    for key, seen_at in list(AGENT_SEEN_NONCES.items()):
+        if seen_at < cutoff:
+            AGENT_SEEN_NONCES.pop(key, None)
+    nonce_key = (node_id, nonce)
+    if nonce_key in AGENT_SEEN_NONCES:
+        return False
+    expected = agent_signature(
+        secret,
+        method=method,
+        path=path,
+        node_id=node_id,
+        timestamp=timestamp,
+        nonce=nonce,
+        payload=payload,
+    )
+    if not hmac.compare_digest(signature.strip(), expected):
+        return False
+    AGENT_SEEN_NONCES[nonce_key] = issued_at
+    return True
 
 
 def node_offline_after_seconds() -> int:
@@ -115,24 +206,145 @@ def params_fingerprint(params: dict[str, str]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def build_vless_config(node: Any) -> dict[str, str] | None:
+def build_vless_config(node: Any, lease_uuid: str) -> dict[str, str] | None:
     params = parse_node_params(getattr(node, "params_json", "{}"))
-    uuid = params.get("VlessUUID", "").strip()
     public_key = params.get("VlessPublicKey", "").strip()
     short_id = params.get("VlessShortId", "").strip()
-    if not uuid or not public_key or not short_id:
-        return None
+    server_name = params.get("VlessServerName", "").strip()
+    fingerprint = params.get("VlessFingerprint", "").strip()
     host = params.get("VlessHost", "").strip() or str(getattr(node, "endpoint", "")).rsplit(":", 1)[0]
+    port = params.get("VlessPort", "").strip()
+    if not lease_uuid or not host or not port or not public_key or not short_id or not server_name or not fingerprint:
+        return None
+    flow = params.get("VlessFlow", "").strip()
+    try:
+        UUID(lease_uuid)
+        parsed_port = int(port)
+        decoded_public_key = base64.urlsafe_b64decode(public_key + "=" * (-len(public_key) % 4))
+    except (ValueError, TypeError, binascii.Error):
+        return None
+    if (
+        not 1 <= parsed_port <= 65535
+        or len(public_key) != 43
+        or not re.fullmatch(r"[A-Za-z0-9_-]+", public_key)
+        or len(decoded_public_key) != 32
+    ):
+        return None
+    if not short_id or len(short_id) > 16 or len(short_id) % 2 or not re.fullmatch(r"[0-9A-Fa-f]+", short_id):
+        return None
+    if not valid_server_address(host) or not valid_dns_name(server_name):
+        return None
+    if fingerprint not in {"chrome", "firefox", "edge", "safari", "ios", "android", "360", "qq"}:
+        return None
+    if flow not in {"", "xtls-rprx-vision"}:
+        return None
     return {
         "server": host,
-        "server_port": params.get("VlessPort", "8443").strip() or "8443",
-        "uuid": uuid,
-        "flow": params.get("VlessFlow", "").strip(),
+        "server_port": port,
+        "uuid": lease_uuid,
+        "flow": flow,
         "public_key": public_key,
         "short_id": short_id,
-        "server_name": params.get("VlessServerName", "www.microsoft.com").strip() or "www.microsoft.com",
-        "utls_fingerprint": params.get("VlessFingerprint", "chrome").strip() or "chrome",
+        "server_name": server_name,
+        "utls_fingerprint": fingerprint,
     }
+
+
+def valid_dns_name(value: str) -> bool:
+    value = str(value or "").strip()
+    if not value or len(value) > 253 or "." not in value:
+        return False
+    try:
+        ipaddress.ip_address(value)
+        return False
+    except ValueError:
+        pass
+    return all(
+        0 < len(label) <= 63
+        and not label.startswith("-")
+        and not label.endswith("-")
+        and re.fullmatch(r"[A-Za-z0-9-]+", label) is not None
+        for label in value.split(".")
+    )
+
+
+def valid_server_address(value: str) -> bool:
+    value = str(value or "").strip()
+    if not value or any(character.isspace() for character in value):
+        return False
+    try:
+        ipaddress.ip_address(value.strip("[]"))
+        return True
+    except ValueError:
+        return valid_dns_name(value)
+
+
+def node_protocol(node: Any) -> str:
+    return str(getattr(node, "protocol", "awg") or "awg").strip().lower()
+
+
+def node_supports_protocol(node: Any, protocol: str) -> bool:
+    requested = str(protocol or "").strip().lower()
+    configured = node_protocol(node)
+    return requested in {"awg", "vless"} and configured in {requested, "dual"}
+
+
+def valid_wireguard_key(value: object) -> bool:
+    try:
+        decoded = base64.b64decode(str(value or "").strip(), validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    return len(decoded) == 32
+
+
+def node_config_is_complete(node: Any, protocol: str | None = None) -> bool:
+    protocol = str(protocol or node_protocol(node)).strip().lower()
+    if not node_supports_protocol(node, protocol):
+        return False
+    if protocol == "vless":
+        return build_vless_config(node, "00000000-0000-4000-8000-000000000000") is not None
+    endpoint = str(getattr(node, "endpoint", "") or "").strip()
+    host, separator, port_text = endpoint.rpartition(":")
+    if not separator or not host:
+        return False
+    if not str(getattr(node, "agent_host", "") or "").strip():
+        return False
+    if not valid_wireguard_key(getattr(node, "server_public_key", "")):
+        return False
+    try:
+        ipaddress.ip_network(str(getattr(node, "client_network", "") or ""), strict=False)
+        if not 1 <= int(port_text) <= 65535:
+            return False
+        if not 576 <= int(getattr(node, "mtu", 0) or 0) <= 9000:
+            return False
+        if not 1 <= int(getattr(node, "persistent_keepalive", 0) or 0) <= 65535:
+            return False
+    except (TypeError, ValueError):
+        return False
+    dns = str(getattr(node, "dns", "") or "").strip()
+    allowed_ips = {
+        item.strip()
+        for item in str(getattr(node, "allowed_ips", "") or "").split(",")
+        if item.strip()
+    }
+    if not dns or not {"0.0.0.0/0", "::/0"}.issubset(allowed_ips):
+        return False
+    params = parse_node_params(getattr(node, "params_json", "{}"))
+    required = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
+    try:
+        parsed = {key: int(str(params.get(key, "")).strip()) for key in required}
+    except ValueError:
+        return False
+    headers = [parsed[key] for key in ("H1", "H2", "H3", "H4")]
+    return (
+        1 <= parsed["Jc"] <= 128
+        and 0 <= parsed["Jmin"] <= parsed["Jmax"] <= 1280
+        and parsed["S1"] >= 0
+        and parsed["S2"] >= 0
+        and parsed["S1"] + 56 != parsed["S2"]
+        and len(set(headers)) == 4
+        and all(value > 4 for value in headers)
+    )
 
 
 def node_status_label(health: Any, now: datetime | None = None, offline_after_seconds: int | None = None) -> str:
@@ -193,7 +405,7 @@ def render_node_client_config(node: Any, private_key: str, client_address: str) 
         value = str(params.get(key, "")).strip()
         if value:
             lines.append(f"{key} = {value}")
-    allowed_ips = (getattr(node, "allowed_ips", "0.0.0.0/0") or "0.0.0.0/0").strip()
+    allowed_ips = (getattr(node, "allowed_ips", "0.0.0.0/0, ::/0") or "0.0.0.0/0, ::/0").strip()
     keepalive = getattr(node, "persistent_keepalive", None)
     lines.extend(
         [
@@ -212,25 +424,118 @@ def render_node_client_config(node: Any, private_key: str, client_address: str) 
 def agent_base_url(node: Any) -> str:
     host = getattr(node, "agent_host", "").strip()
     port = int(getattr(node, "agent_port", 0) or int(os.getenv("NODE_AGENT_PORT", "51821")))
-    return f"http://{host}:{port}"
+    production = os.getenv("APP_ENV", "production").strip().lower() in {"prod", "production"}
+    scheme = os.getenv("NODE_AGENT_SCHEME", "https" if production else "http").strip().lower()
+    if production and scheme != "https":
+        raise RuntimeError("plaintext node agent transport is disabled in production")
+    if scheme not in {"http", "https"}:
+        raise RuntimeError("invalid node agent scheme")
+    return f"{scheme}://{host}:{port}"
+
+
+def agent_ssl_context() -> ssl.SSLContext | None:
+    if os.getenv("NODE_AGENT_SCHEME", "").strip().lower() != "https" and not (
+        os.getenv("APP_ENV", "production").strip().lower() in {"prod", "production"}
+    ):
+        return None
+    ca_file = os.getenv("NODE_AGENT_CA_FILE", "").strip() or None
+    context = ssl.create_default_context(cafile=ca_file)
+    cert_file = os.getenv("NODE_AGENT_CLIENT_CERT", "").strip()
+    key_file = os.getenv("NODE_AGENT_CLIENT_KEY", "").strip()
+    if bool(cert_file) != bool(key_file):
+        raise RuntimeError("both node agent client certificate and key are required")
+    if cert_file:
+        context.load_cert_chain(cert_file, key_file)
+    return context
 
 
 def agent_request(node: Any, path: str, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
-    """向边缘节点 Agent 发送带内部令牌的 JSON 请求。"""
+    """Send an authenticated, replay-resistant request to one node Agent."""
     url = f"{agent_base_url(node)}{path}"
-    body = json.dumps(payload).encode("utf-8")
+    node_id = str(getattr(node, "id", "") or "").strip()
+    timestamp = str(int(time.time()))
+    nonce = secrets.token_urlsafe(18)
+    secret = agent_secret_for_node(node_id)
+    body = canonical_agent_payload(payload)
     request = urllib.request.Request(url, data=body, method="POST")
     request.add_header("Content-Type", "application/json")
-    request.add_header("X-Internal-Token", internal_api_token())
+    request.add_header("X-Xingsui-Node-Id", node_id)
+    request.add_header("X-Xingsui-Timestamp", timestamp)
+    request.add_header("X-Xingsui-Nonce", nonce)
+    request.add_header(
+        "X-Xingsui-Signature",
+        agent_signature(
+            secret,
+            method="POST",
+            path=path,
+            node_id=node_id,
+            timestamp=timestamp,
+            nonce=nonce,
+            payload=payload,
+        ),
+    )
     timeout = timeout if timeout is not None else agent_http_timeout()
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-        raw = response.read().decode("utf-8") or "{}"
-    return json.loads(raw)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout, context=agent_ssl_context()) as response:  # noqa: S310
+            raw = response.read(65537)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+        raise RuntimeError("node agent request failed") from exc
+    if len(raw) > 65536:
+        raise RuntimeError("node agent response is too large")
+    try:
+        decoded = json.loads(raw.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("invalid node agent response") from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError("invalid node agent response")
+    return decoded
 
 
-def agent_add_peer(node: Any, public_key: str, client_ip: str, *, timeout: float | None = None) -> dict[str, Any]:
-    return agent_request(node, "/peer/add", {"public_key": public_key, "allowed_ip": client_ip}, timeout=timeout)
+def agent_add_peer(
+    node: Any,
+    public_key: str,
+    client_ip: str,
+    lease_id: str,
+    expires_at: datetime,
+    *,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    return agent_request(
+        node,
+        "/peer/add",
+        {
+            "public_key": public_key,
+            "allowed_ip": client_ip,
+            "lease_id": lease_id,
+            "expires_at": expires_at.astimezone(UTC).isoformat(),
+        },
+        timeout=timeout,
+    )
 
 
 def agent_remove_peer(node: Any, public_key: str, *, timeout: float | None = None) -> dict[str, Any]:
     return agent_request(node, "/peer/remove", {"public_key": public_key}, timeout=timeout)
+
+
+def agent_add_vless_user(
+    node: Any,
+    user_uuid: str,
+    lease_id: str,
+    expires_at: datetime,
+    *,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    return agent_request(
+        node,
+        "/vless/add",
+        {
+            "uuid": user_uuid,
+            "lease_id": lease_id,
+            "expires_at": expires_at.astimezone(UTC).isoformat(),
+        },
+        timeout=timeout,
+    )
+
+
+def agent_remove_vless_user(node: Any, user_uuid: str, *, timeout: float | None = None) -> dict[str, Any]:
+    return agent_request(node, "/vless/remove", {"uuid": user_uuid}, timeout=timeout)

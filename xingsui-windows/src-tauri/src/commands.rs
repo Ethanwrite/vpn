@@ -2,17 +2,17 @@
 
 use crate::core;
 use crate::error::{AppError, AppResult};
-use crate::models::{ConnState, NetMode, StatusPayload, User, VlessConfig, VpnNodeSummary};
+use crate::models::{ConnState, NetMode, StatusPayload, User, VpnNodeSummary};
 use crate::state::AppState;
-use crate::{awg, store};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::{Duration, Instant};
+use crate::{store, vless};
+use chrono::Utc;
 use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 pub async fn login(app: AppHandle, email: String, password: String) -> AppResult<User> {
     let state = app.state::<AppState>();
     let resp = state.api.login(&email, &password).await?;
+    core::stop(&app).map_err(|_| AppError::connection_sync())?;
     *state.token.write() = Some(resp.access_token.clone());
     store::save_token(&state.app_dir, &resp.access_token)?;
     Ok(resp.user)
@@ -30,6 +30,7 @@ pub async fn register(
         .api
         .register(&email, &password, invite_code.as_deref())
         .await?;
+    core::stop(&app).map_err(|_| AppError::connection_sync())?;
     *state.token.write() = Some(resp.access_token.clone());
     store::save_token(&state.app_dir, &resp.access_token)?;
     Ok(resp.user)
@@ -38,19 +39,24 @@ pub async fn register(
 /// 启动时静默恢复登录态：解密本地 token 并拉取用户信息。
 #[tauri::command]
 pub async fn restore_session(app: AppHandle) -> AppResult<Option<User>> {
+    core::stop(&app).map_err(|_| AppError::connection_sync())?;
     let state = app.state::<AppState>();
+    *state.token.write() = None;
     let token = match store::load_token(&state.app_dir)? {
         Some(t) => t,
         None => return Ok(None),
     };
-    *state.token.write() = Some(token.clone());
     match state.api.get_me(&token).await {
-        Ok(user) => Ok(Some(user)),
-        Err(_) => {
+        Ok(user) => {
+            *state.token.write() = Some(token);
+            Ok(Some(user))
+        }
+        Err(AppError::Unauthorized) => {
             *state.token.write() = None;
             let _ = store::clear_token(&state.app_dir);
             Ok(None)
         }
+        Err(error) => Err(error),
     }
 }
 
@@ -63,10 +69,11 @@ pub async fn get_me(app: AppHandle) -> AppResult<User> {
 
 #[tauri::command]
 pub async fn logout(app: AppHandle) -> AppResult<()> {
-    let _ = core::stop(&app);
+    let stop_result = core::stop(&app);
     let state = app.state::<AppState>();
     *state.token.write() = None;
     store::clear_token(&state.app_dir)?;
+    stop_result.map_err(|_| AppError::connection_sync())?;
     Ok(())
 }
 
@@ -77,116 +84,107 @@ pub async fn list_nodes(app: AppHandle) -> AppResult<Vec<VpnNodeSummary>> {
     state.api.list_nodes(&token).await
 }
 
-#[tauri::command]
-pub fn measure_latency(host: String, port: u16) -> u32 {
-    let Ok(mut addrs) = (host.as_str(), port).to_socket_addrs() else {
-        return 9999;
-    };
-    let Some(addr) = addrs.next() else {
-        return 9999;
-    };
-    let start = Instant::now();
-    match TcpStream::connect_timeout(&addr, Duration::from_millis(1500)) {
-        Ok(_) => start.elapsed().as_millis().min(9999) as u32,
-        Err(_) => 9999,
-    }
-}
-
-fn vless_query_value(url: &reqwest::Url, key: &str) -> String {
-    url.query_pairs()
-        .find(|(name, _)| name == key)
-        .map(|(_, value)| value.into_owned())
-        .unwrap_or_default()
-}
-
-fn parse_vless_link(config_text: &str) -> AppResult<Option<VlessConfig>> {
-    let text = config_text.trim();
-    if !text.starts_with("vless://") {
-        return Ok(None);
-    }
-
-    let url = reqwest::Url::parse(text).map_err(|_| AppError::config("VLESS 链接格式错误"))?;
-    let uuid = url.username().trim().to_string();
-    if uuid.is_empty() {
-        return Err(AppError::config("VLESS 链接缺少 UUID"));
-    }
-    let server = url
-        .host_str()
-        .map(str::trim)
-        .filter(|host| !host.is_empty())
-        .ok_or_else(|| AppError::config("VLESS 链接缺少服务器地址"))?
-        .to_string();
-    let public_key = vless_query_value(&url, "pbk");
-    if public_key.trim().is_empty() {
-        return Err(AppError::config("VLESS Reality 链接缺少 public key"));
-    }
-
-    Ok(Some(VlessConfig {
-        server,
-        server_port: url.port().unwrap_or(8443).to_string(),
-        uuid,
-        flow: vless_query_value(&url, "flow"),
-        public_key,
-        short_id: vless_query_value(&url, "sid"),
-        server_name: {
-            let sni = vless_query_value(&url, "sni");
-            if sni.trim().is_empty() {
-                "www.microsoft.com".to_string()
-            } else {
-                sni
-            }
-        },
-        utls_fingerprint: {
-            let fp = vless_query_value(&url, "fp");
-            if fp.trim().is_empty() {
-                "chrome".to_string()
-            } else {
-                fp
-            }
-        },
-    }))
-}
-
 /// 一键连接指定节点（按 mode 选择 TUN / 系统代理）。
 #[tauri::command]
 pub async fn connect(app: AppHandle, node_id: String, mode: NetMode) -> AppResult<()> {
-    let token = {
+    if !valid_node_id(&node_id) {
+        let _ = core::stop(&app);
+        return Err(AppError::connection_sync());
+    }
+    let token = match app.state::<AppState>().require_token() {
+        Ok(token) => token,
+        Err(_) => {
+            let _ = core::stop(&app);
+            return Err(AppError::connection_sync());
+        }
+    };
+    if core::stop(&app).is_err() {
+        return Err(AppError::connection_sync());
+    }
+    let generation = {
         let state = app.state::<AppState>();
         let mut rt = state.conn.lock();
+        rt.generation = rt.generation.wrapping_add(1);
         rt.state = ConnState::Connecting;
         rt.node_id = Some(node_id.clone());
         rt.mode = mode;
-        state.require_token()?
+        rt.generation
     };
-    core::emit_status(&app, Some("正在连接…".into()));
+    core::emit_status(&app, None);
 
-    let config = {
+    let config_result = {
         let state = app.state::<AppState>();
-        match state.api.get_node_config(&token, &node_id).await {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = core::stop(&app);
-                return Err(e);
+        state.api.get_node_config(&token, &node_id).await
+    };
+    if !attempt_is_current(&app, generation, &token) {
+        return Ok(());
+    }
+    let config = match config_result {
+        Ok(config) => config,
+        Err(_) => return fail_attempt(&app, generation),
+    };
+    let validated = match vless::validate_node_config(&config, Utc::now()) {
+        Ok(validated) => validated,
+        Err(_) => return fail_attempt(&app, generation),
+    };
+    if !attempt_is_current(&app, generation, &token) {
+        return Ok(());
+    }
+    match core::start_vless(
+        &app,
+        validated.vless,
+        mode,
+        config.id,
+        config.name,
+        config.tunnel_name,
+        validated.lease_id,
+        validated.expires_at,
+        generation,
+    ) {
+        Ok(true) | Ok(false) => Ok(()),
+        Err(_) => {
+            if attempt_is_current(&app, generation, &token) {
+                fail_attempt(&app, generation)
+            } else {
+                Ok(())
             }
         }
-    };
-
-    let vless_config = match config.vless_config {
-        Some(vless_cfg) => Some(vless_cfg),
-        None => parse_vless_link(&config.config_text)?,
-    };
-    if let Some(vless_cfg) = vless_config {
-        return core::start_vless(&app, vless_cfg, mode, config.id, config.name);
     }
+}
 
-    let awg_cfg = match awg::parse(&config.config_text) {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = core::stop(&app);
-            return Err(e);
-        }
-    };
-    core::start(&app, awg_cfg, mode, config.id, config.name)
+fn attempt_is_current(app: &AppHandle, generation: u64, token: &str) -> bool {
+    let state = app.state::<AppState>();
+    let token_matches = state.token.read().as_deref() == Some(token);
+    if !token_matches {
+        return false;
+    }
+    let rt = state.conn.lock();
+    attempt_snapshot_is_current(rt.generation, generation, rt.state, token_matches)
+}
+
+fn attempt_snapshot_is_current(
+    current_generation: u64,
+    expected_generation: u64,
+    state: ConnState,
+    token_matches: bool,
+) -> bool {
+    token_matches && current_generation == expected_generation && state == ConnState::Connecting
+}
+
+fn valid_node_id(node_id: &str) -> bool {
+    !node_id.is_empty()
+        && node_id.len() <= 64
+        && node_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn fail_attempt(app: &AppHandle, generation: u64) -> AppResult<()> {
+    if core::stop_attempt(app, generation) {
+        Err(AppError::connection_sync())
+    } else {
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -218,5 +216,46 @@ pub fn get_status(app: AppHandle) -> StatusPayload {
         node_name: rt.node_name.clone(),
         mode: rt.mode,
         message: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_cancelled_or_logged_out_attempt_never_starts() {
+        assert!(attempt_snapshot_is_current(
+            7,
+            7,
+            ConnState::Connecting,
+            true
+        ));
+        assert!(!attempt_snapshot_is_current(
+            8,
+            7,
+            ConnState::Connecting,
+            true
+        ));
+        assert!(!attempt_snapshot_is_current(
+            7,
+            7,
+            ConnState::Disconnected,
+            true
+        ));
+        assert!(!attempt_snapshot_is_current(
+            7,
+            7,
+            ConnState::Connecting,
+            false
+        ));
+    }
+
+    #[test]
+    fn node_id_is_an_opaque_path_safe_identifier() {
+        assert!(valid_node_id("node-singapore_1"));
+        assert!(!valid_node_id("../me"));
+        assert!(!valid_node_id("node/config"));
+        assert!(!valid_node_id(""));
     }
 }

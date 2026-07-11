@@ -13,7 +13,17 @@ RestartSec=3
 AmbientCapabilities=CAP_NET_ADMIN
 NoNewPrivileges=true
 ProtectHome=true
-ProtectSystem=full
+ProtectSystem=strict
+ReadWritePaths=/var/lib/xingsui-agent -/etc/sing-box
+StateDirectory=xingsui-agent
+StateDirectoryMode=0700
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target

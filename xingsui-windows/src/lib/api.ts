@@ -10,6 +10,9 @@ import type {
   VpnNodeSummary,
 } from "./types";
 
+export const CONNECTION_SYNC_ERROR =
+  "账户状态同步失败\n暂时无法连接，请检查网络后重试";
+
 export const api = {
   login: (email: string, password: string) =>
     invoke<User>("login", { email, password }),
@@ -24,9 +27,6 @@ export const api = {
   logout: () => invoke<void>("logout"),
 
   listNodes: () => invoke<VpnNodeSummary[]>("list_nodes"),
-
-  measureLatency: (host: string, port: number) =>
-    invoke<number>("measure_latency", { host, port }),
 
   connect: (nodeId: string, mode: NetMode) =>
     invoke<void>("connect", { nodeId, mode }),

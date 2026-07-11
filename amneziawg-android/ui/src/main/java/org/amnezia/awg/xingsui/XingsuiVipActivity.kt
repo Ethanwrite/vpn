@@ -214,6 +214,6 @@ class XingsuiVipActivity : AppCompatActivity() {
         private const val MIN_ACCOUNT_LENGTH = 4
         private const val ALIPAY_ACCOUNT_TYPE = "alipay"
         private const val WITHDRAW_WECHAT_ID = "xinsuui"
-        private const val WEBSITE_RECHARGE_URL = "https://xingsuico.com/vip"
+        private const val WEBSITE_RECHARGE_URL = "https://xingsui.org/vip"
     }
 }

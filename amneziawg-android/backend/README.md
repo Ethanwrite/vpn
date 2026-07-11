@@ -12,8 +12,8 @@ FastAPI MVP for the commercial flow:
 - cashback balance withdrawal by Alipay account, plus customer-service WeChat flow
 - admin payment QR configuration
 - App-side one-tap VPN startup backed by server entitlement checks
-- automatic VPN node config provisioning through `/vpn/config`
-- 30MB free trial traffic for logged-in non-VIP users
+- VIP-only, platform-scoped VPN lease provisioning through `/vpn/config`
+- five-minute, server-revocable AWG/VLESS leases (configurable with `VPN_LEASE_TTL_SECONDS`)
 - built-in Admin page for manual review
 
 Run locally after installing dependencies:
@@ -47,24 +47,23 @@ The API creates development tables automatically on startup and seeds the defaul
 
 Android debug builds call `http://10.0.2.2:8000`, which maps the emulator to the host machine. Keep this backend running while testing the membership page in an emulator.
 
-Tunnel startup is blocked in the Android client unless the user is logged in and `/vpn/authorize` returns an active entitlement. Active VIP users are allowed while `vip_expired_at` is in the future. Non-VIP users may use the 30MB free traffic quota. The App fetches `/vpn/config` on first connect, auto-creates the local `xingsui` tunnel, and reports tunnel usage to `/usage/report` while the VPN is running.
+Tunnel startup is blocked unless the bearer session is active and unexpired, the account is active, and VIP is active with a future `vip_expired_at`. Free-traffic counters are never accepted as VPN authorization. Android sends `X-Xingsui-Platform: android` and receives only complete AmneziaWG nodes; Windows sends `X-Xingsui-Platform: windows` and receives only complete VLESS Reality nodes. Every response carries a short lease bounded by both session and VIP expiry.
 
-VPN node provisioning can run in two modes:
+VPN node provisioning is fail-closed and uses only registered database nodes plus their authenticated edge Agent:
 
 ```env
-# Production auto-provisioning with a local wg0 interface
-VPN_AUTO_PROVISION=true
-VPN_WG_INTERFACE=wg0
-VPN_SERVER_PUBLIC_KEY=your_server_public_key
-VPN_ENDPOINT=xingsuico.com:51820
-VPN_CLIENT_NETWORK=10.66.66.0/24
-VPN_DNS=1.1.1.1
-VPN_ALLOWED_IPS=0.0.0.0/0
-
-# Local/simple fallback, returns the same static config to all users
-VPN_AUTO_PROVISION=false
-VPN_DEFAULT_CONFIG="[Interface]\\nPrivateKey = ..."
+ACCESS_TOKEN_TTL_SECONDS=86400
+VPN_LEASE_TTL_SECONDS=300
+NODE_AGENT_SCHEME=https
+NODE_AGENT_SECRETS_FILE=/run/secrets/xingsui-node-agent-secrets.json
+NODE_AGENT_CA_FILE=/run/secrets/xingsui-node-agent-ca.pem
 ```
+
+There is no static config fallback. Agent errors return `503` and never return a cached/shared node credential. Legacy `/sub?token=...` and subscription-link export endpoints return `410`; node credentials require an Authorization bearer header.
+
+Each `vpn_nodes` row has `protocol=awg|vless`. AWG rows require endpoint, Agent address, server public key and the complete J/S/H parameter set. VLESS rows require host, port, Reality public key, short ID, SNI and fingerprint in `params_json`; `VlessUUID` is ignored because UUIDs are generated per lease and installed/removed through the Agent.
+
+On an AWG node set `XS_MANAGED_PROTOCOLS=awg`. On a VLESS node set `XS_MANAGED_PROTOCOLS=vless`, `XS_VLESS_CONFIG`, `XS_VLESS_INBOUND_TAG`, `XS_VLESS_SERVICE`, and `XS_SING_BOX_BIN`. Agent startup reconciles the dedicated inbound/interface against its root-only lease state and removes unmanaged legacy credentials. VLESS updates are written to a same-directory temporary file, checked with `sing-box check`, atomically replaced, and then reloaded; a reload failure restores the previous JSON.
 
 Website and Admin:
 
@@ -93,8 +92,8 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8000/auth/email/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"xingsui123"}' | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 curl http://127.0.0.1:8000/usage/authorize -H "Authorization: Bearer $TOKEN"
-curl http://127.0.0.1:8000/vpn/authorize -H "Authorization: Bearer $TOKEN"
-curl http://127.0.0.1:8000/vpn/config -H "Authorization: Bearer $TOKEN"
+curl http://127.0.0.1:8000/vpn/authorize -H "Authorization: Bearer $TOKEN" -H "X-Xingsui-Platform: android"
+curl http://127.0.0.1:8000/vpn/config -H "Authorization: Bearer $TOKEN" -H "X-Xingsui-Platform: android"
 curl -X POST http://127.0.0.1:8000/usage/report \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
@@ -115,4 +114,4 @@ Invitation cashback rule in the current MVP: a new user may enter an inviter's c
 
 Withdrawal rule: the App only shows withdrawable balance. Users can either submit an Alipay account for manual withdrawal review, or copy/add customer-service WeChat `xinsuui` to request withdrawal manually.
 
-This development version now persists users, sessions, plans, promotions, payment QR settings, orders, invitations, cashback balances, withdrawal requests, VIP state, and free trial traffic counters in PostgreSQL. Production deployment should replace automatic table creation with Alembic migrations.
+This development version persists users, finite sessions, plans, promotions, payment QR settings, orders, invitations, cashback balances, withdrawal requests, VIP state, legacy traffic counters (never used for VPN authorization), nodes, and VPN leases in PostgreSQL. Production deployment should apply the checked-in SQL migrations before starting the new application version.

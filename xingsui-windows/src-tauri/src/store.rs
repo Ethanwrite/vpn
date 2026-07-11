@@ -40,8 +40,9 @@ pub fn clear_token(app_dir: &PathBuf) -> AppResult<()> {
 
 #[cfg(windows)]
 fn encrypt(data: &[u8]) -> AppResult<Vec<u8>> {
-    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Foundation::HLOCAL;
     use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
+    use windows::Win32::System::Memory::LocalFree;
 
     let mut input = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
@@ -60,8 +61,9 @@ fn encrypt(data: &[u8]) -> AppResult<Vec<u8>> {
 
 #[cfg(windows)]
 fn decrypt(data: &[u8]) -> AppResult<Vec<u8>> {
-    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Foundation::HLOCAL;
     use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
+    use windows::Win32::System::Memory::LocalFree;
 
     let mut input = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,

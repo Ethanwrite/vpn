@@ -7,6 +7,7 @@ import org.amnezia.awg.BuildConfig
 import org.amnezia.awg.xingsui.AuthSession
 import org.amnezia.awg.xingsui.XingsuiCrashReporter
 import org.amnezia.awg.xingsui.model.EntitlementStatus
+import org.amnezia.awg.xingsui.model.AppVersionInfo
 import org.amnezia.awg.xingsui.model.InvitationSummary
 import org.amnezia.awg.xingsui.model.OrderStatus
 import org.amnezia.awg.xingsui.model.OrderSummary
@@ -90,17 +91,13 @@ class XingsuiApiClient(
         JSONObject(request("GET", "/me")).toUserAccount()
     }
 
-    suspend fun authorizeUsage(): EntitlementStatus = withContext(Dispatchers.IO) {
-        JSONObject(request("GET", "/usage/authorize")).toEntitlementStatus()
-    }
-
-    suspend fun authorizeVpn(): EntitlementStatus = withContext(Dispatchers.IO) {
-        JSONObject(request("GET", "/vpn/authorize")).toEntitlementStatus()
+    suspend fun getAppVersion(currentVersionCode: Int): AppVersionInfo = withContext(Dispatchers.IO) {
+        JSONObject(request("GET", "/app/version?version_code=$currentVersionCode")).toAppVersionInfo()
     }
 
     suspend fun getDefaultVpnConfig(rotate: Boolean = false): VpnNodeConfig = withContext(Dispatchers.IO) {
         val path = if (rotate) "/vpn/config?rotate=true" else "/vpn/config"
-        JSONObject(request("GET", path)).toVpnNodeConfig()
+        JSONObject(request("GET", path, allowFailover = false)).toVpnNodeConfig()
     }
 
     suspend fun listNodes(): List<VpnNodeSummary> = withContext(Dispatchers.IO) {
@@ -113,11 +110,17 @@ class XingsuiApiClient(
     }
 
     suspend fun getNodeConfig(nodeId: String): VpnNodeConfig = withContext(Dispatchers.IO) {
-        JSONObject(request("GET", "/vpn/nodes/$nodeId/config")).toVpnNodeConfig()
+        JSONObject(request("GET", "/vpn/nodes/$nodeId/config", allowFailover = false)).toVpnNodeConfig()
     }
 
-    suspend fun reportUsage(tunnelName: String, rxBytesDelta: Long, txBytesDelta: Long): EntitlementStatus = withContext(Dispatchers.IO) {
+    suspend fun reportUsage(
+        leaseId: String,
+        tunnelName: String,
+        rxBytesDelta: Long,
+        txBytesDelta: Long,
+    ): EntitlementStatus = withContext(Dispatchers.IO) {
         val body = JSONObject()
+            .put("lease_id", leaseId)
             .put("tunnel_name", tunnelName)
             .put("rx_bytes_delta", rxBytesDelta)
             .put("tx_bytes_delta", txBytesDelta)
@@ -132,9 +135,15 @@ class XingsuiApiClient(
         request("POST", "/withdrawals", body.toString())
     }
 
-    private fun request(method: String, path: String, body: String? = null): String {
+    private fun request(
+        method: String,
+        path: String,
+        body: String? = null,
+        allowFailover: Boolean = true,
+    ): String {
         var lastError: Throwable? = null
-        for (requestBaseUrl in orderedBaseUrls()) {
+        val requestBaseUrls = orderedBaseUrls().let { if (allowFailover) it else it.take(1) }
+        for (requestBaseUrl in requestBaseUrls) {
             try {
                 return performRequest(requestBaseUrl, method, path, body).also {
                     activeBaseUrl = requestBaseUrl
@@ -157,9 +166,13 @@ class XingsuiApiClient(
     private fun performRequest(requestBaseUrl: String, method: String, path: String, body: String? = null): String {
         val connection = (URL("$requestBaseUrl$path").openConnection() as HttpURLConnection).apply {
             requestMethod = method
+            useCaches = false
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("Cache-Control", "no-store")
+            setRequestProperty("Pragma", "no-cache")
+            setRequestProperty("X-Xingsui-Platform", "android")
             setRequestProperty("X-Xingsui-Version-Code", BuildConfig.VERSION_CODE.toString())
             setRequestProperty("X-Xingsui-Version-Name", BuildConfig.VERSION_NAME)
             if (accessToken != null) {
@@ -262,6 +275,12 @@ class XingsuiApiClient(
         freeTrafficRemainingBytes = getLong("free_traffic_remaining_bytes"),
     )
 
+    private fun JSONObject.toAppVersionInfo() = AppVersionInfo(
+        versionCode = getInt("version_code"),
+        versionName = getString("version_name"),
+        downloadUrl = getString("download_url"),
+    )
+
     private fun JSONObject.toEntitlementStatus() = EntitlementStatus(
         allowed = getBoolean("allowed"),
         reason = getString("reason"),
@@ -270,6 +289,7 @@ class XingsuiApiClient(
         freeTrafficQuotaBytes = getLong("free_traffic_quota_bytes"),
         freeTrafficUsedBytes = getLong("free_traffic_used_bytes"),
         freeTrafficRemainingBytes = getLong("free_traffic_remaining_bytes"),
+        leaseExpiresAt = optNullableString("lease_expires_at")?.let { OffsetDateTime.parse(it).toInstant() },
     )
 
     private fun JSONObject.toVpnNodeConfig() = VpnNodeConfig(
@@ -277,6 +297,10 @@ class XingsuiApiClient(
         name = getString("name"),
         region = getString("region"),
         tunnelName = getString("tunnel_name"),
+        protocol = getString("protocol"),
+        leaseId = getString("lease_id"),
+        issuedAt = OffsetDateTime.parse(getString("issued_at")).toInstant(),
+        expiresAt = OffsetDateTime.parse(getString("expires_at")).toInstant(),
         configText = getString("config_text"),
         entitlement = getJSONObject("entitlement").toEntitlementStatus(),
     )
@@ -285,6 +309,7 @@ class XingsuiApiClient(
         id = getString("id"),
         name = getString("name"),
         region = getString("region"),
+        protocol = getString("protocol"),
         vipOnly = getBoolean("vip_only"),
         status = getString("status"),
         loadPercent = getInt("load_percent"),
@@ -334,11 +359,8 @@ class XingsuiApiClient(
         private fun buildApiBaseUrls(primaryBaseUrl: String): List<String> {
             val primary = primaryBaseUrl.trimEnd('/')
             val candidates = mutableListOf(primary)
-            if (primary.contains("xingsuico.com") || primary.contains("xingsui.org") || primary.contains("sslip.io")) {
-                candidates += "https://api.xingsuico.com/api"
+            if (primary.contains("xingsui.org")) {
                 candidates += "https://xingsui.org/api"
-                candidates += "https://api.xingsui.org/api"
-                candidates += "https://xingsui.212.50.232.111.sslip.io/api"
             }
             return candidates.map { it.trimEnd('/') }.distinct()
         }

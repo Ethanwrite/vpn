@@ -9,21 +9,19 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Icon
-import android.net.Uri
 import android.os.Build
 import android.os.IBinder
-import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.databinding.Observable
 import androidx.databinding.Observable.OnPropertyChangedCallback
-import org.amnezia.awg.activity.MainActivity
-import org.amnezia.awg.activity.TunnelToggleActivity
 import org.amnezia.awg.backend.Tunnel
 import org.amnezia.awg.model.ObservableTunnel
 import org.amnezia.awg.util.applicationScope
+import org.amnezia.awg.xingsui.XingsuiHomeActivity
 import org.amnezia.awg.widget.SlashDrawable
 import kotlinx.coroutines.launch
 
@@ -54,7 +52,7 @@ class QuickTileService : TileService() {
     override fun onClick() {
         when (val tunnel = tunnel) {
             null -> {
-                val intent = Intent(this, MainActivity::class.java)
+                val intent = Intent(this, XingsuiHomeActivity::class.java)
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     startActivityAndCollapse(PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE))
@@ -70,15 +68,26 @@ class QuickTileService : TileService() {
                             tunnel.setStateAsync(Tunnel.State.TOGGLE)
                             updateTile()
                         } catch (_: Throwable) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !Settings.canDrawOverlays(this@QuickTileService)) {
-                                val permissionIntent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                                permissionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                startActivityAndCollapse(PendingIntent.getActivity(this@QuickTileService, 0, permissionIntent, PendingIntent.FLAG_IMMUTABLE))
-                                return@launch
+                            Toast.makeText(
+                                this@QuickTileService,
+                                R.string.xingsui_account_sync_failed,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                            val homeIntent = Intent(this@QuickTileService, XingsuiHomeActivity::class.java)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                startActivityAndCollapse(
+                                    PendingIntent.getActivity(
+                                        this@QuickTileService,
+                                        0,
+                                        homeIntent,
+                                        PendingIntent.FLAG_IMMUTABLE,
+                                    )
+                                )
+                            } else {
+                                @Suppress("DEPRECATION", "StartActivityAndCollapseDeprecated")
+                                startActivityAndCollapse(homeIntent)
                             }
-                            val toggleIntent = Intent(this@QuickTileService, TunnelToggleActivity::class.java)
-                            toggleIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            startActivity(toggleIntent)
                         }
                     }
                 }
@@ -136,6 +145,7 @@ class QuickTileService : TileService() {
     private fun updateTile() {
         // Update the tunnel.
         val newTunnel = Application.getTunnelManager().lastUsedTunnel
+            ?.takeIf { it.name == XINGSUI_MANAGED_TUNNEL_NAME }
         if (newTunnel != tunnel) {
             tunnel?.removeOnPropertyChangedCallback(onStateChangedCallback)
             tunnel = newTunnel
@@ -181,6 +191,7 @@ class QuickTileService : TileService() {
 
     companion object {
         private const val TAG = "AmneziaWG/QuickTileService"
+        private const val XINGSUI_MANAGED_TUNNEL_NAME = "xingsui"
         var isAdded: Boolean = false
             private set
     }

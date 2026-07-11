@@ -1,0 +1,18 @@
+# Render this template on the relay host. Never commit the upstream address.
+table ip xingsui_singapore_relay {
+    chain prerouting {
+        type nat hook prerouting priority dstnat - 10; policy accept;
+        udp dport __LISTEN_PORT__ dnat to __UPSTREAM_IP__:__UPSTREAM_PORT__
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority srcnat + 10; policy accept;
+        ip daddr __UPSTREAM_IP__ udp dport __UPSTREAM_PORT__ masquerade
+    }
+
+    chain forward {
+        type filter hook forward priority filter - 10; policy accept;
+        ip daddr __UPSTREAM_IP__ udp dport __UPSTREAM_PORT__ accept
+        ip saddr __UPSTREAM_IP__ udp sport __UPSTREAM_PORT__ ct state established,related accept
+    }
+}

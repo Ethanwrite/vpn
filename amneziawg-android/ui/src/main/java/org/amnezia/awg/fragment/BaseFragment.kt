@@ -5,6 +5,7 @@
 package org.amnezia.awg.fragment
 
 import android.content.Context
+import android.app.Activity
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -23,7 +24,6 @@ import org.amnezia.awg.backend.Tunnel
 import org.amnezia.awg.databinding.TunnelDetailFragmentBinding
 import org.amnezia.awg.databinding.TunnelListItemBinding
 import org.amnezia.awg.model.ObservableTunnel
-import org.amnezia.awg.util.ErrorMessages
 import kotlinx.coroutines.launch
 
 /**
@@ -33,11 +33,17 @@ import kotlinx.coroutines.launch
 abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
     private var pendingTunnel: ObservableTunnel? = null
     private var pendingTunnelUp: Boolean? = null
-    private val permissionActivityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+    private val permissionActivityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val tunnel = pendingTunnel
         val checked = pendingTunnelUp
-        if (tunnel != null && checked != null)
+        if (result.resultCode == Activity.RESULT_OK && tunnel != null && checked != null) {
             setTunnelStateWithPermissionsResult(tunnel, checked)
+        } else if (checked == true) {
+            if (tunnel?.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+                Application.getCoroutineScope().launch { runCatching { tunnel.deleteAsync() } }
+            }
+            showSyncFailure()
+        }
         pendingTunnel = null
         pendingTunnelUp = null
     }
@@ -66,7 +72,7 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
         } ?: return
         val activity = activity ?: return
         activity.lifecycleScope.launch {
-            if (Application.getBackend() is GoBackend) {
+            if (checked && Application.getBackend() is GoBackend) {
                 try {
                     val intent = GoBackend.VpnService.prepare(activity)
                     if (intent != null) {
@@ -76,11 +82,15 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
                         return@launch
                     }
                 } catch (e: Throwable) {
-                    val message = activity.getString(R.string.error_prepare, ErrorMessages[e])
+                    if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+                        Application.getCoroutineScope().launch { runCatching { tunnel.deleteAsync() } }
+                    }
+                    val message = activity.getString(R.string.xingsui_account_sync_failed)
                     Snackbar.make(view, message, Snackbar.LENGTH_LONG)
                         .setAnchorView(view.findViewById(R.id.create_fab))
                         .show()
-                    Log.e(TAG, message, e)
+                    Log.e(TAG, "Managed VPN permission preparation failed", e)
+                    return@launch
                 }
             }
             setTunnelStateWithPermissionsResult(tunnel, checked)
@@ -93,9 +103,7 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
             try {
                 tunnel.setStateAsync(Tunnel.State.of(checked))
             } catch (e: Throwable) {
-                val error = ErrorMessages[e]
-                val messageResId = if (checked) R.string.error_up else R.string.error_down
-                val message = activity.getString(messageResId, error)
+                val message = activity.getString(R.string.xingsui_account_sync_failed)
                 val view = view
                 if (view != null)
                     Snackbar.make(view, message, Snackbar.LENGTH_LONG)
@@ -103,12 +111,25 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
                         .show()
                 else
                     Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
-                Log.e(TAG, message, e)
+                Log.e(TAG, "Managed tunnel state change failed", e)
             }
+        }
+    }
+
+    private fun showSyncFailure() {
+        val activity = activity ?: return
+        val currentView = view
+        if (currentView != null) {
+            Snackbar.make(currentView, R.string.xingsui_account_sync_failed, Snackbar.LENGTH_LONG)
+                .setAnchorView(currentView.findViewById(R.id.create_fab))
+                .show()
+        } else {
+            Toast.makeText(activity, R.string.xingsui_account_sync_failed, Toast.LENGTH_LONG).show()
         }
     }
 
     companion object {
         private const val TAG = "AmneziaWG/BaseFragment"
+        private const val XINGSUI_MANAGED_TUNNEL_NAME = "xingsui"
     }
 }

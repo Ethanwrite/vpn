@@ -7,9 +7,19 @@
 	email {$ACME_EMAIL}
 }
 
+xingsuico.com, www.xingsuico.com, api.xingsuico.com {
+	respond "Not Found" 404
+	log {
+		output stdout
+		format console
+	}
+}
+
 {$SITE_DOMAIN} {
 	encode zstd gzip
 
+	# Windows emergency gating is enforced by the API's WINDOWS_CLIENT_ENABLED
+	# switch so API access and installer downloads cannot drift apart.
 	# 反代到 FastAPI；保留真实来源信息
 	reverse_proxy api:8000 {
 		header_up X-Real-IP {remote_host}
@@ -25,6 +35,12 @@
 		Referrer-Policy "no-referrer-when-downgrade"
 		-Server
 	}
+
+	@internalHeartbeat path /internal/nodes/heartbeat /api/internal/nodes/heartbeat
+	log_skip @internalHeartbeat
+	# Legacy query-token subscription URLs are disabled; avoid retaining old tokens during migration.
+	@disabledSubscription path /sub /api/sub
+	log_skip @disabledSubscription
 
 	log {
 		output stdout

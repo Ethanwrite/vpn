@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import ConnectButton from "../components/ConnectButton";
 import StatsBar from "../components/StatsBar";
 import NodeList from "../components/NodeList";
-import { api, errText } from "../lib/api";
+import { api, CONNECTION_SYNC_ERROR } from "../lib/api";
+import { formatNodeDetail } from "../lib/format";
 import { useStore } from "../store/useStore";
 import type { NetMode, VpnNodeSummary } from "../lib/types";
 
@@ -15,9 +16,6 @@ function bestNode(nodes: VpnNodeSummary[]): VpnNodeSummary | undefined {
     .filter((n) => !n.locked && n.status === "online")
     .slice()
     .sort((a, b) => {
-      const latencyA = a.latency_ms ?? 9999;
-      const latencyB = b.latency_ms ?? 9999;
-      if (latencyA !== latencyB) return latencyA - latencyB;
       return a.load_percent - b.load_percent;
     })[0];
 }
@@ -27,28 +25,8 @@ function orderNodes(nodes: VpnNodeSummary[]): VpnNodeSummary[] {
     const availableA = !a.locked && a.status === "online";
     const availableB = !b.locked && b.status === "online";
     if (availableA !== availableB) return availableA ? -1 : 1;
-    const latencyA = a.latency_ms ?? 9999;
-    const latencyB = b.latency_ms ?? 9999;
-    if (latencyA !== latencyB) return latencyA - latencyB;
     return a.load_percent - b.load_percent;
   });
-}
-
-async function measureNodes(nodes: VpnNodeSummary[]): Promise<VpnNodeSummary[]> {
-  const measured = await Promise.all(
-    nodes.map(async (node) => {
-      if (node.locked || node.status !== "online" || !node.probe_host || !node.probe_port) {
-        return node;
-      }
-      try {
-        const latency = await api.measureLatency(node.probe_host, node.probe_port);
-        return { ...node, latency_ms: latency };
-      } catch {
-        return { ...node, latency_ms: 9999 };
-      }
-    })
-  );
-  return orderNodes(measured);
 }
 
 export default function Home({ onProfile }: Props) {
@@ -67,12 +45,12 @@ export default function Home({ onProfile }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        const list = await measureNodes(await api.listNodes());
+        const list = orderNodes(await api.listNodes());
         setNodes(list);
         const fastest = bestNode(list);
         if (fastest) selectNode(fastest.id);
-      } catch (e) {
-        pushToast("error", errText(e));
+      } catch {
+        pushToast("error", CONNECTION_SYNC_ERROR);
       }
     })();
   }, [setNodes, selectNode, pushToast]);
@@ -86,14 +64,14 @@ export default function Home({ onProfile }: Props) {
     if (conn === "connected" || conn === "connecting") {
       try {
         await api.disconnect();
-      } catch (e) {
-        pushToast("error", errText(e));
+      } catch {
+        pushToast("error", CONNECTION_SYNC_ERROR);
       }
       return;
     }
 
     const fastest = bestNode(nodes);
-    const targetNodeId = fastest?.id || selectedNodeId;
+    const targetNodeId = selectedNodeId || fastest?.id;
     if (!targetNodeId) {
       pushToast("error", "请先选择线路");
       setPickerOpen(true);
@@ -101,12 +79,12 @@ export default function Home({ onProfile }: Props) {
     }
 
     try {
-      if (fastest && fastest.id !== selectedNodeId) {
+      if (!selectedNodeId && fastest) {
         selectNode(fastest.id);
       }
       await api.connect(targetNodeId, mode);
-    } catch (e) {
-      pushToast("error", errText(e));
+    } catch {
+      pushToast("error", CONNECTION_SYNC_ERROR);
     }
   };
 
@@ -120,8 +98,8 @@ export default function Home({ onProfile }: Props) {
     if (conn === "connected") {
       try {
         await api.switchMode(m);
-      } catch (e) {
-        pushToast("error", errText(e));
+      } catch {
+        pushToast("error", CONNECTION_SYNC_ERROR);
       }
     }
   };
@@ -131,13 +109,11 @@ export default function Home({ onProfile }: Props) {
       <div className="flex items-center justify-between py-2">
         <button
           onClick={onProfile}
-          className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm transition hover:bg-white/10"
+          className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 transition hover:border-brand-glow/50 hover:bg-white/10"
+          aria-label="打开我的页面"
         >
-          <span className="grid h-6 w-6 place-items-center rounded-full bg-brand-gradient text-xs font-bold">
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-gradient text-sm font-bold shadow-glow">
             {(user?.nickname || user?.email || "?").slice(0, 1).toUpperCase()}
-          </span>
-          <span className="max-w-[120px] truncate text-white/80">
-            {user?.nickname || user?.email}
           </span>
         </button>
         <div className="flex rounded-lg bg-white/5 p-0.5 text-xs">
@@ -184,7 +160,7 @@ export default function Home({ onProfile }: Props) {
                 {selected ? selected.name : "选择线路"}
               </div>
               <div className="text-[11px] text-white/40">
-                {selected ? selected.region : "点击选择节点"}
+                {selected ? formatNodeDetail(selected) : "点击选择节点"}
               </div>
             </div>
           </div>

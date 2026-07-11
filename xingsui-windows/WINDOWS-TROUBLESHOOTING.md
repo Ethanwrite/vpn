@@ -2,23 +2,11 @@
 
 ## 现象判断
 
-如果官网登录、VIP 同步、节点列表都正常，但节点服务器 `awg show awg0 latest-handshakes` 中该用户 peer 一直为 `0`，说明 Windows 客户端还没有向节点发出有效 UDP 握手。此时优先排查本机内核启动、TUN 权限、系统代理和下发配置。
+如果官网登录、VIP 同步、节点列表都正常但公网 IP 未变化，优先排查短期 VLESS 租约、Reality 参数、sing-box 启动、TUN 权限和系统代理。
 
-## 客户端日志
+## 本地敏感数据
 
-新版客户端会把 sing-box 输出写入：
-
-```powershell
-$env:APPDATA\com.xingsui.vpn.desktop\config\sing-box.log
-```
-
-同时会生成当前运行配置：
-
-```powershell
-$env:APPDATA\com.xingsui.vpn.desktop\config\config.json
-```
-
-反馈问题时优先提供 `sing-box.log` 末尾 80 行。不要公开 `config.json` 里的 `private_key`。
+节点配置只会写入随机命名的临时文件，内核就绪后立即删除；应用启动、断开和退出时也会清理遗留文件。客户端不持久化 sing-box 输出，避免服务器地址、UUID 或 Reality 参数进入本地日志。
 
 ## 全局模式检查
 
@@ -33,7 +21,7 @@ Get-DnsClientServerAddress
 预期结果：
 
 - 能看到 Wintun/TUN 相关网卡或路由变化。
-- `sing-box.log` 不应出现 `operation not permitted`、`wintun.dll`、`CreateTUN`、`auto_route` 相关错误。
+- 连接状态不能停留在“连接中”，且虚拟网卡应正常出现。
 
 ## 代理模式检查
 
@@ -51,22 +39,8 @@ curl.exe -x http://127.0.0.1:7897 https://api.ipify.org
 - `9191` Clash API 端口处于监听状态。
 - `curl -x` 返回的公网 IP 应为当前选择节点的出口 IP。
 
-如果 `7897/9191` 没有监听，说明 sing-box 没有正常启动，直接看 `sing-box.log`。
+如果 `7897/9191` 没有监听，说明 sing-box 没有正常启动；先核对安装包内核和 Wintun 的固定 SHA-256，再检查系统安全软件拦截记录。
 
 ## 服务端同步检查
 
-在对应节点上执行：
-
-```bash
-awg showconf awg0 | grep -E '^(Jc|Jmin|Jmax|S1|S2|H1|H2|H3|H4)'
-awg show awg0 latest-handshakes
-awg show awg0 transfer
-```
-
-预期结果：
-
-- H1-H4 与控制面数据库 `vpn_nodes.params_json` 一致。
-- 客户端连接后，该 peer 的 latest-handshake 从 `0` 变成当前时间戳。
-- transfer 字节数开始增长。
-
-如果本地 `7897/9191` 正常，但服务端 latest-handshake 仍为 `0`，再排查 UDP 出口、防火墙、安全软件、运营商链路或内核生成的 WireGuard endpoint 配置。
+确认配置接口签发的是尚未到期的 Windows VLESS 租约，并在对应节点检查 VLESS 入站、Reality 握手和该租约的用户级 UUID。客户端本地端口正常但没有出口流量时，再排查 SNI、public key、short ID、节点防火墙和中国大陆链路可达性。

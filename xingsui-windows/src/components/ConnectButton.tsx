@@ -9,7 +9,7 @@ interface Props {
 
 const LABEL: Record<ConnState, string> = {
   disconnected: "点击连接",
-  connecting: "连接中…",
+  connecting: "连接中",
   connected: "已连接",
 };
 
@@ -19,19 +19,22 @@ export default function ConnectButton({ conn, onClick }: Props) {
   return (
     <button
       onClick={onClick}
-      className="relative grid h-44 w-44 place-items-center rounded-full outline-none"
-      aria-label={LABEL[conn]}
+      className="relative grid h-44 w-44 place-items-center rounded-full outline-none transition active:scale-[0.98]"
+      aria-label={connecting ? "取消连接" : LABEL[conn]}
     >
       {/* 外圈脉冲（已连接时） */}
       {active && (
         <span className="absolute inset-0 rounded-full bg-brand-glow/30 animate-pulse-ring" />
+      )}
+      {connecting && (
+        <span className="absolute inset-1 rounded-full border-2 border-transparent border-t-brand-glow/80 border-r-cyan-300/70 animate-spin-slow" />
       )}
       <span
         className={`absolute inset-0 rounded-full border transition-colors duration-500 ${
           active
             ? "border-brand-glow/60 shadow-glow"
             : connecting
-            ? "animate-spin border-amber-300/70 border-t-transparent"
+            ? "border-brand-glow/30 shadow-glow"
             : "border-white/10"
         }`}
       />
@@ -57,6 +60,9 @@ export default function ConnectButton({ conn, onClick }: Props) {
           <span className="text-sm font-semibold tracking-wide">
             {LABEL[conn]}
           </span>
+          {connecting && (
+            <span className="mt-1 block text-[10px] text-white/45">点击取消</span>
+          )}
         </div>
       </span>
     </button>

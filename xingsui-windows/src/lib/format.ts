@@ -1,5 +1,7 @@
 // 展示层格式化工具：流量、速率、日期、VIP 状态。
 
+import type { VpnNodeSummary } from "./types";
+
 export function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -30,7 +32,7 @@ export interface VipView {
 }
 
 export function vipView(status: string): VipView {
-  const isVip = status === "active" || status === "vip";
+  const isVip = status === "active";
   return { isVip, label: isVip ? "VIP 会员" : "普通用户" };
 }
 
@@ -40,4 +42,8 @@ export function daysLeft(iso: string | null): number | null {
   if (Number.isNaN(d)) return null;
   const diff = d - Date.now();
   return diff <= 0 ? 0 : Math.ceil(diff / 86400000);
+}
+
+export function formatNodeDetail(node: VpnNodeSummary): string {
+  return node.region.replace(/\s*·\s*大阪中转落地/g, "").trim();
 }

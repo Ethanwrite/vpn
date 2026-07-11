@@ -33,8 +33,6 @@ fn default_inactive() -> String {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthResponse {
     pub access_token: String,
-    #[serde(default)]
-    pub token_type: String,
     pub user: User,
 }
 
@@ -46,6 +44,8 @@ pub struct VpnNodeSummary {
     #[serde(default)]
     pub region: String,
     #[serde(default)]
+    pub protocol: String,
+    #[serde(default)]
     pub vip_only: bool,
     #[serde(default)]
     pub status: String,
@@ -53,14 +53,11 @@ pub struct VpnNodeSummary {
     pub load_percent: i32,
     #[serde(default)]
     pub locked: bool,
-    #[serde(default)]
-    pub probe_host: Option<String>,
-    #[serde(default)]
-    pub probe_port: Option<u16>,
 }
 
-/// 节点配置（/vpn/nodes/{id}/config）。config_text 为 AmneziaWG INI。
+/// 后端签发的短期 Windows VLESS 租约（/vpn/nodes/{id}/config）。
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VpnNodeConfig {
     pub id: String,
     pub name: String,
@@ -68,6 +65,10 @@ pub struct VpnNodeConfig {
     pub region: String,
     #[serde(default)]
     pub tunnel_name: String,
+    pub protocol: String,
+    pub issued_at: String,
+    pub expires_at: String,
+    pub lease_id: String,
     pub config_text: String,
     #[serde(default)]
     pub vless_config: Option<VlessConfig>,
@@ -75,10 +76,10 @@ pub struct VpnNodeConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Entitlement {
     pub allowed: bool,
     pub reason: String,
-    #[serde(default = "default_inactive")]
     pub vip_status: String,
     #[serde(default)]
     pub vip_expired_at: Option<String>,
@@ -88,34 +89,44 @@ pub struct Entitlement {
     pub free_traffic_used_bytes: i64,
     #[serde(default)]
     pub free_traffic_remaining_bytes: i64,
+    #[serde(default)]
+    pub lease_expires_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VlessConfig {
     pub server: String,
-    #[serde(default = "default_vless_port")]
-    pub server_port: String,
+    #[serde(deserialize_with = "deserialize_port")]
+    pub server_port: u16,
     pub uuid: String,
     #[serde(default)]
     pub flow: String,
     pub public_key: String,
     pub short_id: String,
-    #[serde(default = "default_vless_server_name")]
     pub server_name: String,
-    #[serde(default = "default_vless_fingerprint")]
     pub utls_fingerprint: String,
 }
 
-fn default_vless_port() -> String {
-    "8443".to_string()
-}
+fn deserialize_port<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PortValue {
+        Number(u16),
+        Text(String),
+    }
 
-fn default_vless_server_name() -> String {
-    "www.microsoft.com".to_string()
-}
-
-fn default_vless_fingerprint() -> String {
-    "chrome".to_string()
+    let port = match PortValue::deserialize(deserializer)? {
+        PortValue::Number(port) => port,
+        PortValue::Text(value) => value.parse::<u16>().map_err(serde::de::Error::custom)?,
+    };
+    if port == 0 {
+        return Err(serde::de::Error::custom("端口不能为 0"));
+    }
+    Ok(port)
 }
 
 /// 网络接管模式。
@@ -169,4 +180,36 @@ pub struct StatsPayload {
     pub down_bps: u64,
     pub up_total: u64,
     pub down_total: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structured_vless_requires_explicit_valid_port_and_fields() {
+        let valid = serde_json::json!({
+            "server": "edge.example.com",
+            "server_port": "443",
+            "uuid": "123e4567-e89b-12d3-a456-426614174000",
+            "flow": "xtls-rprx-vision",
+            "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "short_id": "0123456789abcdef",
+            "server_name": "www.example.com",
+            "utls_fingerprint": "chrome"
+        });
+        assert!(serde_json::from_value::<VlessConfig>(valid.clone()).is_ok());
+
+        let mut missing_sni = valid.clone();
+        missing_sni.as_object_mut().unwrap().remove("server_name");
+        assert!(serde_json::from_value::<VlessConfig>(missing_sni).is_err());
+
+        let mut zero_port = valid.clone();
+        zero_port["server_port"] = serde_json::json!(0);
+        assert!(serde_json::from_value::<VlessConfig>(zero_port).is_err());
+
+        let mut unexpected = valid;
+        unexpected["unexpected_field"] = serde_json::json!("forbidden");
+        assert!(serde_json::from_value::<VlessConfig>(unexpected).is_err());
+    }
 }

@@ -20,6 +20,7 @@ import org.amnezia.awg.R
 import org.amnezia.awg.backend.Statistics
 import org.amnezia.awg.backend.StatusCallback
 import org.amnezia.awg.backend.Tunnel
+import org.amnezia.awg.backend.GoBackend
 import org.amnezia.awg.configStore.ConfigStore
 import org.amnezia.awg.databinding.ObservableSortedKeyedArrayList
 import org.amnezia.awg.util.ErrorMessages
@@ -27,19 +28,20 @@ import org.amnezia.awg.util.UserKnobs
 import org.amnezia.awg.util.applicationScope
 import org.amnezia.awg.config.Config
 import org.amnezia.awg.xingsui.XingsuiSessionStore
+import org.amnezia.awg.xingsui.XingsuiConnectionSyncException
+import org.amnezia.awg.xingsui.XingsuiCrashReporter
 import org.amnezia.awg.xingsui.XingsuiVipGate
 import org.amnezia.awg.xingsui.api.XingsuiApiClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 
 /**
  * Maintains and mediates changes to the set of available AmneziaWG tunnels,
@@ -49,6 +51,9 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     private val context: Context = get()
     private val tunnelMap: ObservableSortedKeyedArrayList<String, ObservableTunnel> = ObservableSortedKeyedArrayList(TunnelComparator)
     private val usageReporterJobs = mutableMapOf<String, Job>()
+    private var managedLeaseExpiryJob: Job? = null
+    private var managedNodeId: String? = null
+    private var managedLeaseId: String? = null
     private var haveLoaded = false
 
     private fun addToList(name: String, config: Config?, state: Tunnel.State): ObservableTunnel {
@@ -67,7 +72,122 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         addToList(name, withContext(Dispatchers.IO) { configStore.create(name, config!!) }, Tunnel.State.DOWN)
     }
 
+    suspend fun connectManagedTunnel(nodeId: String? = null): ObservableTunnel =
+        connectManagedTunnelInternal(nodeId = nodeId, stopExistingFirst = false)
+
+    suspend fun reconnectManagedTunnel(tunnel: ObservableTunnel): ObservableTunnel {
+        require(tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME)
+        return connectManagedTunnelInternal(nodeId = managedNodeId, stopExistingFirst = true)
+    }
+
+    private suspend fun connectManagedTunnelInternal(
+        nodeId: String?,
+        stopExistingFirst: Boolean,
+    ): ObservableTunnel = withContext(Dispatchers.Main.immediate) {
+        var target = tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME]
+        try {
+            val backend = getBackend()
+            if (backend is GoBackend && GoBackend.VpnService.prepare(context) != null) {
+                throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
+            }
+
+            if (stopExistingFirst && target != null) {
+                stopManagedTunnelBackend(target)
+            }
+
+            val fresh = XingsuiVipGate.requireFreshManagedConfig(context, nodeId)
+            val managedTunnel = target?.also { existing ->
+                existing.onConfigChanged(withContext(Dispatchers.IO) {
+                    configStore.save(XINGSUI_MANAGED_TUNNEL_NAME, fresh.config)
+                })
+            } ?: addToList(
+                XINGSUI_MANAGED_TUNNEL_NAME,
+                withContext(Dispatchers.IO) {
+                    configStore.create(XINGSUI_MANAGED_TUNNEL_NAME, fresh.config)
+                },
+                Tunnel.State.DOWN,
+            )
+            target = managedTunnel
+
+            val newState = withContext(Dispatchers.IO) {
+                backend.setState(managedTunnel, Tunnel.State.UP, fresh.config)
+            }
+            managedTunnel.onStateChanged(newState)
+            check(newState == Tunnel.State.UP) { "managed_tunnel_not_started" }
+            lastUsedTunnel = managedTunnel
+            saveState()
+            managedNodeId = nodeId
+            managedLeaseId = fresh.response.leaseId
+            scheduleManagedLeaseExpiry(managedTunnel, fresh.response.expiresAt)
+            startUsageReporter(managedTunnel)
+            managedTunnel
+        } catch (error: Throwable) {
+            securelyRemoveManagedTunnel(target)
+            if (error is CancellationException) throw error
+            XingsuiCrashReporter.recordEvent(
+                "managed-tunnel-start-failed",
+                error.javaClass.simpleName.ifBlank { "unknown" },
+            )
+            throw if (error is XingsuiConnectionSyncException) {
+                error
+            } else {
+                XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
+            }
+        }
+    }
+
+    private suspend fun stopManagedTunnelBackend(tunnel: ObservableTunnel) {
+        stopUsageReporter(tunnel.name)
+        managedLeaseExpiryJob?.cancel()
+        managedLeaseExpiryJob = null
+        runCatching {
+            withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
+        }.onFailure {
+            XingsuiCrashReporter.recordEvent("managed-tunnel-stop-failed", it.javaClass.simpleName)
+        }
+        tunnel.onStateChanged(Tunnel.State.DOWN)
+    }
+
+    private suspend fun securelyRemoveManagedTunnel(tunnel: ObservableTunnel?) =
+        withContext(NonCancellable + Dispatchers.Main.immediate) {
+        if (tunnel == null) {
+            managedNodeId = null
+            managedLeaseId = null
+            withContext(Dispatchers.IO) {
+                runCatching { configStore.delete(XINGSUI_MANAGED_TUNNEL_NAME) }
+            }
+            return@withContext
+        }
+        stopManagedTunnelBackend(tunnel)
+        tunnelMap.remove(tunnel)
+        managedNodeId = null
+        managedLeaseId = null
+        if (lastUsedTunnel == tunnel) lastUsedTunnel = null
+        withContext(Dispatchers.IO) {
+            runCatching { configStore.delete(XINGSUI_MANAGED_TUNNEL_NAME) }
+        }
+        saveState()
+    }
+
+    private fun scheduleManagedLeaseExpiry(tunnel: ObservableTunnel, expiresAt: Instant) {
+        managedLeaseExpiryJob?.cancel()
+        val delayMillis = (expiresAt.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0L)
+        managedLeaseExpiryJob = applicationScope.launch {
+            delay(delayMillis)
+            withContext(Dispatchers.Main.immediate) {
+                if (tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME] == tunnel) {
+                    managedLeaseExpiryJob = null
+                    securelyRemoveManagedTunnel(tunnel)
+                }
+            }
+        }
+    }
+
     suspend fun delete(tunnel: ObservableTunnel) = withContext(Dispatchers.Main.immediate) {
+        if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+            securelyRemoveManagedTunnel(tunnel)
+            return@withContext
+        }
         val originalState = tunnel.state
         val wasLastUsed = tunnel == lastUsedTunnel
         // Make sure nothing touches the tunnel.
@@ -147,17 +267,23 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         }
     }
 
-    private fun onTunnelsLoaded(present: Iterable<String>, running: Collection<String>) {
-        for (name in present)
+    private suspend fun onTunnelsLoaded(present: Iterable<String>, running: Collection<String>) {
+        for (name in present.filterNot { it == XINGSUI_MANAGED_TUNNEL_NAME })
             addToList(name, null, if (running.contains(name)) Tunnel.State.UP else Tunnel.State.DOWN)
-        applicationScope.launch {
-            val lastUsedName = UserKnobs.lastUsedTunnel.first()
-            if (lastUsedName != null)
-                lastUsedTunnel = tunnelMap[lastUsedName]
-            haveLoaded = true
-            restoreState(true)
-            tunnels.complete(tunnelMap)
+        if (running.contains(XINGSUI_MANAGED_TUNNEL_NAME)) {
+            val staleManagedTunnel = addToList(
+                XINGSUI_MANAGED_TUNNEL_NAME,
+                null,
+                Tunnel.State.UP,
+            )
+            securelyRemoveManagedTunnel(staleManagedTunnel)
         }
+        val lastUsedName = UserKnobs.lastUsedTunnel.first()
+        if (lastUsedName != null)
+            lastUsedTunnel = tunnelMap[lastUsedName]
+        haveLoaded = true
+        restoreState(true)
+        tunnels.complete(tunnelMap)
     }
 
     private fun refreshTunnelStates() {
@@ -177,14 +303,7 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
             return
         val previouslyRunning = UserKnobs.runningTunnels.first()
         if (previouslyRunning.isEmpty()) return
-        withContext(Dispatchers.IO) {
-            try {
-                tunnelMap.filter { previouslyRunning.contains(it.name) }.map { async(Dispatchers.IO + SupervisorJob()) { setTunnelState(it, Tunnel.State.UP) } }
-                    .awaitAll()
-            } catch (e: Throwable) {
-                Log.e(TAG, Log.getStackTraceString(e))
-            }
-        }
+        UserKnobs.setRunningTunnels(emptySet())
     }
 
     suspend fun saveState() {
@@ -192,6 +311,8 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     }
 
     suspend fun setTunnelConfig(tunnel: ObservableTunnel, config: Config): Config = withContext(Dispatchers.Main.immediate) {
+        if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME)
+            throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
         tunnel.onConfigChanged(withContext(Dispatchers.IO) {
             getBackend().setState(tunnel, tunnel.state, config)
             configStore.save(tunnel.name, config)
@@ -234,11 +355,18 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     }
 
     suspend fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State): Tunnel.State = withContext(Dispatchers.Main.immediate) {
+        if (willBringTunnelUp(tunnel, state)) {
+            if (tunnel.name != XINGSUI_MANAGED_TUNNEL_NAME)
+                throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
+            return@withContext connectManagedTunnelInternal(nodeId = null, stopExistingFirst = false).state
+        }
+        if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+            securelyRemoveManagedTunnel(tunnel)
+            return@withContext Tunnel.State.DOWN
+        }
         var newState = tunnel.state
         var throwable: Throwable? = null
         try {
-            if (willBringTunnelUp(tunnel, state))
-                XingsuiVipGate.requireActiveVip(context)
             newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, tunnel.getConfigAsync()) }
             if (newState == Tunnel.State.UP)
                 lastUsedTunnel = tunnel
@@ -320,11 +448,25 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
 
                     val session = XingsuiSessionStore(context).load()
                         ?: throw IllegalStateException(context.getString(R.string.xingsui_vip_required_login))
+                    val leaseId = managedLeaseId
+                        ?: throw IllegalStateException(context.getString(R.string.xingsui_account_sync_failed))
                     val entitlement = XingsuiApiClient(accessToken = session.accessToken)
-                        .reportUsage(tunnel.name, rxDelta, txDelta)
-                    if (!entitlement.allowed) {
+                        .reportUsage(leaseId, tunnel.name, rxDelta, txDelta)
+                    val now = Instant.now()
+                    val renewedExpiry = entitlement.leaseExpiresAt
+                    if (!entitlement.allowed ||
+                        entitlement.vipStatus != VIP_STATUS_ACTIVE ||
+                        entitlement.vipExpiredAt?.isAfter(now) != true ||
+                        renewedExpiry?.isAfter(now) != true ||
+                        renewedExpiry.isAfter(now.plusSeconds(MAX_RENEWED_LEASE_SECONDS))
+                    ) {
                         stopTunnelAfterEntitlementFailure(tunnel)
                         return@launch
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        if (tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME] == tunnel) {
+                            scheduleManagedLeaseExpiry(tunnel, renewedExpiry)
+                        }
                     }
                 } catch (e: Throwable) {
                     if (e is CancellationException) throw e
@@ -341,7 +483,11 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     }
 
     private suspend fun stopTunnelAfterEntitlementFailure(tunnel: ObservableTunnel) = withContext(Dispatchers.Main.immediate) {
-        stopUsageReporter(tunnel.name)
+        usageReporterJobs.remove(tunnel.name)
+        if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+            securelyRemoveManagedTunnel(tunnel)
+            return@withContext
+        }
         if (tunnel.state != Tunnel.State.UP)
             return@withContext
         try {
@@ -355,6 +501,9 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
 
     companion object {
         private const val TAG = "AmneziaWG/TunnelManager"
+        private const val XINGSUI_MANAGED_TUNNEL_NAME = "xingsui"
+        private const val VIP_STATUS_ACTIVE = "active"
         private const val USAGE_REPORT_INTERVAL_MS = 10_000L
+        private const val MAX_RENEWED_LEASE_SECONDS = 15 * 60L
     }
 }

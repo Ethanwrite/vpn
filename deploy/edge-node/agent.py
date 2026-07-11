@@ -1,39 +1,52 @@
 #!/usr/bin/env python3
-"""星隧 VPN 边缘节点轻量 Agent（仅标准库，无第三方依赖）。
-
-职责：
-  - 接受控制面经 X-Internal-Token 鉴权的 peer 增删请求（awg set ...）。
-  - 周期性向控制面 /internal/nodes/heartbeat 上报负载与流量。
-配置来自环境变量（建议写入 /etc/xingsui/agent.env，由 systemd 加载）：
-  XS_AGENT_TOKEN          与控制面 INTERNAL_API_TOKEN 完全一致（必填）
-  XS_NODE_ID              本节点在 vpn_nodes 表中的 id（必填）
-  XS_CONTROL_PLANE_URL    控制面基址，如 https://xingsuico.com（必填，用于心跳）
-  XS_AGENT_PORT           监听端口（默认 51821）
-  XS_WG_IFACE             AmneziaWG 接口名（默认 awg0）
-  XS_WG_TOOL              awg / wg（默认 awg）
-  XS_HEARTBEAT_INTERVAL   心跳间隔秒（默认 30）
-"""
+"""Xingsui edge Agent with per-node HMAC authentication and finite leases."""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import base64
+import hashlib
 import hmac
+import ipaddress
 import json
 import os
+from pathlib import Path
+import secrets
+import signal
+import ssl
 import subprocess
 import threading
 import time
 import urllib.request
+from uuid import UUID
 
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "2.0.0"
+MAX_REQUEST_BYTES = 64 * 1024
+SIGNATURE_WINDOW_SECONDS = 90
+MAX_LEASE_SECONDS = 60 * 60
+NONCES: dict[str, int] = {}
+NONCE_LOCK = threading.Lock()
+LEASE_LOCK = threading.RLock()
+VLESS_LOCK = threading.RLock()
+LEASES: dict[str, dict[str, object]] = {}
+UTC = timezone.utc
 
 
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
 
 
-def token() -> str:
-    return env("XS_AGENT_TOKEN")
+def production_environment() -> bool:
+    return env("XS_AGENT_ENV", env("APP_ENV", "production")).lower() in {"prod", "production"}
+
+
+def node_id() -> str:
+    return env("XS_NODE_ID")
+
+
+def node_secret() -> str:
+    return env("XS_NODE_SECRET")
 
 
 def iface() -> str:
@@ -44,31 +57,385 @@ def wg_tool() -> str:
     return env("XS_WG_TOOL", "awg")
 
 
+def lease_state_path() -> Path:
+    return Path(env("XS_LEASE_STATE_PATH", "/var/lib/xingsui-agent/leases.json"))
+
+
+def canonical_payload(payload: dict) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def signature_for(
+    secret: str,
+    *,
+    method: str,
+    path: str,
+    signed_node_id: str,
+    timestamp: str,
+    nonce: str,
+    payload: dict,
+) -> str:
+    body_hash = hashlib.sha256(canonical_payload(payload)).hexdigest()
+    message = "\n".join((method.upper(), path, signed_node_id, timestamp, nonce, body_hash))
+    return hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_signature(headers, method: str, path: str, payload: dict, now: int | None = None) -> bool:
+    signed_node_id = (headers.get("X-Xingsui-Node-Id") or "").strip()
+    timestamp = (headers.get("X-Xingsui-Timestamp") or "").strip()
+    nonce = (headers.get("X-Xingsui-Nonce") or "").strip()
+    provided = (headers.get("X-Xingsui-Signature") or "").strip()
+    if signed_node_id != node_id() or not timestamp or len(nonce) < 16 or not provided:
+        return False
+    try:
+        issued_at = int(timestamp)
+    except ValueError:
+        return False
+    current = int(time.time()) if now is None else now
+    if abs(current - issued_at) > SIGNATURE_WINDOW_SECONDS:
+        return False
+    secret = node_secret()
+    if not secret:
+        return False
+    expected = signature_for(
+        secret,
+        method=method,
+        path=path,
+        signed_node_id=signed_node_id,
+        timestamp=timestamp,
+        nonce=nonce,
+        payload=payload,
+    )
+    if not hmac.compare_digest(provided, expected):
+        return False
+    cutoff = current - SIGNATURE_WINDOW_SECONDS
+    with NONCE_LOCK:
+        for seen_nonce, seen_at in list(NONCES.items()):
+            if seen_at < cutoff:
+                NONCES.pop(seen_nonce, None)
+        if nonce in NONCES:
+            return False
+        NONCES[nonce] = issued_at
+    return True
+
+
+def signed_headers(method: str, path: str, payload: dict) -> dict[str, str]:
+    timestamp = str(int(time.time()))
+    nonce = secrets.token_urlsafe(18)
+    return {
+        "Content-Type": "application/json",
+        "X-Xingsui-Node-Id": node_id(),
+        "X-Xingsui-Timestamp": timestamp,
+        "X-Xingsui-Nonce": nonce,
+        "X-Xingsui-Signature": signature_for(
+            node_secret(),
+            method=method,
+            path=path,
+            signed_node_id=node_id(),
+            timestamp=timestamp,
+            nonce=nonce,
+            payload=payload,
+        ),
+    }
+
+
 def run(args: list[str], input_text: str | None = None) -> str:
     result = subprocess.run(args, input=input_text, text=True, capture_output=True, check=True)
     return result.stdout.strip()
 
 
+def validate_public_key(value: object) -> str:
+    key = str(value or "").strip()
+    try:
+        decoded = base64.b64decode(key, validate=True)
+    except Exception as exc:
+        raise ValueError("invalid public key") from exc
+    if len(decoded) != 32:
+        raise ValueError("invalid public key")
+    return key
+
+
+def validate_ip(value: object) -> str:
+    return str(ipaddress.ip_address(str(value or "").split("/", 1)[0].strip()))
+
+
+def validate_uuid(value: object) -> str:
+    return str(UUID(str(value or "").strip()))
+
+
+def validate_lease_id(value: object) -> str:
+    lease_id = str(value or "").strip()
+    if not lease_id or len(lease_id) > 64:
+        raise ValueError("invalid lease id")
+    return lease_id
+
+
+def parse_expiry(value: object, now: datetime | None = None) -> datetime:
+    now = now or datetime.now(UTC)
+    text = str(value or "").strip().replace("Z", "+00:00")
+    try:
+        expires_at = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("invalid lease expiry") from exc
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    expires_at = expires_at.astimezone(UTC)
+    if expires_at <= now or expires_at > now + timedelta(seconds=MAX_LEASE_SECONDS):
+        raise ValueError("invalid lease expiry")
+    return expires_at
+
+
 def add_peer(public_key: str, allowed_ip: str) -> None:
-    ip = allowed_ip.split("/")[0]
-    run([wg_tool(), "set", iface(), "peer", public_key, "allowed-ips", f"{ip}/32"])
+    address = ipaddress.ip_address(allowed_ip)
+    prefix = 32 if address.version == 4 else 128
+    run([wg_tool(), "set", iface(), "peer", public_key, "allowed-ips", f"{address}/{prefix}"])
 
 
 def remove_peer(public_key: str) -> None:
     run([wg_tool(), "set", iface(), "peer", public_key, "remove"])
 
 
+def vless_config_path() -> Path:
+    configured = env("XS_VLESS_CONFIG")
+    if not configured:
+        raise RuntimeError("VLESS config path is not configured")
+    return Path(configured)
+
+
+def vless_users(config: dict) -> list[dict]:
+    inbounds = config.get("inbounds")
+    if not isinstance(inbounds, list):
+        raise RuntimeError("sing-box inbounds are missing")
+    requested_tag = env("XS_VLESS_INBOUND_TAG")
+    for inbound in inbounds:
+        if not isinstance(inbound, dict) or inbound.get("type") != "vless":
+            continue
+        if requested_tag and inbound.get("tag") != requested_tag:
+            continue
+        users = inbound.setdefault("users", [])
+        if not isinstance(users, list):
+            raise RuntimeError("sing-box VLESS users are invalid")
+        return users
+    raise RuntimeError("sing-box VLESS inbound was not found")
+
+
+def reload_vless_service() -> None:
+    service = env("XS_VLESS_SERVICE")
+    pid_file = env("XS_VLESS_PID_FILE")
+    if service:
+        run([env("XS_SYSTEMCTL_BIN", "/usr/bin/systemctl"), "reload", service])
+        return
+    if pid_file:
+        pid = int(Path(pid_file).read_text(encoding="utf-8").strip())
+        os.kill(pid, signal.SIGHUP)
+        return
+    raise RuntimeError("VLESS reload target is not configured")
+
+
+def write_vless_config(config: dict) -> None:
+    path = vless_config_path()
+    original = path.read_bytes()
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        temporary.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.chmod(temporary, path.stat().st_mode & 0o777)
+        run([env("XS_SING_BOX_BIN", "/usr/local/bin/sing-box"), "check", "-c", str(temporary)])
+        os.replace(temporary, path)
+        try:
+            reload_vless_service()
+        except Exception:
+            rollback = path.with_name(f".{path.name}.{os.getpid()}.rollback")
+            rollback.write_bytes(original)
+            os.chmod(rollback, path.stat().st_mode & 0o777)
+            os.replace(rollback, path)
+            try:
+                reload_vless_service()
+            except Exception:
+                pass
+            raise
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def mutate_vless_user(user_uuid: str, *, add: bool) -> None:
+    with VLESS_LOCK:
+        path = vless_config_path()
+        config = json.loads(path.read_text(encoding="utf-8"))
+        users = vless_users(config)
+        matching = [entry for entry in users if isinstance(entry, dict) and entry.get("uuid") == user_uuid]
+        flow = env("XS_VLESS_FLOW")
+        if add and len(matching) == 1 and str(matching[0].get("flow", "")) == flow:
+            return
+        if not add and not matching:
+            return
+        users[:] = [entry for entry in users if not isinstance(entry, dict) or entry.get("uuid") != user_uuid]
+        if add:
+            entry = {"uuid": user_uuid}
+            if flow:
+                entry["flow"] = flow
+            users.append(entry)
+        write_vless_config(config)
+
+
+def add_vless_user(user_uuid: str) -> None:
+    mutate_vless_user(user_uuid, add=True)
+
+
+def remove_vless_user(user_uuid: str) -> None:
+    mutate_vless_user(user_uuid, add=False)
+
+
+def load_leases() -> None:
+    path = lease_state_path()
+    if not path.is_file():
+        return
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if isinstance(parsed, dict):
+        with LEASE_LOCK:
+            LEASES.clear()
+            LEASES.update({str(key): value for key, value in parsed.items() if isinstance(value, dict)})
+
+
+def save_leases() -> None:
+    path = lease_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with LEASE_LOCK:
+        temporary.write_text(json.dumps(LEASES, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def register_lease(lease_id: str, kind: str, identity: str, expires_at: datetime) -> None:
+    validate_lease_id(lease_id)
+    with LEASE_LOCK:
+        for existing_id, lease in list(LEASES.items()):
+            if lease.get("kind") == kind and lease.get("identity") == identity:
+                LEASES.pop(existing_id, None)
+        LEASES[lease_id] = {
+            "kind": kind,
+            "identity": identity,
+            "expires_at": expires_at.astimezone(UTC).isoformat(),
+        }
+        save_leases()
+
+
+def remove_lease_by_identity(kind: str, identity: str) -> None:
+    with LEASE_LOCK:
+        for lease_id, lease in list(LEASES.items()):
+            if lease.get("kind") == kind and lease.get("identity") == identity:
+                LEASES.pop(lease_id, None)
+        save_leases()
+
+
+def cleanup_expired_leases(now: datetime | None = None) -> None:
+    now = now or datetime.now(UTC)
+    with LEASE_LOCK:
+        changed = False
+        for lease_id, lease in list(LEASES.items()):
+            try:
+                expires_at = datetime.fromisoformat(str(lease["expires_at"]).replace("Z", "+00:00"))
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+                if expires_at > now:
+                    continue
+                kind = str(lease["kind"])
+                identity = str(lease["identity"])
+                newer_identity_lease = False
+                for other_id, other in LEASES.items():
+                    if other_id == lease_id or other.get("kind") != kind or other.get("identity") != identity:
+                        continue
+                    other_expiry = datetime.fromisoformat(str(other["expires_at"]).replace("Z", "+00:00"))
+                    if other_expiry.tzinfo is None:
+                        other_expiry = other_expiry.replace(tzinfo=UTC)
+                    if other_expiry > now:
+                        newer_identity_lease = True
+                        break
+                if not newer_identity_lease:
+                    if kind == "awg":
+                        remove_peer(identity)
+                    elif kind == "vless":
+                        remove_vless_user(identity)
+                    else:
+                        raise RuntimeError("unknown lease kind")
+            except Exception:
+                continue
+            LEASES.pop(lease_id, None)
+            changed = True
+        if changed:
+            save_leases()
+
+
+def cleanup_loop() -> None:
+    interval = max(5, int(env("XS_LEASE_CLEANUP_INTERVAL", "15") or "15"))
+    while True:
+        cleanup_expired_leases()
+        time.sleep(interval)
+
+
+def active_lease_identities(kind: str, now: datetime | None = None) -> set[str]:
+    now = now or datetime.now(UTC)
+    active: set[str] = set()
+    with LEASE_LOCK:
+        leases = list(LEASES.values())
+    for lease in leases:
+        if lease.get("kind") != kind:
+            continue
+        try:
+            expires_at = datetime.fromisoformat(str(lease["expires_at"]).replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at > now:
+                active.add(str(lease["identity"]))
+        except Exception:
+            continue
+    return active
+
+
+def reconcile_awg_peers() -> None:
+    known = active_lease_identities("awg")
+    current = {line.strip() for line in run([wg_tool(), "show", iface(), "peers"]).splitlines() if line.strip()}
+    for public_key in current - known:
+        remove_peer(public_key)
+
+
+def reconcile_vless_users() -> None:
+    known = active_lease_identities("vless")
+    with VLESS_LOCK:
+        path = vless_config_path()
+        config = json.loads(path.read_text(encoding="utf-8"))
+        users = vless_users(config)
+        filtered = [entry for entry in users if isinstance(entry, dict) and entry.get("uuid") in known]
+        if filtered != users:
+            users[:] = filtered
+            write_vless_config(config)
+
+
+def reconcile_managed_credentials() -> None:
+    protocols = {item.strip().lower() for item in env("XS_MANAGED_PROTOCOLS", "awg").split(",") if item.strip()}
+    if "awg" in protocols:
+        reconcile_awg_peers()
+    if "vless" in protocols:
+        reconcile_vless_users()
+
+
 def collect_status() -> dict[str, float]:
     peer_count = rx = tx = 0
     try:
         dump = run([wg_tool(), "show", iface(), "dump"])
-        lines = [ln for ln in dump.splitlines() if ln.strip()]
-        for line in lines[1:]:  # 第一行为接口自身
-            cols = line.split("\t")
+        lines = [line for line in dump.splitlines() if line.strip()]
+        for line in lines[1:]:
+            columns = line.split("\t")
             peer_count += 1
-            if len(cols) >= 7:
-                rx += int(cols[5] or 0)
-                tx += int(cols[6] or 0)
+            if len(columns) >= 7:
+                rx += int(columns[5] or 0)
+                tx += int(columns[6] or 0)
     except Exception:
         pass
     cpu_load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
@@ -90,28 +457,36 @@ def mem_used_percent() -> float:
                 info[key.strip()] = int(rest.strip().split()[0])
         total = info.get("MemTotal", 0)
         available = info.get("MemAvailable", 0)
-        if total <= 0:
-            return 0.0
-        return round((total - available) / total * 100, 2)
+        return round((total - available) / total * 100, 2) if total > 0 else 0.0
     except Exception:
         return 0.0
 
 
+def control_plane_ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context(cafile=env("XS_CONTROL_PLANE_CA_FILE") or None)
+    cert_file = env("XS_CONTROL_PLANE_CLIENT_CERT")
+    key_file = env("XS_CONTROL_PLANE_CLIENT_KEY")
+    if bool(cert_file) != bool(key_file):
+        raise RuntimeError("both control-plane client certificate and key are required")
+    if cert_file:
+        context.load_cert_chain(cert_file, key_file)
+    return context
+
+
 def heartbeat_loop() -> None:
     base = env("XS_CONTROL_PLANE_URL").rstrip("/")
-    node_id = env("XS_NODE_ID")
-    interval = int(env("XS_HEARTBEAT_INTERVAL", "30") or "30")
-    if not base or not node_id:
+    interval = max(10, int(env("XS_HEARTBEAT_INTERVAL", "30") or "30"))
+    if not base:
         return
-    url = f"{base}/internal/nodes/heartbeat"
+    path = "/internal/nodes/heartbeat"
+    url = f"{base}{path}"
     while True:
         try:
-            payload = {"node_id": node_id, "agent_version": AGENT_VERSION, **collect_status()}
-            body = json.dumps(payload).encode("utf-8")
-            request = urllib.request.Request(url, data=body, method="POST")
-            request.add_header("Content-Type", "application/json")
-            request.add_header("X-Internal-Token", token())
-            urllib.request.urlopen(request, timeout=8).read()
+            payload = {"node_id": node_id(), "agent_version": AGENT_VERSION, **collect_status()}
+            request = urllib.request.Request(url, data=canonical_payload(payload), method="POST")
+            for key, value in signed_headers("POST", path, payload).items():
+                request.add_header(key, value)
+            urllib.request.urlopen(request, timeout=8, context=control_plane_ssl_context()).read(65536)
         except Exception:
             pass
         time.sleep(interval)
@@ -120,70 +495,131 @@ def heartbeat_loop() -> None:
 class Handler(BaseHTTPRequestHandler):
     server_version = f"xingsui-agent/{AGENT_VERSION}"
 
-    def log_message(self, *_args) -> None:  # 静默默认访问日志
+    def log_message(self, *_args) -> None:
         return
 
     def _send(self, status: int, payload: dict) -> None:
-        body = json.dumps(payload).encode("utf-8")
+        body = canonical_payload(payload)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def _authorized(self) -> bool:
-        expected = token()
-        provided = (self.headers.get("X-Internal-Token") or "").strip()
-        return bool(expected) and bool(provided) and hmac.compare_digest(provided, expected)
-
     def _read_json(self) -> dict:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
-        return json.loads(raw or "{}")
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError as exc:
+            raise ValueError("invalid content length") from exc
+        if length <= 0 or length > MAX_REQUEST_BYTES:
+            raise ValueError("invalid request size")
+        raw = self.rfile.read(length)
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("JSON object required")
+        return payload
 
     def do_GET(self) -> None:
         if self.path == "/healthz":
             self._send(200, {"status": "ok", "version": AGENT_VERSION})
             return
-        if not self._authorized():
-            self._send(401, {"detail": "unauthorized"})
-            return
-        if self.path == "/status":
-            self._send(200, {"version": AGENT_VERSION, **collect_status()})
-            return
         self._send(404, {"detail": "not found"})
 
     def do_POST(self) -> None:
-        if not self._authorized():
+        try:
+            payload = self._read_json()
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            self._send(400, {"detail": "invalid request"})
+            return
+        path = self.path.split("?", 1)[0]
+        if not verify_signature(self.headers, "POST", path, payload):
             self._send(401, {"detail": "unauthorized"})
             return
         try:
-            payload = self._read_json()
-        except (json.JSONDecodeError, ValueError):
-            self._send(400, {"detail": "invalid json"})
-            return
-        try:
-            if self.path == "/peer/add":
-                add_peer(payload["public_key"], payload["allowed_ip"])
+            if path == "/peer/add":
+                public_key = validate_public_key(payload.get("public_key"))
+                allowed_ip = validate_ip(payload.get("allowed_ip"))
+                lease_id = validate_lease_id(payload.get("lease_id"))
+                expires_at = parse_expiry(payload.get("expires_at"))
+                with LEASE_LOCK:
+                    try:
+                        add_peer(public_key, allowed_ip)
+                        register_lease(lease_id, "awg", public_key, expires_at)
+                    except Exception:
+                        try:
+                            remove_peer(public_key)
+                        except Exception:
+                            pass
+                        raise
                 self._send(200, {"status": "added"})
-            elif self.path == "/peer/remove":
-                remove_peer(payload["public_key"])
+            elif path == "/peer/remove":
+                public_key = validate_public_key(payload.get("public_key"))
+                with LEASE_LOCK:
+                    remove_peer(public_key)
+                    remove_lease_by_identity("awg", public_key)
+                self._send(200, {"status": "removed"})
+            elif path == "/vless/add":
+                user_uuid = validate_uuid(payload.get("uuid"))
+                lease_id = validate_lease_id(payload.get("lease_id"))
+                expires_at = parse_expiry(payload.get("expires_at"))
+                with LEASE_LOCK:
+                    try:
+                        add_vless_user(user_uuid)
+                        register_lease(lease_id, "vless", user_uuid, expires_at)
+                    except Exception:
+                        try:
+                            remove_vless_user(user_uuid)
+                        except Exception:
+                            pass
+                        raise
+                self._send(200, {"status": "added"})
+            elif path == "/vless/remove":
+                user_uuid = validate_uuid(payload.get("uuid"))
+                with LEASE_LOCK:
+                    remove_vless_user(user_uuid)
+                    remove_lease_by_identity("vless", user_uuid)
                 self._send(200, {"status": "removed"})
             else:
                 self._send(404, {"detail": "not found"})
-        except KeyError as exc:
-            self._send(422, {"detail": f"missing field: {exc}"})
-        except subprocess.CalledProcessError as exc:
-            self._send(503, {"detail": (exc.stderr or str(exc)).strip()})
+        except (ValueError, RuntimeError, subprocess.CalledProcessError, OSError):
+            self._send(503, {"detail": "operation failed"})
+
+
+def validate_startup_configuration() -> None:
+    if not node_id():
+        raise SystemExit("XS_NODE_ID is required")
+    if len(node_secret()) < 32:
+        raise SystemExit("XS_NODE_SECRET must contain at least 32 characters")
+    base = env("XS_CONTROL_PLANE_URL")
+    if production_environment() and base and not base.lower().startswith("https://"):
+        raise SystemExit("production heartbeat requires HTTPS")
+    cert_file = env("XS_AGENT_TLS_CERT")
+    key_file = env("XS_AGENT_TLS_KEY")
+    if bool(cert_file) != bool(key_file):
+        raise SystemExit("both XS_AGENT_TLS_CERT and XS_AGENT_TLS_KEY are required")
+    if production_environment() and (not cert_file or not key_file):
+        raise SystemExit("production Agent requires TLS certificate and key")
 
 
 def main() -> None:
-    if not token():
-        raise SystemExit("XS_AGENT_TOKEN is required")
-    port = int(env("XS_AGENT_PORT", "51821") or "51821")
+    validate_startup_configuration()
+    load_leases()
+    cleanup_expired_leases()
+    reconcile_managed_credentials()
+    threading.Thread(target=cleanup_loop, daemon=True).start()
     threading.Thread(target=heartbeat_loop, daemon=True).start()
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)  # noqa: S104
-    print(f"xingsui agent listening on :{port} iface={iface()}")
+    listen = env("XS_AGENT_LISTEN", "127.0.0.1")
+    port = int(env("XS_AGENT_PORT", "51821") or "51821")
+    server = ThreadingHTTPServer((listen, port), Handler)
+    cert_file = env("XS_AGENT_TLS_CERT")
+    key_file = env("XS_AGENT_TLS_KEY")
+    if cert_file:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(cert_file, key_file)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+    print(f"xingsui agent {AGENT_VERSION} listening on {listen}:{port} iface={iface()}")
     server.serve_forever()
 
 

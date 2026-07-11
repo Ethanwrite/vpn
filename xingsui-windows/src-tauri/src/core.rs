@@ -1,30 +1,23 @@
-use crate::awg::AwgConfig;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, CONNECTION_SYNC_ERROR};
 use crate::models::{ConnState, NetMode, StatusPayload, VlessConfig};
 use crate::state::AppState;
 use crate::{singbox_config, stats, sysproxy};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::io::Write;
+use sha2::{Digest, Sha256};
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const PROXY_PORT: u16 = 7897;
 const CLASH_PORT: u16 = 9191;
-
-pub fn start(
-    app: &AppHandle,
-    cfg: AwgConfig,
-    mode: NetMode,
-    node_id: String,
-    node_name: String,
-) -> AppResult<()> {
-    let proxy_port = available_port(PROXY_PORT);
-    let clash_port = available_port_excluding(CLASH_PORT, proxy_port);
-    let value = singbox_config::build(&cfg, mode, proxy_port, clash_port)?;
-    start_with_config(app, value, mode, node_id, node_name, proxy_port, clash_port)
-}
+const RUNTIME_CONFIG_PREFIX: &str = "xingsui-runtime-";
+const SING_BOX_SHA256: &str = "db0d779948214cf761011d154c3a5da36df20394fa01a9fc798f1dc39fe9d183";
+const WINTUN_SHA256: &str = "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce";
 
 pub fn start_vless(
     app: &AppHandle,
@@ -32,167 +25,204 @@ pub fn start_vless(
     mode: NetMode,
     node_id: String,
     node_name: String,
-) -> AppResult<()> {
+    tunnel_name: String,
+    lease_id: String,
+    lease_expires_at: DateTime<Utc>,
+    generation: u64,
+) -> AppResult<bool> {
     let proxy_port = available_port(PROXY_PORT);
     let clash_port = available_port_excluding(CLASH_PORT, proxy_port);
-    let value = singbox_config::build_vless(&cfg, mode, proxy_port, clash_port)?;
-    start_with_config(app, value, mode, node_id, node_name, proxy_port, clash_port)
+    let clash_secret = format!("{:032x}", rand::random::<u128>());
+    let value = singbox_config::build_vless(&cfg, mode, proxy_port, clash_port, &clash_secret)?;
+    start_with_config(
+        app,
+        value,
+        mode,
+        node_id,
+        node_name,
+        tunnel_name,
+        lease_id,
+        lease_expires_at,
+        proxy_port,
+        clash_port,
+        clash_secret,
+        generation,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_with_config(
     app: &AppHandle,
     value: Value,
     mode: NetMode,
     node_id: String,
     node_name: String,
+    tunnel_name: String,
+    lease_id: String,
+    lease_expires_at: DateTime<Utc>,
     proxy_port: u16,
     clash_port: u16,
-) -> AppResult<()> {
-    let state = app.state::<AppState>();
-    stop(app)?;
-
-    let config_dir = state.config_dir();
-    std::fs::create_dir_all(&config_dir)?;
-
-    let config_path = config_dir.join("config.json");
-    std::fs::write(&config_path, serde_json::to_vec_pretty(&value)?)?;
-    let log_path = config_dir.join("sing-box.log");
-    let mut log_file = std::fs::File::create(&log_path)?;
-    writeln!(
-        log_file,
-        "starting sing-box with config {}",
-        config_path.display()
-    )?;
-
-    if mode.is_tun() {
-        copy_wintun(app, &config_dir)?;
+    clash_secret: String,
+    generation: u64,
+) -> AppResult<bool> {
+    if !connection_is_current_or_connecting(app, generation) {
+        return Ok(false);
     }
 
-    let proxy_backup = if mode == NetMode::SystemProxy {
+    let resource_dir = verify_runtime_resources(app)?;
+    let runtime_dir = {
+        let state = app.state::<AppState>();
+        state.config_dir()
+    };
+    std::fs::create_dir_all(&runtime_dir)?;
+    let mut config_file = EphemeralConfig::create(&runtime_dir, &value)?;
+    let config_path = config_file.path().to_path_buf();
+
+    if !connection_is_current_or_connecting(app, generation) {
+        return Ok(false);
+    }
+
+    let mut proxy_backup = if mode == NetMode::SystemProxy {
         Some(sysproxy::enable(proxy_port)?)
     } else {
         None
     };
-
-    let sidecar = app
-        .shell()
-        .sidecar("sing-box")
-        .map_err(|e| AppError::core(format!("定位 sing-box 失败: {e}")))?
-        .args(["run", "-c", &config_path.to_string_lossy()])
-        .current_dir(config_dir);
-
-    let (mut rx, child) = sidecar
-        .spawn()
-        .map_err(|e| AppError::core(format!("启动 sing-box 失败: {e}")))?;
-
-    let generation;
-    {
-        let mut rt = state.conn.lock();
-        rt.generation = rt.generation.wrapping_add(1);
-        generation = rt.generation;
-        rt.child = Some(child);
-        rt.clash_port = clash_port;
-        rt.mode = mode;
-        rt.node_id = Some(node_id.clone());
-        rt.node_name = Some(node_name.clone());
-        rt.proxy_backup = proxy_backup;
-        rt.state = ConnState::Connecting;
+    if !connection_is_current_or_connecting(app, generation) {
+        restore_proxy_backup(&mut proxy_backup);
+        return Ok(false);
     }
-    emit_status(app, Some("正在启动内核...".into()));
 
+    let sidecar = match app.shell().sidecar("sing-box") {
+        Ok(command) => command
+            .args(["run", "-c", &config_path.to_string_lossy()])
+            .current_dir(resource_dir),
+        Err(error) => {
+            restore_proxy_backup(&mut proxy_backup);
+            return Err(AppError::core(format!("定位 sing-box 失败: {error}")));
+        }
+    };
+    let (mut rx, child) = match sidecar.spawn() {
+        Ok(result) => result,
+        Err(error) => {
+            restore_proxy_backup(&mut proxy_backup);
+            return Err(AppError::core(format!("启动 sing-box 失败: {error}")));
+        }
+    };
+
+    let mut stale_child: Option<CommandChild> = None;
+    {
+        let state = app.state::<AppState>();
+        let mut rt = state.conn.lock();
+        if rt.generation != generation || rt.state != ConnState::Connecting {
+            stale_child = Some(child);
+        } else {
+            rt.child = Some(child);
+            rt.config_path = Some(config_file.disarm());
+            rt.clash_port = clash_port;
+            rt.mode = mode;
+            rt.node_id = Some(node_id);
+            rt.node_name = Some(node_name);
+            rt.proxy_backup = proxy_backup.take();
+        }
+    }
+    if let Some(child) = stale_child {
+        let _ = child.kill();
+        restore_proxy_backup(&mut proxy_backup);
+        return Ok(false);
+    }
+
+    emit_status(app, None);
     spawn_ready_check(
         app.clone(),
         generation,
         mode,
         proxy_port,
         clash_port,
-        log_path.clone(),
+        clash_secret,
+        tunnel_name,
+        lease_id,
+        lease_expires_at,
     );
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let mut last_output = String::new();
         while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stderr(line) | CommandEvent::Stdout(line) => {
-                    let text = String::from_utf8_lossy(&line);
-                    let _ = write!(log_file, "{text}");
-                    last_output.push_str(&text);
-                    last_output.push('\n');
-                    if last_output.len() > 4000 {
-                        let keep_from = last_output.len().saturating_sub(3000);
-                        last_output = last_output[keep_from..].to_string();
-                    }
-                }
-                CommandEvent::Error(e) => {
-                    let _ = writeln!(log_file, "{e}");
-                    last_output.push_str(&e);
-                    last_output.push('\n');
-                }
-                CommandEvent::Terminated(status) => {
-                    let _ = writeln!(log_file, "sing-box terminated: {status:?}");
-                    break;
-                }
-                _ => {}
+            if matches!(event, CommandEvent::Terminated(_)) {
+                break;
             }
         }
-        cleanup_on_unexpected_exit(&app_handle, generation, last_output);
+        cleanup_on_unexpected_exit(&app_handle, generation);
     });
-    Ok(())
+    Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_ready_check(
     app: AppHandle,
     generation: u64,
     mode: NetMode,
     proxy_port: u16,
     clash_port: u16,
-    log_path: std::path::PathBuf,
+    clash_secret: String,
+    tunnel_name: String,
+    lease_id: String,
+    lease_expires_at: DateTime<Utc>,
 ) {
     tauri::async_runtime::spawn(async move {
-        if wait_for_clash_api(&app, generation, clash_port).await {
-            {
-                let state = app.state::<AppState>();
-                let mut rt = state.conn.lock();
-                if rt.generation != generation {
-                    return;
-                }
-                rt.state = ConnState::Connected;
-            }
-            emit_status(&app, Some("已连接".into()));
-            stats::spawn_traffic_poller(app.clone(), clash_port, generation);
-            if mode == NetMode::SystemProxy {
-                spawn_connectivity_check(app.clone(), generation, proxy_port);
-            }
+        if !wait_for_clash_api(&app, generation, clash_port, &clash_secret).await {
+            fail_connection(&app, generation);
             return;
         }
-
-        if connection_is_current_or_connecting(&app, generation) {
-            let _ = stop(&app);
-            emit_status(
-                &app,
-                Some(format!(
-                    "连接失败：内核已启动，但本地控制端口未就绪，请查看日志 {}",
-                    log_path.display()
-                )),
-            );
+        if remove_runtime_config(&app, generation).is_err() {
+            fail_connection(&app, generation);
+            return;
+        }
+        {
+            let state = app.state::<AppState>();
+            let mut rt = state.conn.lock();
+            if rt.generation != generation || rt.state != ConnState::Connecting {
+                return;
+            }
+            rt.state = ConnState::Connected;
+        }
+        emit_status(&app, Some("已连接".into()));
+        stats::spawn_traffic_poller(
+            app.clone(),
+            clash_port,
+            generation,
+            clash_secret,
+            tunnel_name,
+            lease_id,
+            lease_expires_at,
+        );
+        if mode == NetMode::SystemProxy {
+            spawn_connectivity_check(app, generation, proxy_port);
         }
     });
 }
 
 pub fn stop(app: &AppHandle) -> AppResult<()> {
+    let outcome = stop_runtime(app, None);
+    outcome.cleanup_result
+}
+
+fn stop_runtime(app: &AppHandle, expected_generation: Option<u64>) -> StopOutcome {
     let state = app.state::<AppState>();
-    let (child, backup, mode, was_active) = {
+    let (child, config_path, backup, mode, was_active) = {
         let mut rt = state.conn.lock();
+        if expected_generation.is_some_and(|expected| rt.generation != expected) {
+            return StopOutcome::stale();
+        }
         rt.generation = rt.generation.wrapping_add(1);
         let active = rt.state != ConnState::Disconnected || rt.child.is_some();
         let child = rt.child.take();
+        let config_path = rt.config_path.take();
         let backup = rt.proxy_backup.take();
         let mode = rt.mode;
         rt.state = ConnState::Disconnected;
         rt.node_id = None;
         rt.node_name = None;
-        (child, backup, mode, active)
+        (child, config_path, backup, mode, active)
     };
     if let Some(child) = child {
         let _ = child.kill();
@@ -205,54 +235,26 @@ pub fn stop(app: &AppHandle) -> AppResult<()> {
     if was_active {
         emit_status(app, None);
     }
-    Ok(())
-}
-
-fn cleanup_on_unexpected_exit(app: &AppHandle, generation: u64, output: String) {
-    {
-        let state = app.state::<AppState>();
-        let rt = state.conn.lock();
-        if rt.generation != generation {
-            return;
-        }
-    }
-    let _ = stop(app);
-    emit_status(app, Some(singbox_exit_message(&output)));
-}
-
-fn singbox_exit_message(output: &str) -> String {
-    let cleaned = strip_ansi(output).replace('\r', "");
-    let important = cleaned
-        .lines()
-        .rev()
-        .find(|line| line.contains("FATAL") || line.contains("ERROR"))
-        .or_else(|| cleaned.lines().rev().find(|line| !line.trim().is_empty()))
-        .unwrap_or("sing-box exited unexpectedly")
-        .trim();
-
-    if important.contains("Access is denied") {
-        "全局/TUN 模式创建虚拟网卡被 Windows 拒绝。请安装新版后从开始菜单正常启动，若仍失败请卸载残留虚拟网卡或暂用代理模式。".into()
-    } else {
-        format!("连接已断开：{important}")
+    let cleanup_result = config_path.map_or(Ok(()), |path| remove_file_if_exists(&path));
+    StopOutcome {
+        stopped: true,
+        cleanup_result,
     }
 }
 
-fn strip_ansi(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for c in chars.by_ref() {
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(ch);
-        }
+pub fn fail_connection(app: &AppHandle, generation: u64) {
+    let outcome = stop_runtime(app, Some(generation));
+    if outcome.stopped {
+        emit_status(app, Some(CONNECTION_SYNC_ERROR.into()));
     }
-    out
+}
+
+pub fn stop_attempt(app: &AppHandle, generation: u64) -> bool {
+    stop_runtime(app, Some(generation)).stopped
+}
+
+fn cleanup_on_unexpected_exit(app: &AppHandle, generation: u64) {
+    fail_connection(app, generation);
 }
 
 fn spawn_connectivity_check(app: AppHandle, generation: u64, proxy_port: u16) {
@@ -264,16 +266,14 @@ fn spawn_connectivity_check(app: AppHandle, generation: u64, proxy_port: u16) {
         if proxy_health_check(proxy_port).await {
             return;
         }
-        if !connection_is_current(&app, generation) {
-            return;
-        }
-
-        let _ = stop(&app);
-        emit_status(
-            &app,
-            Some("连接失败：内核已启动，但网络连通性检查未通过，请切换线路或稍后重试。".into()),
-        );
+        fail_connection(&app, generation);
     });
+}
+
+pub fn connection_is_current_or_connecting(app: &AppHandle, generation: u64) -> bool {
+    let state = app.state::<AppState>();
+    let rt = state.conn.lock();
+    rt.generation == generation && matches!(rt.state, ConnState::Connecting | ConnState::Connected)
 }
 
 fn connection_is_current(app: &AppHandle, generation: u64) -> bool {
@@ -282,13 +282,12 @@ fn connection_is_current(app: &AppHandle, generation: u64) -> bool {
     rt.generation == generation && rt.state == ConnState::Connected
 }
 
-fn connection_is_current_or_connecting(app: &AppHandle, generation: u64) -> bool {
-    let state = app.state::<AppState>();
-    let rt = state.conn.lock();
-    rt.generation == generation && matches!(rt.state, ConnState::Connecting | ConnState::Connected)
-}
-
-async fn wait_for_clash_api(app: &AppHandle, generation: u64, clash_port: u16) -> bool {
+async fn wait_for_clash_api(
+    app: &AppHandle,
+    generation: u64,
+    clash_port: u16,
+    clash_secret: &str,
+) -> bool {
     let url = format!("http://127.0.0.1:{clash_port}/traffic");
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -302,7 +301,13 @@ async fn wait_for_clash_api(app: &AppHandle, generation: u64, clash_port: u16) -
         if !connection_is_current_or_connecting(app, generation) {
             return false;
         }
-        if client.get(&url).send().await.is_ok() {
+        if client
+            .get(&url)
+            .bearer_auth(clash_secret)
+            .send()
+            .await
+            .is_ok()
+        {
             return true;
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -323,13 +328,14 @@ async fn proxy_health_check(proxy_port: u16) -> bool {
         Ok(client) => client,
         Err(_) => return false,
     };
-
     for url in [
         "http://cp.cloudflare.com/generate_204",
         "http://connectivitycheck.gstatic.com/generate_204",
     ] {
-        if client.get(url).send().await.is_ok() {
-            return true;
+        if let Ok(response) = client.get(url).send().await {
+            if response.status() == reqwest::StatusCode::NO_CONTENT {
+                return true;
+            }
         }
     }
     false
@@ -360,16 +366,154 @@ fn port_is_available(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
-fn copy_wintun(app: &AppHandle, config_dir: &std::path::Path) -> AppResult<()> {
-    let src = app
+fn verify_runtime_resources(app: &AppHandle) -> AppResult<PathBuf> {
+    let resource_dir = app
         .path()
-        .resolve("wintun.dll", tauri::path::BaseDirectory::Resource)
-        .map_err(|e| AppError::system(format!("定位 wintun.dll 失败: {e}")))?;
-    let dst = config_dir.join("wintun.dll");
-    if src.exists() && !dst.exists() {
-        std::fs::copy(&src, &dst)?;
+        .resource_dir()
+        .map_err(|error| AppError::system(format!("定位受保护资源目录失败: {error}")))?;
+    let sidecar_name = if cfg!(windows) {
+        "sing-box.exe"
+    } else {
+        "sing-box"
+    };
+    verify_sha256(
+        &resource_dir.join(sidecar_name),
+        SING_BOX_SHA256,
+        "sing-box",
+    )?;
+    verify_sha256(
+        &resource_dir.join("wintun.dll"),
+        WINTUN_SHA256,
+        "wintun.dll",
+    )?;
+    Ok(resource_dir)
+}
+
+fn verify_sha256(path: &Path, expected: &str, label: &str) -> AppResult<()> {
+    let mut file =
+        File::open(path).map_err(|_| AppError::system(format!("{label} 缺失或无法读取")))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected {
+        return Err(AppError::system(format!("{label} 完整性校验失败")));
     }
     Ok(())
+}
+
+pub fn cleanup_stale_runtime_files(app_dir: &Path) -> AppResult<()> {
+    cleanup_stale_runtime_files_in(&app_dir.join("config"))
+}
+
+fn cleanup_stale_runtime_files_in(runtime_dir: &Path) -> AppResult<()> {
+    if !runtime_dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(runtime_dir)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        let stale = file_name == "config.json"
+            || file_name == "wintun.dll"
+            || file_name == "sing-box.log"
+            || (file_name.starts_with(RUNTIME_CONFIG_PREFIX) && file_name.ends_with(".json"));
+        if stale {
+            remove_file_if_exists(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_runtime_config(app: &AppHandle, generation: u64) -> AppResult<()> {
+    let path = {
+        let state = app.state::<AppState>();
+        let mut rt = state.conn.lock();
+        if rt.generation != generation {
+            return Ok(());
+        }
+        rt.config_path.take()
+    };
+    if let Some(path) = path {
+        remove_file_if_exists(&path)?;
+    }
+    Ok(())
+}
+
+fn remove_file_if_exists(path: &Path) -> AppResult<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(AppError::system(format!("清理临时文件失败: {error}"))),
+    }
+}
+
+fn restore_proxy_backup(backup: &mut Option<sysproxy::ProxyBackup>) {
+    if let Some(backup) = backup.take() {
+        let _ = sysproxy::restore(&backup);
+    }
+}
+
+struct EphemeralConfig {
+    path: Option<PathBuf>,
+}
+
+impl EphemeralConfig {
+    fn create(runtime_dir: &Path, value: &Value) -> AppResult<Self> {
+        for _ in 0..16 {
+            let path = runtime_dir.join(format!(
+                "{RUNTIME_CONFIG_PREFIX}{:032x}.json",
+                rand::random::<u128>()
+            ));
+            let file = OpenOptions::new().write(true).create_new(true).open(&path);
+            let mut file = match file {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            };
+            let guard = Self { path: Some(path) };
+            file.write_all(&serde_json::to_vec(value)?)?;
+            file.sync_all()?;
+            return Ok(guard);
+        }
+        Err(AppError::system("无法创建随机临时配置文件"))
+    }
+
+    fn path(&self) -> &Path {
+        self.path.as_deref().expect("临时配置路径已转移")
+    }
+
+    fn disarm(&mut self) -> PathBuf {
+        self.path.take().expect("临时配置路径已转移")
+    }
+}
+
+impl Drop for EphemeralConfig {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+struct StopOutcome {
+    stopped: bool,
+    cleanup_result: AppResult<()>,
+}
+
+impl StopOutcome {
+    fn stale() -> Self {
+        Self {
+            stopped: false,
+            cleanup_result: Ok(()),
+        }
+    }
 }
 
 pub fn emit_status(app: &AppHandle, message: Option<String>) {
@@ -384,4 +528,55 @@ pub fn emit_status(app: &AppHandle, message: Option<String>) {
     };
     drop(rt);
     let _ = app.emit("status", payload);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_hashes_are_lowercase_sha256() {
+        for hash in [SING_BOX_SHA256, WINTUN_SHA256] {
+            assert_eq!(hash.len(), 64);
+            assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert_eq!(hash, hash.to_ascii_lowercase());
+        }
+    }
+
+    #[test]
+    fn ephemeral_config_is_random_and_removed_on_drop() {
+        let dir =
+            std::env::temp_dir().join(format!("xingsui-core-test-{:032x}", rand::random::<u128>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first_path;
+        {
+            let first = EphemeralConfig::create(&dir, &serde_json::json!({"test": 1})).unwrap();
+            let second = EphemeralConfig::create(&dir, &serde_json::json!({"test": 2})).unwrap();
+            first_path = first.path().to_path_buf();
+            assert_ne!(first.path(), second.path());
+            assert!(first.path().exists());
+            assert!(second.path().exists());
+        }
+        assert!(!first_path.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stale_cleanup_removes_only_sensitive_runtime_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "xingsui-cleanup-test-{:032x}",
+            rand::random::<u128>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), b"secret").unwrap();
+        std::fs::write(dir.join("wintun.dll"), b"untrusted").unwrap();
+        std::fs::write(dir.join("xingsui-runtime-deadbeef.json"), b"secret").unwrap();
+        std::fs::write(dir.join("sing-box.log"), b"legacy endpoint log").unwrap();
+        cleanup_stale_runtime_files_in(&dir).unwrap();
+        assert!(!dir.join("config.json").exists());
+        assert!(!dir.join("wintun.dll").exists());
+        assert!(!dir.join("xingsui-runtime-deadbeef.json").exists());
+        assert!(!dir.join("sing-box.log").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

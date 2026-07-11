@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 import org.amnezia.awg.R
 import org.amnezia.awg.databinding.XingsuiAuthActivityBinding
 import org.amnezia.awg.xingsui.api.XingsuiApiClient
+import org.amnezia.awg.xingsui.api.XingsuiHttpException
+import java.io.IOException
 
 class XingsuiAuthActivity : AppCompatActivity() {
     private val apiClient = XingsuiApiClient()
@@ -48,20 +50,44 @@ class XingsuiAuthActivity : AppCompatActivity() {
         setLoading(true)
         lifecycleScope.launch {
             runCatching {
-                if (isRegister) {
+                val session = if (isRegister) {
                     apiClient.register(email, password, inviteCode.ifBlank { null })
                 } else {
                     apiClient.login(email, password)
                 }
-            }.onSuccess { session ->
                 sessionStore.save(session)
+                session
+            }.onSuccess {
                 Snackbar.make(binding.root, R.string.xingsui_auth_success, Snackbar.LENGTH_SHORT).show()
                 startActivity(Intent(this@XingsuiAuthActivity, XingsuiHomeActivity::class.java))
                 finish()
             }.onFailure {
                 setLoading(false)
                 XingsuiCrashReporter.recordException("auth-submit", it)
-                Snackbar.make(binding.root, R.string.xingsui_auth_failed, Snackbar.LENGTH_LONG).show()
+                Snackbar.make(binding.root, authErrorMessage(it, isRegister), Snackbar.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun authErrorMessage(error: Throwable, isRegister: Boolean): String {
+        return when (error) {
+            is XingsuiHttpException -> when (error.statusCode) {
+                401 -> getString(R.string.xingsui_auth_invalid_credentials)
+                409 -> getString(R.string.xingsui_auth_email_exists)
+                422 -> getString(R.string.xingsui_auth_invalid_request)
+                in 500..599 -> getString(R.string.xingsui_auth_server_failed)
+                else -> getString(R.string.xingsui_auth_failed)
+            }
+            is IOException -> getString(R.string.xingsui_auth_network_failed)
+            else -> {
+                val message = error.message.orEmpty()
+                if (message.contains("网络连接失败")) {
+                    getString(R.string.xingsui_auth_network_failed)
+                } else if (isRegister) {
+                    getString(R.string.xingsui_auth_register_failed)
+                } else {
+                    getString(R.string.xingsui_auth_failed)
+                }
             }
         }
     }

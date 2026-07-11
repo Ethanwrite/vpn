@@ -20,7 +20,7 @@ function ToastRow({ item }: { item: ToastItem }) {
     <div
       onClick={() => dismiss(item.id)}
       className={`pointer-events-auto animate-fade-in cursor-pointer rounded-xl border px-4 py-2.5
-        text-sm shadow-glass backdrop-blur-glass ${STYLES[item.kind]}`}
+        whitespace-pre-line text-sm shadow-glass backdrop-blur-glass ${STYLES[item.kind]}`}
     >
       {item.text}
     </div>

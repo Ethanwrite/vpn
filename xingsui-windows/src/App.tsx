@@ -6,7 +6,7 @@ import ToastHost from "./components/Toast";
 import Login from "./pages/Login";
 import Home from "./pages/Home";
 import Profile from "./pages/Profile";
-import { api, onStats, onStatus } from "./lib/api";
+import { api, CONNECTION_SYNC_ERROR, onStats, onStatus } from "./lib/api";
 import { useStore } from "./store/useStore";
 
 type Tab = "home" | "profile";
@@ -30,7 +30,7 @@ export default function App() {
         const restored = await api.restoreSession();
         if (restored) setUser(restored);
       } catch {
-        /* 忽略恢复失败，落到登录页 */
+        pushToast("error", CONNECTION_SYNC_ERROR);
       }
       unStatus = await onStatus((s) => {
         setConn(s.state, s.node_name);

@@ -3,6 +3,8 @@
 
 use serde::Serialize;
 
+pub const CONNECTION_SYNC_ERROR: &str = "账户状态同步失败\n暂时无法连接，请检查网络后重试";
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("网络请求失败：{0}")]
@@ -39,6 +41,9 @@ impl AppError {
     }
     pub fn config(msg: impl Into<String>) -> Self {
         AppError::Config(msg.into())
+    }
+    pub fn connection_sync() -> Self {
+        AppError::Other(CONNECTION_SYNC_ERROR.to_string())
     }
 }
 
@@ -77,3 +82,16 @@ impl Serialize for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_failures_expose_only_the_approved_message() {
+        assert_eq!(
+            AppError::connection_sync().to_string(),
+            "账户状态同步失败\n暂时无法连接，请检查网络后重试"
+        );
+    }
+}

@@ -4,7 +4,7 @@ version = "1.0.17"
 description = "星隧 VPN Windows 客户端"
 authors = ["Xingsui"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.88"
 
 [lib]
 name = "xingsui_windows_lib"
@@ -25,7 +25,9 @@ anyhow = "1"
 base64 = "0.22"
 parking_lot = "0.12"
 futures-util = "0.3"
-once_cell = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+rand = "0.9"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

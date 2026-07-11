@@ -27,4 +27,4 @@ USER appuser
 EXPOSE 8000
 
 # 仅监听容器内网，外部由 Caddy 反代。worker 数针对 2GB RAM 控制在 2。
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log"]

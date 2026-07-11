@@ -1,0 +1,15 @@
+[Unit]
+Description=Xingsui Osaka to Singapore UDP relay
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/nft delete table ip xingsui_singapore_relay
+ExecStart=/usr/sbin/nft -f /etc/xingsui/xingsui-singapore-relay.nft
+ExecReload=/bin/sh -c '/usr/sbin/nft delete table ip xingsui_singapore_relay 2>/dev/null || true; exec /usr/sbin/nft -f /etc/xingsui/xingsui-singapore-relay.nft'
+ExecStop=-/usr/sbin/nft delete table ip xingsui_singapore_relay
+
+[Install]
+WantedBy=multi-user.target

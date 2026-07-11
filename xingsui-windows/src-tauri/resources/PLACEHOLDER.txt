@@ -1,6 +1,8 @@
-放置 wintun.dll（TUN 模式必需）。
+此目录中的 wintun.dll 来自 WireGuard 官方预编译发布包（TUN 模式必需）。
 
-下载：https://www.wintun.net/  → 解压取对应架构（amd64）的 wintun.dll
-放置为：resources/wintun.dll
+版本：0.14.1
+下载：https://www.wintun.net/builds/wintun-0.14.1.zip
+发布包 SHA-256：07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+AMD64 DLL SHA-256：e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce
 
-sing-box TUN 模式在 Windows 上依赖此驱动 DLL。
+sing-box TUN 模式在 Windows 上依赖此驱动 DLL。更新时必须同步更新运行时固定哈希与 Actions 校验值。

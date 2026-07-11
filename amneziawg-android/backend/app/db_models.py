@@ -42,6 +42,7 @@ class AuthSessionRow(Base):
 
     token_hash: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -156,10 +157,15 @@ class VpnDeviceRow(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), index=True)
     node_id: Mapped[str] = mapped_column(String(64), default="default")
+    protocol: Mapped[str] = mapped_column(String(16), default="awg", index=True)
+    session_token_hash: Mapped[str] = mapped_column(String(128), default="", index=True)
+    lease_id: Mapped[str] = mapped_column(String(64), default="", unique=True, index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    vless_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tunnel_name: Mapped[str] = mapped_column(String(32), default="xingsui")
     client_private_key: Mapped[str] = mapped_column(Text)
     client_public_key: Mapped[str] = mapped_column(Text)
-    client_address: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_address: Mapped[str] = mapped_column(String(64), index=True)
     config_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(24), default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -172,6 +178,7 @@ class VpnNodeRow(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
     region: Mapped[str] = mapped_column(String(64), default="智能线路")
+    protocol: Mapped[str] = mapped_column(String(16), default="awg", index=True)
     # 客户端连接入口（公网 host:port），下发给 App。
     endpoint: Mapped[str] = mapped_column(String(128))
     # 控制面访问 Agent 的地址与端口（内网/公网 IP）。
@@ -180,7 +187,7 @@ class VpnNodeRow(Base):
     server_public_key: Mapped[str] = mapped_column(Text)
     client_network: Mapped[str] = mapped_column(String(64), default="10.66.66.0/24")
     dns: Mapped[str] = mapped_column(String(128), default="1.1.1.1")
-    allowed_ips: Mapped[str] = mapped_column(Text, default="0.0.0.0/0")
+    allowed_ips: Mapped[str] = mapped_column(Text, default="0.0.0.0/0, ::/0")
     persistent_keepalive: Mapped[int] = mapped_column(Integer, default=25)
     mtu: Mapped[int] = mapped_column(Integer, default=1420)
     # AmneziaWG 混淆参数（Jc/Jmin/Jmax/S1/S2/H1-H4 等）JSON 序列化存储。
@@ -209,3 +216,12 @@ class VpnNodeHealthRow(Base):
     tx_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     agent_version: Mapped[str] = mapped_column(String(32), default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class NodeRequestNonceRow(Base):
+    __tablename__ = "node_request_nonces"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    node_id: Mapped[str] = mapped_column(String(64), ForeignKey("vpn_nodes.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
