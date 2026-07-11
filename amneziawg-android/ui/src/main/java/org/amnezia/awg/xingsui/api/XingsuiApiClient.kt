@@ -355,13 +355,11 @@ class XingsuiApiClient(
 
         private const val CONNECT_TIMEOUT_MS = 5000
         private const val READ_TIMEOUT_MS = 7000
+        private const val CANONICAL_API_BASE_URL = "https://xingsui.org"
 
         private fun buildApiBaseUrls(primaryBaseUrl: String): List<String> {
             val primary = primaryBaseUrl.trimEnd('/')
-            val candidates = mutableListOf(primary)
-            if (primary.contains("xingsui.org")) {
-                candidates += "https://xingsui.org/api"
-            }
+            val candidates = mutableListOf(primary, CANONICAL_API_BASE_URL, "$CANONICAL_API_BASE_URL/api")
             return candidates.map { it.trimEnd('/') }.distinct()
         }
     }

@@ -34,7 +34,7 @@ Debug builds use `http://10.0.2.2:8000` by default so the Android emulator can r
 Release and Google Play artifacts must provide a real HTTPS API endpoint. The build intentionally fails without this value so a production APK cannot accidentally point at the local dev backend. Release builds also disable cleartext HTTP traffic through the manifest placeholder:
 
 ```bash
-./gradlew :ui:assembleRelease -PxingsuiReleaseApiBaseUrl=https://api.your-domain.example
+./gradlew :ui:assembleRelease -PxingsuiReleaseApiBaseUrl=https://xingsui.org
 ```
 
 If Android Studio is used, install:

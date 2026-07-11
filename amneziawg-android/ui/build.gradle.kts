@@ -15,6 +15,9 @@ val needsReleaseApiBaseUrl = listOf("release", "googleplay", "bundle").any { req
 if (needsReleaseApiBaseUrl && releaseApiBaseUrl.isNullOrBlank()) {
     throw GradleException("Set -PxingsuiReleaseApiBaseUrl=https://your-api-domain before building a release/googleplay artifact.")
 }
+if (needsReleaseApiBaseUrl && releaseApiBaseUrl?.trimEnd('/') !in setOf("https://xingsui.org", "https://xingsui.org/api")) {
+    throw GradleException("Release builds must use the canonical production API: https://xingsui.org")
+}
 
 fun buildConfigString(value: String): String = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
