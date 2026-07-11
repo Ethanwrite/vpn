@@ -176,25 +176,29 @@ fn validated_renewal_expiry(
     entitlement: &Entitlement,
     now: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
-    if !entitlement.allowed || entitlement.vip_status != "active" {
+    // 与 Android 端一致：只要后端仍判定授权（VIP 有效或免费流量剩余>0）即可续租。
+    // 免费流量耗尽时后端返回 allowed=false，续租失败并断开连接。
+    if !entitlement.allowed {
         return None;
     }
-    let vip_expiry = entitlement
-        .vip_expired_at
-        .as_deref()
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|expires_at| expires_at.with_timezone(&Utc))?;
     let lease_expiry = entitlement
         .lease_expires_at
         .as_deref()
         .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
         .map(|expires_at| expires_at.with_timezone(&Utc))?;
-    if vip_expiry <= now
-        || lease_expiry <= now
-        || lease_expiry > now + chrono::Duration::minutes(15)
-        || lease_expiry > vip_expiry
-    {
+    if lease_expiry <= now || lease_expiry > now + chrono::Duration::minutes(15) {
         return None;
+    }
+    // 仅 VIP 用户额外要求租约不超过 VIP 到期时间；免费流量用户无 VIP 到期时间。
+    if entitlement.vip_status == "active" {
+        let vip_expiry = entitlement
+            .vip_expired_at
+            .as_deref()
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|expires_at| expires_at.with_timezone(&Utc))?;
+        if vip_expiry <= now || lease_expiry > vip_expiry {
+            return None;
+        }
     }
     Some(lease_expiry)
 }
@@ -245,6 +249,23 @@ mod tests {
         let mut missing_lease = entitlement(now);
         missing_lease.lease_expires_at = None;
         assert!(validated_renewal_expiry(&missing_lease, now).is_none());
+    }
+
+    #[test]
+    fn free_trial_renews_without_vip() {
+        let now = Utc::now();
+        let mut free = entitlement(now);
+        free.reason = "free_trial".into();
+        free.vip_status = "inactive".into();
+        free.vip_expired_at = None;
+        free.free_traffic_remaining_bytes = 10_000_000;
+        // 免费流量用户（allowed=true）应可续租，不再要求 VIP。
+        assert!(validated_renewal_expiry(&free, now).is_some());
+
+        // 免费流量耗尽（后端 allowed=false）应断开。
+        let mut exhausted = free.clone();
+        exhausted.allowed = false;
+        assert!(validated_renewal_expiry(&exhausted, now).is_none());
     }
 
     #[test]

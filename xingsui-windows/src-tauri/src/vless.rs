@@ -80,15 +80,20 @@ pub fn validate_node_config(
 
 fn validate_entitlement(config: &VpnNodeConfig, now: DateTime<Utc>) -> AppResult<()> {
     let entitlement = &config.entitlement;
-    if !entitlement.allowed || entitlement.vip_status != "active" {
+    // 与 Android 端一致的业务规则：后端已判定授权（VIP 有效或免费流量剩余>0）时放行；
+    // 免费流量用户 reason=free_trial / vip_status=inactive，不再被 VIP-only 拦截。
+    if !entitlement.allowed {
         return Err(AppError::config("账户无有效授权"));
     }
-    let vip_expires_at = entitlement
-        .vip_expired_at
-        .as_deref()
-        .ok_or_else(|| AppError::config("VIP 到期时间缺失"))?;
-    if parse_timestamp(vip_expires_at, "VIP 到期时间")? <= now {
-        return Err(AppError::config("VIP 已到期"));
+    // 仅 VIP 用户校验 VIP 到期时间；免费流量用户无 VIP 到期时间，凭剩余流量放行。
+    if entitlement.vip_status == "active" {
+        let vip_expires_at = entitlement
+            .vip_expired_at
+            .as_deref()
+            .ok_or_else(|| AppError::config("VIP 到期时间缺失"))?;
+        if parse_timestamp(vip_expires_at, "VIP 到期时间")? <= now {
+            return Err(AppError::config("VIP 已到期"));
+        }
     }
     let entitlement_lease = entitlement
         .lease_expires_at
@@ -339,6 +344,18 @@ mod tests {
         let mut overlong = node_config(now);
         overlong.expires_at = (now + Duration::minutes(16)).to_rfc3339();
         assert!(validate_node_config(&overlong, now).is_err());
+    }
+
+    #[test]
+    fn accepts_free_trial_entitlement() {
+        let now = Utc::now();
+        let mut free = node_config(now);
+        free.entitlement.reason = "free_trial".into();
+        free.entitlement.vip_status = "inactive".into();
+        free.entitlement.vip_expired_at = None;
+        free.entitlement.free_traffic_remaining_bytes = 10_000_000;
+        // 免费流量用户应放行，与 Android 端一致。
+        assert!(validate_node_config(&free, now).is_ok());
     }
 
     #[test]
