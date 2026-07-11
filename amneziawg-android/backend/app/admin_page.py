@@ -404,6 +404,7 @@ ADMIN_HTML = """<!doctype html>
           <td><div class="actions">
             <button class="btn-sm btn-primary" onclick="grantVip('${u.id}','${u.email.replace(/'/g,"\\'")}')">授 VIP</button>
             ${u.vip_status==='active'?`<button class="btn-sm btn-danger" onclick="revokeVip('${u.id}')">撤销</button>`:''}
+            <button class="btn-sm btn-danger" onclick="deleteUser('${u.id}','${u.email.replace(/'/g,"\\'")}')">删除</button>
           </div></td>
         </tr>`).join('')||`<tr><td colspan="7" class="empty">暂无用户</td></tr>`;
     }
@@ -418,6 +419,12 @@ ADMIN_HTML = """<!doctype html>
       if(!confirm('确认撤销该用户 VIP？'))return;
       try{await api(`/admin/users/${id}/revoke-vip`,{method:'POST',body:'{}',});toast('VIP 已撤销','info');loadUsers();}
       catch(e){toast(e.message,'error');}
+    }
+    async function deleteUser(id, email) {
+      if(!confirm(`确认永久删除用户 ${email}？\n将一并删除其订单、设备、邀请、提现等全部数据，且不可恢复。`))return;
+      const r=await fetch(`/admin/users/${id}`,{method:'DELETE'});
+      if(!r.ok&&r.status!==204){toast(await r.text(),'error');return;}
+      toast('用户已删除','info');loadUsers();
     }
 
     // ── nodes ─────────────────────────────────────────────────────────────────

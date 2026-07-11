@@ -51,6 +51,7 @@ PAYMENT_HTML_TEMPLATE = """<!doctype html>
     .submitToast { position: fixed; z-index: 30; top: calc(18px + env(safe-area-inset-top)); left: 50%; width: min(calc(100% - 28px), 520px); padding: 14px 16px; border-radius: 13px; background: #102f47; color: #fff; font-size: 14px; font-weight: 800; line-height: 1.6; text-align: center; box-shadow: 0 16px 44px rgba(6,31,48,.28); opacity: 0; pointer-events: none; transform: translate(-50%, -18px); transition: .2s ease; }
     .submitToast.active { opacity: 1; transform: translate(-50%, 0); }
     .submitToast.error { background: #b93838; }
+    .submitToast.ok { background: #0b8f78; }
     @media (max-width: 380px) { .card { padding: 18px; } .summary { align-items: start; flex-direction: column; } .qrGrid, .actions { grid-template-columns: 1fr; } .qrCard img { width: min(100%, 260px); margin: 0 auto; } }
   </style>
 </head>
@@ -153,16 +154,19 @@ PAYMENT_HTML_TEMPLATE = """<!doctype html>
       launchPayment(channel, target);
     }
     async function markPaymentDone() {
-      const waitingMessage = '订单已提交，请稍候，正在确认支付状态...';
+      const waitingMessage = '正在提交订单，请稍候...';
+      const successMessage = '订单已提交成功！请等待管理员确认到账，确认后 VIP 会自动开通。';
       const doneButton = document.getElementById('paymentDone');
       showSubmitToast(waitingMessage);
       setStatus(waitingMessage, 'ok');
       doneButton.disabled = true;
+      let submitted = false;
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       try {
         if (!currentOrder?.id) {
           const pending = JSON.parse(localStorage.getItem('xingsui_pending_payment') || 'null');
           if (!pending?.plan_id || !pending?.pay_channel) {
+            showSubmitToast('请先选择微信或支付宝完成付款。', 'error');
             setStatus('请先选择微信或支付宝完成付款。', 'error');
             return;
           }
@@ -172,11 +176,16 @@ PAYMENT_HTML_TEMPLATE = """<!doctype html>
         currentOrder = await api(`/orders/${currentOrder.id}/paid`, { method: 'POST' });
         localStorage.setItem('xingsui_payment_order', JSON.stringify(currentOrder));
         localStorage.removeItem('xingsui_pending_payment');
+        submitted = true;
+        showSubmitToast(successMessage, 'ok');
+        setStatus(successMessage, 'ok');
+        doneButton.textContent = '已提交，等待确认';
       } catch (error) {
         showSubmitToast(error.message, 'error');
         setStatus(error.message, 'error');
       } finally {
-        doneButton.disabled = false;
+        // 提交成功后保持按钮禁用，避免重复提交；失败时恢复可点击。
+        doneButton.disabled = submitted;
       }
     }
     document.getElementById('wechatQr').src = config.wechat.qr_url;

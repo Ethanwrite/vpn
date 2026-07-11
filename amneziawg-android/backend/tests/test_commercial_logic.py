@@ -114,7 +114,7 @@ def test_order_owner_check_hides_other_users_order() -> None:
     assert exc_info.value.status_code == 404
 
 
-def test_vpn_entitlement_rejects_free_trial_and_allows_active_vip() -> None:
+def test_vpn_entitlement_allows_free_trial_then_blocks_when_exhausted_and_allows_active_vip() -> None:
     user = UserRow(
         id="u2",
         email="trial-vpn@example.com",
@@ -128,8 +128,13 @@ def test_vpn_entitlement_rejects_free_trial_and_allows_active_vip() -> None:
     )
 
     entitlement = build_vpn_entitlement(user)
+    assert entitlement.allowed
+    assert entitlement.reason == "free_trial"
+
+    user.free_traffic_used_bytes = FREE_TRAFFIC_QUOTA_BYTES
+    entitlement = build_vpn_entitlement(user)
     assert not entitlement.allowed
-    assert entitlement.reason == "vip_required"
+    assert entitlement.reason == "free_traffic_exhausted"
 
     user.vip_status = "active"
     user.vip_expired_at = datetime.now(UTC) + timedelta(days=1)

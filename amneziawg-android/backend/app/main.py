@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1230,8 +1230,6 @@ def require_vpn_principal(
     protocol = SUPPORTED_VPN_PLATFORMS.get(platform)
     if protocol is None:
         raise HTTPException(status_code=400, detail="Unsupported or missing client platform")
-    if effective_vip_status(user.vip_status, user.vip_expired_at) != "active":
-        raise HTTPException(status_code=403, detail="vip_required")
     return VpnPrincipal(session=session, user=user, platform=platform, protocol=protocol)
 
 
@@ -1285,17 +1283,26 @@ def free_traffic_remaining(user: UserRow) -> int:
 
 
 def build_vpn_entitlement(user: UserRow, lease_expires_at: datetime | None = None) -> Entitlement:
+    ensure_free_traffic_quota(user)
     vip_status = effective_vip_status(user.vip_status, user.vip_expired_at)
+    remaining = free_traffic_remaining(user)
+    if vip_status == "active":
+        allowed = True
+        reason = "vip_active"
+    elif remaining > 0:
+        allowed = True
+        reason = "free_trial"
+    else:
+        allowed = False
+        reason = "vip_expired" if vip_status == "expired" else "free_traffic_exhausted"
     return Entitlement(
-        allowed=vip_status == "active" and user.status == "active",
-        reason="vip_active" if vip_status == "active" and user.status == "active" else (
-            "vip_expired" if vip_status == "expired" else "vip_required"
-        ),
+        allowed=allowed,
+        reason=reason,
         vip_status=vip_status,
         vip_expired_at=user.vip_expired_at,
         free_traffic_quota_bytes=int(user.free_traffic_quota_bytes or 0),
         free_traffic_used_bytes=int(user.free_traffic_used_bytes or 0),
-        free_traffic_remaining_bytes=free_traffic_remaining(user),
+        free_traffic_remaining_bytes=remaining,
         lease_expires_at=lease_expires_at,
     )
 
@@ -1538,10 +1545,13 @@ def lease_window(principal: VpnPrincipal) -> tuple[str, datetime, datetime]:
     issued_at = datetime.now(UTC)
     requested_expiry = issued_at + timedelta(seconds=VPN_LEASE_TTL_SECONDS)
     session_expiry = coerce_utc(principal.session.expires_at)
-    vip_expiry = coerce_utc(principal.user.vip_expired_at)
-    if session_expiry is None or vip_expiry is None:
+    if session_expiry is None:
         raise HTTPException(status_code=403, detail="VPN lease cannot be issued")
-    return str(uuid4()), issued_at, min(requested_expiry, session_expiry, vip_expiry)
+    candidates = [requested_expiry, session_expiry]
+    vip_expiry = coerce_utc(principal.user.vip_expired_at)
+    if vip_expiry is not None:
+        candidates.append(vip_expiry)
+    return str(uuid4()), issued_at, min(candidates)
 
 
 def lock_node_credential_allocation(db: Session, node_id: str, protocol: str) -> None:
@@ -2471,6 +2481,9 @@ def get_vpn_config(
     db: Session = Depends(get_db),
 ) -> VpnNodeConfig:
     principal = require_vpn_principal(db, authorization, x_xingsui_platform)
+    entitlement = build_vpn_entitlement(principal.user)
+    if not entitlement.allowed:
+        raise HTTPException(status_code=403, detail=entitlement.reason)
     pool_node = select_pool_node(db, True, principal.protocol)
     if pool_node is None:
         raise HTTPException(status_code=503, detail="No eligible VPN node is available")
@@ -2523,11 +2536,24 @@ def report_usage(
         revoke_vpn_device(db, device)
         db.commit()
         raise HTTPException(status_code=503, detail="vpn_node_unavailable")
+    ensure_free_traffic_quota(principal.user)
+    if effective_vip_status(principal.user.vip_status, principal.user.vip_expired_at) != "active":
+        rx_delta = max(0, int(payload.rx_bytes_delta))
+        tx_delta = max(0, int(payload.tx_bytes_delta))
+        principal.user.free_traffic_used_bytes = int(principal.user.free_traffic_used_bytes or 0) + rx_delta + tx_delta
+    entitlement = build_vpn_entitlement(principal.user)
+    if not entitlement.allowed:
+        revoke_vpn_device(db, device)
+        db.commit()
+        raise HTTPException(status_code=403, detail=entitlement.reason)
     session_expiry = coerce_utc(principal.session.expires_at)
-    vip_expiry = coerce_utc(principal.user.vip_expired_at)
-    if session_expiry is None or vip_expiry is None:
+    if session_expiry is None:
         raise HTTPException(status_code=403, detail="vpn_lease_cannot_be_renewed")
-    renewed_expiry = min(now + timedelta(seconds=VPN_LEASE_TTL_SECONDS), session_expiry, vip_expiry)
+    renewal_candidates = [now + timedelta(seconds=VPN_LEASE_TTL_SECONDS), session_expiry]
+    vip_expiry = coerce_utc(principal.user.vip_expired_at)
+    if vip_expiry is not None:
+        renewal_candidates.append(vip_expiry)
+    renewed_expiry = min(renewal_candidates)
     if renewed_expiry <= now:
         raise HTTPException(status_code=403, detail="vpn_lease_cannot_be_renewed")
     try:
@@ -3059,6 +3085,43 @@ def admin_revoke_vip(
     return to_admin_user(user)
 
 
+@app.delete("/admin/users/{user_id}", status_code=204, response_class=Response)
+def admin_delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    """管理员删除用户：清理其 VPN 设备（撤销节点 peer）与全部从属数据，最后删除用户本身。"""
+    user = db.get(UserRow, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    # 先撤销该用户的活跃/待撤销设备，清理节点上的 peer；失败不阻断删除。
+    with suppress(Exception):
+        revoke_vpn_devices(db, user, fail_on_error=False)
+    # 断开自引用邀请关系：把「由该用户邀请」的其他用户的 invited_by 置空，避免外键约束。
+    db.execute(
+        update(UserRow)
+        .where(UserRow.invited_by_user_id == user_id)
+        .values(invited_by_user_id=None)
+    )
+    # 删除所有引用该用户的从属数据（顺序满足外键约束），最后删用户。
+    db.execute(
+        delete(InvitationRow).where(
+            or_(
+                InvitationRow.inviter_user_id == user_id,
+                InvitationRow.invitee_user_id == user_id,
+            )
+        )
+    )
+    db.execute(delete(WithdrawalRow).where(WithdrawalRow.user_id == user_id))
+    db.execute(delete(VpnDeviceRow).where(VpnDeviceRow.user_id == user_id))
+    db.execute(delete(SubscriptionAuditLogRow).where(SubscriptionAuditLogRow.user_id == user_id))
+    db.execute(delete(AuthSessionRow).where(AuthSessionRow.user_id == user_id))
+    db.execute(delete(OrderRow).where(OrderRow.user_id == user_id))
+    db.delete(user)
+    db.commit()
+    return Response(status_code=204)
+
+
 @app.post("/admin/orders/{order_id}/confirm", response_model=Order)
 def confirm_order(
     order_id: str,
@@ -3155,6 +3218,9 @@ def get_vpn_node_config(
     db: Session = Depends(get_db),
 ) -> VpnNodeConfig:
     principal = require_vpn_principal(db, authorization, x_xingsui_platform)
+    entitlement = build_vpn_entitlement(principal.user)
+    if not entitlement.allowed:
+        raise HTTPException(status_code=403, detail=entitlement.reason)
     node = require_node(db, node_id)
     if not node.enabled:
         raise HTTPException(status_code=403, detail="node_disabled")

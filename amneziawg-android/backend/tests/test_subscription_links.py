@@ -150,29 +150,60 @@ def test_access_token_expiry_and_status_are_enforced(Session) -> None:
 
 
 @pytest.mark.parametrize(
-    ("vip_status", "expires_at", "account_status"),
+    ("vip_status", "expires_at"),
     [
-        ("inactive", None, "active"),
-        ("active", datetime.now(UTC) - timedelta(seconds=1), "active"),
-        ("active", datetime.now(UTC) + timedelta(days=1), "frozen"),
+        ("inactive", None),
+        ("active", datetime.now(UTC) - timedelta(seconds=1)),
     ],
 )
-def test_non_vip_expired_and_frozen_accounts_cannot_get_vpn(
+def test_non_vip_and_expired_vip_with_free_traffic_can_still_get_a_principal(
     Session,
     vip_status,
     expires_at,
-    account_status,
 ) -> None:
+    # Free-trial and expired-VIP accounts are gated on remaining free traffic
+    # (via build_vpn_entitlement at each endpoint), not hard-blocked here.
     token = make_user(
         Session,
         vip_status=vip_status,
         expires_at=expires_at,
-        status=account_status,
+        status="active",
+    )
+    db = Session()
+    principal = require_vpn_principal(db, bearer(token), "android")
+    assert principal.user.id == "u1"
+
+
+def test_frozen_account_cannot_get_vpn(Session) -> None:
+    token = make_user(
+        Session,
+        vip_status="active",
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+        status="frozen",
     )
     db = Session()
     with pytest.raises(HTTPException) as exc:
         require_vpn_principal(db, bearer(token), "android")
     assert exc.value.status_code == 403
+
+
+def test_vpn_config_blocks_non_vip_once_free_traffic_is_exhausted(Session) -> None:
+    token = make_user(Session, vip_status="inactive", expires_at=None)
+    db = Session()
+    db.add(awg_node())
+    user = db.scalar(select(UserRow))
+    user.free_traffic_used_bytes = user.free_traffic_quota_bytes
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        get_vpn_node_config(
+            "awg-1",
+            authorization=bearer(token),
+            x_xingsui_platform="android",
+            db=db,
+        )
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "free_traffic_exhausted"
 
 
 def test_platform_filter_returns_only_complete_matching_nodes(Session) -> None:
