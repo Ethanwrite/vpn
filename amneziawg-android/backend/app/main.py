@@ -623,7 +623,7 @@ class AdminNodeSummary(BaseModel):
 
 
 class UsageReportRequest(StrictRequest):
-    lease_id: str = Field(min_length=1, max_length=64)
+    lease_id: str | None = Field(default=None, min_length=1, max_length=64)
     tunnel_name: str | None = Field(default=None, max_length=128)
     rx_bytes_delta: int = Field(default=0, ge=0, le=2**63 - 1)
     tx_bytes_delta: int = Field(default=0, ge=0, le=2**63 - 1)
@@ -1224,7 +1224,9 @@ def require_vpn_principal(
     x_xingsui_platform: str | None,
 ) -> VpnPrincipal:
     session, user = get_current_auth(db, authorization)
-    platform = (x_xingsui_platform or "").strip().lower()
+    # Android 2.0.14 predates the explicit platform header.  Keep the
+    # authenticated legacy client usable while newer clients remain explicit.
+    platform = (x_xingsui_platform or "android").strip().lower()
     protocol = SUPPORTED_VPN_PLATFORMS.get(platform)
     if protocol is None:
         raise HTTPException(status_code=400, detail="Unsupported or missing client platform")
@@ -2486,15 +2488,22 @@ def report_usage(
 ) -> Entitlement:
     principal = require_vpn_principal(db, authorization, x_xingsui_platform)
     now = datetime.now(UTC)
-    device = db.scalar(
+    device_query = (
         select(VpnDeviceRow)
         .where(VpnDeviceRow.user_id == principal.user.id)
         .where(VpnDeviceRow.protocol == principal.protocol)
         .where(VpnDeviceRow.session_token_hash == principal.session.token_hash)
-        .where(VpnDeviceRow.lease_id == payload.lease_id)
         .where(VpnDeviceRow.status == "active")
-        .with_for_update()
     )
+    if payload.lease_id is not None:
+        device = db.scalar(device_query.where(VpnDeviceRow.lease_id == payload.lease_id).with_for_update())
+    else:
+        if principal.platform != "android":
+            raise HTTPException(status_code=403, detail="invalid_vpn_lease")
+        if payload.tunnel_name:
+            device_query = device_query.where(VpnDeviceRow.tunnel_name == payload.tunnel_name)
+        legacy_devices = list(db.scalars(device_query.with_for_update()).all())
+        device = legacy_devices[0] if len(legacy_devices) == 1 else None
     if device is None:
         raise HTTPException(status_code=403, detail="invalid_vpn_lease")
     current_expiry = coerce_utc(device.lease_expires_at)
