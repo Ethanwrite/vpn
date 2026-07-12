@@ -242,7 +242,7 @@ def test_payment_page_contains_deep_links_and_qr_fallback() -> None:
     assert "https://xingsui.org/pay/wechat.jpg" in html
     assert "https://xingsui.org/pay/alipay.jpg" in html
     assert "支付完成后，点“我已经完成支付”提交订单。" in html
-    assert "订单已提交，请稍候，正在确认支付状态..." in html
+    assert "订单已提交成功！请等待管理员确认到账，确认后 VIP 会自动开通。" in html
     assert "intent://" in html
     assert "alipays://platformapi/startapp" in html
     assert "https://ulink.alipay.com/" in html

@@ -619,8 +619,18 @@ SITE_HTML = """<!doctype html>
           </div>
         </div>
         <div class="panel subscriptionCard" id="subscriptionCard">
-          <h3>安全连接</h3>
-          <p class="muted">长期订阅链接已停用。请使用星隧官方客户端；客户端会在每次连接前在线验证账号、VIP、设备与会话，并获取短期租约。</p>
+          <h3>订阅链接</h3>
+          <p class="muted">VIP 会员可导出专属订阅链接，导入 Clash、sing-box 等第三方开源客户端使用。链接与账号绑定，请勿分享；如泄露可随时点击“重置”使旧链接立即失效。</p>
+          <p class="status" id="subscriptionStatus"></p>
+          <div class="subscriptionActions">
+            <button class="primary" id="exportSubscription" type="button">导出订阅链接</button>
+            <button class="secondary" id="copySubscription" type="button" disabled>复制链接</button>
+            <button class="secondary" id="resetSubscription" type="button" disabled>重置</button>
+          </div>
+          <div class="subscriptionLinkBox" id="subscriptionLinkBox">
+            <input class="subscriptionInput" id="subscriptionLink" type="text" readonly onclick="this.select()" aria-label="订阅链接" />
+            <p class="muted" id="subscriptionMeta"></p>
+          </div>
         </div>
       </div>
     </section>
@@ -688,7 +698,7 @@ SITE_HTML = """<!doctype html>
         <div class="step"><h3>App 登录</h3><p class="muted">下载 APK 后用同一邮箱密码登录，首页会显示 VIP 状态和节点信息。</p></div>
         <div class="step"><h3>连接网络</h3><p class="muted">App 会在线验证有效 VIP，然后匹配对应平台的节点并申请短期租约。</p></div>
       </div>
-      <div class="panel guidePanel"><h3>为什么不提供长期订阅链接？</h3><p class="muted">长期链接无法按设备及时撤销，也容易进入浏览器和代理日志。官方客户端仅在验证通过后获得短期凭据。</p></div>
+      <div class="panel guidePanel"><h3>关于订阅链接</h3><p class="muted">VIP 会员可在用户中心导出订阅链接，导入第三方开源客户端（Clash、sing-box 等）使用。链接经签名校验、限频保护，服务端全程 HTTPS，并对访问日志做脱敏处理；如担心泄露，可随时“重置”让旧链接立即失效。非会员开通 VIP 后即可导出。</p></div>
     </section>
   </main>
 
@@ -1141,6 +1151,9 @@ SITE_HTML = """<!doctype html>
       if (state.currentOrder) createOrder(state.currentOrder.plan_id);
     });
     $('submitPaid').addEventListener('click', submitPaid);
+    $('exportSubscription')?.addEventListener('click', exportSubscriptionLink);
+    $('copySubscription')?.addEventListener('click', copySubscriptionLink);
+    $('resetSubscription')?.addEventListener('click', resetSubscriptionLink);
 
     renderAuthState();
     renderSubscriptionCard();

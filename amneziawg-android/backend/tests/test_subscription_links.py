@@ -24,6 +24,7 @@ from app.main import (
     revoke_vpn_devices,
     sensitive_response_path,
     subscription_feed,
+    SubscriptionApiException,
     UsageReportRequest,
 )
 from app import node_service
@@ -121,14 +122,29 @@ def vless_node(node_id: str = "vless-1") -> VpnNodeRow:
     )
 
 
-def test_long_lived_subscription_paths_are_disabled(Session) -> None:
-    db = Session()
-    with pytest.raises(HTTPException) as exc:
-        get_user_subscription_link(request(), authorization=None, db=db)
-    assert exc.value.status_code == 410
-    response = subscription_feed(token="legacy-query-token", db=db)
-    assert response.status_code == 410
-    assert response.headers["cache-control"].startswith("no-store")
+def test_subscription_link_requires_vip_and_verifies_token(Session) -> None:
+    # 未登录 → UNAUTHORIZED（友好提示）
+    with pytest.raises(SubscriptionApiException) as exc:
+        get_user_subscription_link(request(), authorization=None, db=Session())
+    assert exc.value.status_code == 401 and exc.value.code == "UNAUTHORIZED"
+
+    # 非 VIP → VIP_REQUIRED（前端提示“开通 VIP 后即可导出订阅链接”）
+    guest_token = make_user(Session, user_id="guest", vip_status="inactive")
+    with pytest.raises(SubscriptionApiException) as exc:
+        get_user_subscription_link(request(), authorization=bearer(guest_token), db=Session())
+    assert exc.value.status_code == 403 and exc.value.code == "VIP_REQUIRED"
+
+    # VIP → 返回 HTTPS 订阅链接 + 脱敏 token
+    vip_token = make_user(Session, user_id="vip", vip_status="active")
+    resp = get_user_subscription_link(request(), authorization=bearer(vip_token), db=Session())
+    assert resp.subscription_url.startswith("https://")
+    assert "/api/sub?token=" in resp.subscription_url
+    assert resp.masked_token and "****" in resp.masked_token
+
+    # 无效订阅 token → 401（不再是 410 停用；no-store 由中间件统一注入）
+    response = subscription_feed(token="bogus-token", db=Session())
+    assert response.status_code == 401
+    assert json.loads(bytes(response.body))["code"] == "UNAUTHORIZED"
 
 
 def test_access_token_expiry_and_status_are_enforced(Session) -> None:

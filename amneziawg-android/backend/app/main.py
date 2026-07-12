@@ -20,7 +20,14 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -1029,8 +1036,23 @@ def render_yaml_value(key: str, value: object, indent: str = "    ") -> list[str
     return [f"{indent}{key}: {yaml_scalar(value)}"]
 
 
+def subscription_expiry_label(user: UserRow) -> str:
+    """会员到期展示文案，如 '2026-08-10（剩30天）'。"""
+    expires = coerce_utc(user.vip_expired_at)
+    if expires is None:
+        return "未开通"
+    remaining_days = max(0, (expires - datetime.now(UTC)).days)
+    return f"{expires.date().isoformat()}（剩{remaining_days}天）"
+
+
 def render_clash_yaml(user: UserRow, proxies: list[dict[str, object]]) -> str:
     expires_at = fmt_subscription_datetime(user.vip_expired_at)
+    # 到期信息节点：复制首个可用节点，仅改名称显示会员到期时间，
+    # 让用户在第三方客户端的节点列表里直接看到 VIP 剩余时长（选中仍可正常连接）。
+    if proxies:
+        info_node = dict(proxies[0])
+        info_node["name"] = f"⏳ 会员到期 {subscription_expiry_label(user)}"
+        proxies = [info_node, *proxies]
     names = [str(proxy["name"]) for proxy in proxies]
     lines = [
         "# 星隧订阅",
@@ -2449,7 +2471,19 @@ def get_user_subscription_link(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> SubscriptionLinkResponse:
-    raise HTTPException(status_code=410, detail="Long-lived subscription links are disabled")
+    user = require_subscription_user(db, authorization)
+    require_active_subscription_vip(user)
+    enforce_subscription_rate_limit(
+        user.id,
+        "export",
+        SUBSCRIPTION_EXPORT_LIMIT_COUNT,
+        SUBSCRIPTION_EXPORT_LIMIT_SECONDS,
+    )
+    token = ensure_subscription_token(db, user)
+    record_subscription_audit(db, user, "export", token, request)
+    response = build_subscription_response(db, user, token, request)
+    db.commit()
+    return response
 
 
 @app.post("/user/subscription-link/reset", response_model=SubscriptionLinkResponse)
@@ -2458,7 +2492,19 @@ def reset_user_subscription_link(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> SubscriptionLinkResponse:
-    raise HTTPException(status_code=410, detail="Long-lived subscription links are disabled")
+    user = require_subscription_user(db, authorization)
+    require_active_subscription_vip(user)
+    enforce_subscription_rate_limit(
+        user.id,
+        "reset",
+        SUBSCRIPTION_RESET_LIMIT_COUNT,
+        SUBSCRIPTION_RESET_LIMIT_SECONDS,
+    )
+    token = reset_subscription_token(db, user)
+    record_subscription_audit(db, user, "reset", token, request)
+    response = build_subscription_response(db, user, token, request)
+    db.commit()
+    return response
 
 
 @app.get("/sub", include_in_schema=False)
@@ -2466,9 +2512,36 @@ def subscription_feed(
     token: str = Query(default=""),
     db: Session = Depends(get_db),
 ) -> Response:
-    return JSONResponse(
-        status_code=410,
-        content={"detail": "Long-lived subscription feeds are disabled"},
+    token = token.strip()
+    if not token:
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "code": "UNAUTHORIZED", "message": "订阅链接无效，请重新导出。"},
+        )
+    token_hash = hash_token(token)
+    user = db.scalar(select(UserRow).where(UserRow.subscription_token_hash == token_hash))
+    if user is None:
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "code": "UNAUTHORIZED", "message": "订阅链接无效，请重新导出。"},
+        )
+    try:
+        require_active_subscription_vip(user)
+    except SubscriptionApiException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"success": False, "code": exc.code, "message": exc.message},
+        )
+    try:
+        content, _node_count = render_subscription_content(db, user)
+    except SubscriptionApiException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"success": False, "code": exc.code, "message": exc.message},
+        )
+    return PlainTextResponse(
+        content,
+        media_type="text/yaml; charset=utf-8",
         headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"},
     )
 
