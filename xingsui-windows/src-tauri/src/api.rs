@@ -7,8 +7,8 @@ use reqwest::{Client, Method};
 use serde_json::json;
 use std::time::Duration;
 
-const VERSION_CODE: &str = "3";
-const VERSION_NAME: &str = "1.0.19";
+const VERSION_CODE: &str = "4";
+const VERSION_NAME: &str = "1.0.20";
 
 /// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退。
 pub const BASE_URLS: &[&str] = &["https://xingsui.org/api"];
@@ -63,10 +63,13 @@ impl ApiClient {
                     }
                     // 4xx 客户端错误无需切换域名，直接返回。
                     if status.is_client_error() {
+                        let detail = extract_detail(&text);
                         return if token.is_some() {
-                            Err(AppError::connection_sync())
+                            // 已登录时，把授权失败原因码转成友好文案（免费流量用完 / VIP 相关），
+                            // 其余仍回退到通用的“账户状态同步失败”提示。
+                            Err(AppError::other(friendly_reason_message(&detail)))
                         } else {
-                            Err(AppError::other(extract_detail(&text)))
+                            Err(AppError::other(detail))
                         };
                     }
                     last_err = Some(AppError::Api {
@@ -149,6 +152,16 @@ impl ApiClient {
     }
 }
 
+/// 把后端授权失败原因码映射成用户可读文案；未知原因回退到通用同步失败提示。
+fn friendly_reason_message(detail: &str) -> String {
+    match detail.trim() {
+        "free_traffic_exhausted" => "30MB 免费流量已用完，请开通 VIP 后继续使用".to_string(),
+        "vip_required" => "该节点需开通 VIP 后使用".to_string(),
+        "vip_expired" => "VIP 已过期，请续费后继续使用".to_string(),
+        _ => crate::error::CONNECTION_SYNC_ERROR.to_string(),
+    }
+}
+
 /// 从后端 {"detail": "..."} 错误体抽取人类可读信息。
 fn extract_detail(text: &str) -> String {
     serde_json::from_str::<serde_json::Value>(text)
@@ -161,4 +174,22 @@ fn extract_detail(text: &str) -> String {
                 text.chars().take(200).collect()
             }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::friendly_reason_message;
+    use crate::error::CONNECTION_SYNC_ERROR;
+
+    #[test]
+    fn maps_entitlement_reasons_to_friendly_text() {
+        assert!(friendly_reason_message("free_traffic_exhausted").contains("30MB"));
+        assert!(friendly_reason_message("vip_expired").contains("续费"));
+        assert!(friendly_reason_message("vip_required").contains("VIP"));
+        // 未知原因回退到通用同步失败提示
+        assert_eq!(
+            friendly_reason_message("something_else"),
+            CONNECTION_SYNC_ERROR
+        );
+    }
 }
