@@ -89,7 +89,14 @@
 3. 点「我已完成支付」→ `POST /orders` → `POST /orders/{id}/paid` → 订单变 `pending_confirm`，前端弹「订单已提交成功…」。
 4. 管理员 `POST /admin/orders/{id}/confirm` → 用户 VIP 激活。
 
-### 5.5 管理后台
+### 5.5 订阅链接（VIP）
+- VIP 在用户中心「导出订阅链接」→ `GET /user/subscription-link` → 返回 `https://xingsui.org/api/sub?token=...`。
+- Token 为 HMAC-SHA256 签名（`user_id:version`，不可枚举）；限频 5 次/60s（重置 1 次/10min）；审计日志对 token 脱敏；全程 HTTPS。
+- 第三方客户端拉取 `GET /sub?token=...` → 返回 Clash YAML（节点来自 `SUBSCRIPTION_PROXY_LINKS_PATH`，默认 `/opt/xingsui/download/subscription-links.txt`）。YAML 首个节点为「⏳ 会员到期 …」信息节点，用户在客户端节点列表可直接看到 VIP 到期时间。
+- 非 VIP 点击导出 → 前端友好提示「开通 VIP 后即可导出订阅链接」并跳转套餐页；`/sub` 对无效/过期 token 返回 401，对非 VIP 返回对应 code。
+- 泄露可「重置」：`POST /user/subscription-link/reset` 递增 version，旧链接立即失效。
+
+### 5.6 管理后台
 `/admin`（`ADMIN_SESSION` cookie，`Secure`+`SameSite=strict`+`path=/admin`）。
 写操作（POST/PUT/PATCH/DELETE）额外受 `ADMIN_WRITES_ENABLED` 开关控制（见 §7）。
 用户管理支持：授/撤 VIP、**删除用户**（`DELETE /admin/users/{id}`，级联清理订单/设备/邀请/提现/会话/审计并撤销节点 peer）。
@@ -129,6 +136,7 @@ ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose 
 - **`ADMIN_WRITES_ENABLED`（关键）**：为 `false` 时，中间件拦截**所有**管理写操作（确认订单、授 VIP、删用户），返回 503「Admin writes are temporarily disabled during security review」。若管理员点任何操作报 503，先查这个开关。当前为 `true`。
 - **大阪 UDP 443**：依赖 ①Caddy 关闭 HTTP/3（`docker-compose.yml` 不再发布 `443:443/udp`）②awg0.conf 的 REDIRECT PostUp。若从仓库重新部署 Caddy 或重装大阪节点，务必确认这两点不被还原，否则大阪失联。
 - **收款码域名**：`PAYMENT_WECHAT_QR_URL` / `PAYMENT_ALIPAY_QR_URL` 必须指向 `xingsui.org/pay/*.jpg`（`/pay/` 路由只在 xingsui.org 生效，xingsuico.com 会 404）。
+- **订阅节点文件权限**：`/opt/xingsui/download/subscription-links.txt` 必须能被 API 容器用户（`appuser`，gid 999）读取，否则 `/sub` 返回 500。当前设为 `640 root:999`（不对外可读，且该文件未被 Caddy 静态暴露）。**手动更新该文件后请重新 `chown root:999 && chmod 640`**，不要留成 `600 root`。
 
 ### 安全（来自事故排查，待收敛）
 - 多个节点共用同一个内部 **Agent Token**，单点泄露会横向扩大。
