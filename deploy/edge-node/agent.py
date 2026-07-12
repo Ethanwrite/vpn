@@ -405,8 +405,25 @@ def reconcile_awg_peers() -> None:
         remove_peer(public_key)
 
 
+def static_vless_uuids() -> set[str]:
+    """Long-lived subscription UUIDs that must survive reconcile (no lease, never
+    auto-removed). Sourced from a file so it can be updated without editing code."""
+    path = Path(os.getenv("XS_STATIC_VLESS_UUIDS_FILE", "/etc/xingsui/static-vless-uuids.txt"))
+    if not path.is_file():
+        return set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    return {
+        line.strip()
+        for line in lines
+        if line.strip() and not line.strip().startswith("#")
+    }
+
+
 def reconcile_vless_users() -> None:
-    known = active_lease_identities("vless")
+    known = active_lease_identities("vless") | static_vless_uuids()
     with VLESS_LOCK:
         path = vless_config_path()
         config = json.loads(path.read_text(encoding="utf-8"))
