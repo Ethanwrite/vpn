@@ -137,6 +137,9 @@ ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose 
 - **大阪 UDP 443**：依赖 ①Caddy 关闭 HTTP/3（`docker-compose.yml` 不再发布 `443:443/udp`）②awg0.conf 的 REDIRECT PostUp。若从仓库重新部署 Caddy 或重装大阪节点，务必确认这两点不被还原，否则大阪失联。
 - **收款码域名**：`PAYMENT_WECHAT_QR_URL` / `PAYMENT_ALIPAY_QR_URL` 必须指向 `xingsui.org/pay/*.jpg`（`/pay/` 路由只在 xingsui.org 生效，xingsuico.com 会 404）。
 - **订阅节点文件权限**：`/opt/xingsui/download/subscription-links.txt` 必须能被 API 容器用户（`appuser`，gid 999）读取，否则 `/sub` 返回 500。当前设为 `640 root:999`（不对外可读，且该文件未被 Caddy 静态暴露）。**手动更新该文件后请重新 `chown root:999 && chmod 640`**，不要留成 `600 root`。
+- **VLESS Reality（GFW 相关）**：TCP 8443（新加坡 10443，经主服务器 10444 中转）。SNI/handshake 用**自家域名 `xingsui.org`**（解析到主服务器，满足 GFW 的 SNI-目标 IP 一致性检测；主服务器 443 的 Caddy 提供真实站点做 handshake 兜底）。**不要**改用大厂域名（如 apple.com/microsoft.com）——SNI 与 IP 不一致反而更易被封。协议栈：VLESS + Reality + **Vision（`xtls-rprx-vision`）**，服务端每个 user、DB `VlessFlow`、订阅链接 `flow=` 三处必须一致。
+- **动态 vs 订阅用户**：节点 Agent 只发放**≤1 小时**短租约（`MAX_LEASE_SECONDS`），并周期性 reconcile 清理不在租约表里的 vless user。因此长期订阅需要**永久 user**：写进各节点 `/etc/xingsui/static-vless-uuids.txt`（agent 的 `static_vless_uuids()` 会在 reconcile 时保留），并手动加进 sing-box 的 users。Agent 发放动态 user 的 flow 由 `XS_VLESS_FLOW`（在 `/etc/xingsui/agent.env`）控制，须为 `xtls-rprx-vision`。
+- **awg MTU**：各 awg 节点 MTU 设为 **1280**（家宽/Wi-Fi PPPoE 路径过大的 1420 会导致握手成功但数据丢包、短连即断）。改动在 DB `vpn_nodes.mtu`。
 
 ### 安全（来自事故排查，待收敛）
 - 多个节点共用同一个内部 **Agent Token**，单点泄露会横向扩大。
