@@ -22,9 +22,12 @@ PAYMENT_PAGE_CONFIG = {
     "wechat": {
         "label": "微信支付",
         "deep_link": WECHAT_PAYMENT_CONTENT,
+        # Host-relative so the QR loads from whichever domain the user is on
+        # (xingsui.org or the xingsuico.com mirror). Absolute URLs would break the
+        # mirror exactly when the primary domain is blocked.
         "qr_url": os.getenv(
             "PAYMENT_WECHAT_QR_URL",
-            "https://xingsui.org/pay/wechat.jpg",
+            "/pay/wechat.jpg",
         ).strip(),
     },
     "alipay": {
@@ -38,7 +41,7 @@ PAYMENT_PAGE_CONFIG = {
         "universal_link": "https://ulink.alipay.com/?scheme=" + quote(ALIPAY_SCHEME, safe=""),
         "qr_url": os.getenv(
             "PAYMENT_ALIPAY_QR_URL",
-            "https://xingsui.org/pay/alipay.jpg",
+            "/pay/alipay.jpg",
         ).strip(),
     },
     "support_url": os.getenv(

@@ -5,24 +5,25 @@
 {
 	# 全局选项：用真实邮箱接收证书到期通知（可在 .env 留空使用默认）
 	email {$ACME_EMAIL}
+	# 仅提供 HTTP/1.1 + HTTP/2（TCP 443）。UDP 443 已让给大阪 awg
+	# （nftables REDIRECT udp/443→51820），关闭 HTTP/3 可避免 Caddy 广播
+	# alt-svc h3，使客户端不再向 udp/443 发起注定失败的 QUIC 尝试。不影响 TCP 访问。
+	servers {
+		protocols h1 h2
+	}
 }
 
+# 备用官网镜像：与 xingsui.org 提供完全一致的官网/下载/支付/API。
+# 大陆部分 Wi-Fi 对 xingsui.org 存在 DNS 污染/SNI 阻断，此域名作为等价备份入口，
+# 供网站直接访问与客户端 API 故障转移使用。两个域名各自独立可用，不做互相跳转。
 xingsuico.com, www.xingsuico.com, api.xingsuico.com {
 	encode zstd gzip
 
-	# Keep previously released Android clients online while downloads migrate to
-	# xingsui.org. Only the historical /api namespace is forwarded; the backend
-	# still enforces the same login, VIP and short-lived node-lease checks.
-	handle /api/* {
-		reverse_proxy api:8000 {
-			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-		}
-	}
-
-	handle {
-		respond "Not Found" 404
+	# 反代到 FastAPI；保留真实来源信息（与主域名一致）
+	reverse_proxy api:8000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
 	}
 
 	header {
@@ -32,6 +33,11 @@ xingsuico.com, www.xingsuico.com, api.xingsuico.com {
 		Referrer-Policy "no-referrer-when-downgrade"
 		-Server
 	}
+
+	@internalHeartbeat path /internal/nodes/heartbeat /api/internal/nodes/heartbeat
+	log_skip @internalHeartbeat
+	@disabledSubscription path /sub /api/sub
+	log_skip @disabledSubscription
 
 	log {
 		output stdout
