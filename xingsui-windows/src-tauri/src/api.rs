@@ -5,16 +5,25 @@ use crate::error::{AppError, AppResult};
 use crate::models::{AuthResponse, Entitlement, User, VpnNodeConfig, VpnNodeSummary};
 use reqwest::{Client, Method};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-const VERSION_CODE: &str = "4";
-const VERSION_NAME: &str = "1.0.20";
+const VERSION_CODE: &str = "5";
+const VERSION_NAME: &str = "1.0.21";
 
-/// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退。
-pub const BASE_URLS: &[&str] = &["https://xingsui.org/api"];
+/// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退：
+/// 主域名优先，xingsuico.com 为等价备用镜像（同一后端）。大陆部分 Wi-Fi 对主域名
+/// 存在 DNS 污染/SNI 阻断，此时自动切换到镜像，保证登录/授权/连接仍可用。
+pub const BASE_URLS: &[&str] = &[
+    "https://xingsui.org/api",
+    "https://xingsuico.com/api",
+];
 
 pub struct ApiClient {
     http: Client,
+    /// 上次网络可达的基址下标。请求从它开始，命中后记住，避免每次都先在被封的
+    /// 主域名上耗满连接超时（对标 Android 客户端的 activeBaseUrl 粘滞行为）。
+    preferred_base: AtomicUsize,
 }
 
 impl ApiClient {
@@ -25,7 +34,10 @@ impl ApiClient {
             .user_agent("XingsuiWindows/1.0")
             .build()
             .expect("构建 HTTP 客户端失败");
-        Self { http }
+        Self {
+            http,
+            preferred_base: AtomicUsize::new(0),
+        }
     }
 
     async fn request(
@@ -36,7 +48,11 @@ impl ApiClient {
         body: Option<serde_json::Value>,
     ) -> AppResult<String> {
         let mut last_err: Option<AppError> = None;
-        for base in BASE_URLS {
+        // 从上次可达的基址开始，环形遍历所有基址（粘滞回退）。
+        let start = self.preferred_base.load(Ordering::Relaxed) % BASE_URLS.len();
+        for offset in 0..BASE_URLS.len() {
+            let idx = (start + offset) % BASE_URLS.len();
+            let base = BASE_URLS[idx];
             let url = format!("{base}{path}");
             let mut req = self
                 .http
@@ -53,6 +69,8 @@ impl ApiClient {
             }
             match req.send().await {
                 Ok(resp) => {
+                    // 收到 HTTP 响应即说明该基址网络可达，记为优先，下次从它开始。
+                    self.preferred_base.store(idx, Ordering::Relaxed);
                     let status = resp.status();
                     let text = resp.text().await.unwrap_or_default();
                     if status.is_success() {
