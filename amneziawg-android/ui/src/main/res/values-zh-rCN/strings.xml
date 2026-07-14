@@ -196,6 +196,7 @@
     <string name="xingsui_withdraw_unavailable">满 10 元可申请提现</string>
     <string name="xingsui_vip_required_login">请先登录星隧账号再启动 VPN</string>
     <string name="xingsui_vip_required_active">需要有效 VIP 才能连接</string>
+    <string name="xingsui_free_trial_exhausted">30MB 免费流量已用完，请开通会员后继续使用</string>
     <string name="xingsui_vip_expired">VIP 已过期，请续费后再启动 VPN</string>
     <string name="xingsui_vip_verify_failed">无法校验 VIP 状态，请检查网络和后端服务</string>
     <string name="xingsui_copy_invite">复制邀请码</string>

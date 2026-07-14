@@ -29,6 +29,7 @@ import org.amnezia.awg.util.applicationScope
 import org.amnezia.awg.config.Config
 import org.amnezia.awg.xingsui.XingsuiSessionStore
 import org.amnezia.awg.xingsui.XingsuiConnectionSyncException
+import org.amnezia.awg.xingsui.XingsuiEntitlementException
 import org.amnezia.awg.xingsui.XingsuiCrashReporter
 import org.amnezia.awg.xingsui.XingsuiVipGate
 import org.amnezia.awg.xingsui.api.XingsuiApiClient
@@ -128,10 +129,10 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
                 "managed-tunnel-start-failed",
                 error.javaClass.simpleName.ifBlank { "unknown" },
             )
-            throw if (error is XingsuiConnectionSyncException) {
-                error
-            } else {
-                XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
+            throw when (error) {
+                is XingsuiEntitlementException -> error
+                is XingsuiConnectionSyncException -> error
+                else -> XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
             }
         }
     }

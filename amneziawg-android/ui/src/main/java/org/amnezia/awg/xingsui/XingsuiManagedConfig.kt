@@ -9,6 +9,7 @@ import org.amnezia.awg.config.Config
 import org.amnezia.awg.xingsui.api.XingsuiApiClient
 import org.amnezia.awg.xingsui.api.XingsuiHttpException
 import org.amnezia.awg.xingsui.model.VpnNodeConfig
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
 import java.time.Duration
@@ -21,6 +22,13 @@ data class FreshManagedConfig(
 )
 
 class XingsuiConnectionSyncException(message: String) : IllegalStateException(message)
+
+/**
+ * Thrown when the backend refuses a VPN config for an authorized-but-denied reason
+ * (free traffic exhausted / VIP expired / VIP required). This is a normal product
+ * outcome — the UI should prompt the user to open VIP, NOT report a sync failure.
+ */
+class XingsuiEntitlementException(val reason: String) : IllegalStateException(reason)
 
 object XingsuiManagedConfigProvider {
     suspend fun fetch(context: Context, nodeId: String? = null): FreshManagedConfig = withContext(Dispatchers.IO) {
@@ -46,6 +54,11 @@ object XingsuiManagedConfigProvider {
             if (httpError?.isUnauthorized == true) {
                 XingsuiSessionStore(context).clear()
             }
+            entitlementDenialReason(httpError)?.let { reason ->
+                // Denied by entitlement (e.g. free traffic exhausted): surface the real
+                // reason so the UI can prompt for VIP instead of "账户状态同步失败".
+                throw XingsuiEntitlementException(reason)
+            }
             XingsuiCrashReporter.recordEvent(
                 "managed-config-fetch-failed",
                 error.javaClass.simpleName.ifBlank { "unknown" },
@@ -53,6 +66,24 @@ object XingsuiManagedConfigProvider {
             throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
         }
     }
+
+    /**
+     * The VPN config endpoints reply `403 {"detail":"<reason>"}` when entitlement is
+     * denied (see backend `get_vpn_config` / `get_vpn_node_config`). Returns the reason
+     * only for known entitlement denials; other 403s (disabled node, protocol mismatch)
+     * stay generic sync failures.
+     */
+    private fun entitlementDenialReason(httpError: XingsuiHttpException?): String? {
+        if (httpError?.statusCode != 403) return null
+        val detail = runCatching { JSONObject(httpError.responseBody).optString("detail") }
+            .getOrNull()
+            ?.trim()
+            .orEmpty()
+        return detail.takeIf { it in ENTITLEMENT_DENIAL_REASONS }
+    }
+
+    private val ENTITLEMENT_DENIAL_REASONS =
+        setOf("free_traffic_exhausted", "vip_expired", "vip_required")
 
     private val NODE_ID_PATTERN = Regex("[A-Za-z0-9._-]{1,64}")
 }

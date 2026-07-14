@@ -350,7 +350,11 @@ class XingsuiHomeActivity : AppCompatActivity() {
             XingsuiCrashReporter.recordException("home-start-prepared", error)
             stopAndDeleteManagedTunnel()
             renderTunnelState(null)
-            showConnectionSyncFailure()
+            if (error is XingsuiEntitlementException) {
+                showEntitlementRequired(error.reason)
+            } else {
+                showConnectionSyncFailure()
+            }
         }
     }
 
@@ -771,6 +775,16 @@ class XingsuiHomeActivity : AppCompatActivity() {
         Snackbar.make(binding.root, R.string.xingsui_account_sync_failed, Snackbar.LENGTH_LONG).show()
     }
 
+    private fun showEntitlementRequired(reason: String) {
+        val messageRes = when (reason) {
+            REASON_FREE_TRAFFIC_EXHAUSTED -> R.string.xingsui_free_trial_exhausted
+            REASON_VIP_EXPIRED -> R.string.xingsui_vip_expired
+            else -> R.string.xingsui_vip_required_active
+        }
+        Snackbar.make(binding.root, messageRes, Snackbar.LENGTH_LONG).show()
+        openVipCenter()
+    }
+
     private fun startConnectingAnimation() {
         startPulse()
         if (spinAnimator?.isRunning == true) return
@@ -832,6 +846,8 @@ class XingsuiHomeActivity : AppCompatActivity() {
         private const val PROTOCOL_AMNEZIAWG = "amneziawg"
         private const val VIP_ACTIVE = "active"
         private const val VIP_EXPIRED = "expired"
+        private const val REASON_FREE_TRAFFIC_EXHAUSTED = "free_traffic_exhausted"
+        private const val REASON_VIP_EXPIRED = "vip_expired"
         private const val CONNECTION_OPERATION_TIMEOUT_MS = 30_000L
         private const val HANDSHAKE_TIMEOUT_MS = 25_000L
         private const val STATUS_POLL_INTERVAL_MS = 5_000L
