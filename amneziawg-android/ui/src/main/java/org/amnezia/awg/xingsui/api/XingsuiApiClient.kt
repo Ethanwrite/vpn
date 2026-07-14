@@ -359,11 +359,39 @@ class XingsuiApiClient(
         private const val CONNECT_TIMEOUT_MS = 5000
         private const val READ_TIMEOUT_MS = 7000
         private const val CANONICAL_API_BASE_URL = "https://xingsui.org"
+        // Equal, independent mirror on a different domain (same backend). Some mainland
+        // Wi-Fi DNS-poison / SNI-block the name "xingsui.org" (not the IP), which would
+        // otherwise break in-app login/authorize/connect even though the site is up.
+        private const val MIRROR_API_BASE_URL = "https://xingsuico.com"
 
         private fun buildApiBaseUrls(primaryBaseUrl: String): List<String> {
             val primary = primaryBaseUrl.trimEnd('/')
-            val candidates = mutableListOf(primary, CANONICAL_API_BASE_URL, "$CANONICAL_API_BASE_URL/api")
+            // Order matters: primary host, then the mirror host (so a blocked primary
+            // fails over to a different domain after one timeout, not two same-host
+            // attempts), then the legacy /api path variants on each. The sticky
+            // activeBaseUrl remembers whichever succeeds so later requests hit it first.
+            val candidates = mutableListOf(
+                primary,
+                MIRROR_API_BASE_URL,
+                "$CANONICAL_API_BASE_URL/api",
+                "$MIRROR_API_BASE_URL/api",
+            )
             return candidates.map { it.trimEnd('/') }.distinct()
+        }
+
+        /**
+         * Origin (scheme://host[:port]) of the last base URL that served a request, so
+         * browser links (website / recharge) and self-update downloads open on whichever
+         * domain is currently reachable — primary or mirror — instead of a hardcoded one.
+         * Falls back to the canonical domain before any request has succeeded.
+         */
+        fun activeWebOrigin(): String {
+            val base = activeBaseUrl ?: CANONICAL_API_BASE_URL
+            return runCatching {
+                val url = URL(base)
+                val port = if (url.port == -1 || url.port == url.defaultPort) "" else ":${url.port}"
+                "${url.protocol}://${url.host}$port"
+            }.getOrDefault(CANONICAL_API_BASE_URL)
         }
     }
 }

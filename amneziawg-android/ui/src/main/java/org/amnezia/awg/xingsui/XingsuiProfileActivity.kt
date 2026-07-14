@@ -45,7 +45,7 @@ class XingsuiProfileActivity : AppCompatActivity() {
         binding.profileVersionDetail.text = getString(R.string.xingsui_profile_update_hint, BuildConfig.VERSION_NAME)
 
         binding.profileBack.setOnClickListener { finish() }
-        binding.profileWebsite.setOnClickListener { openUri(WEBSITE_URL) }
+        binding.profileWebsite.setOnClickListener { openUri(XingsuiApiClient.activeWebOrigin()) }
         binding.profileInvite.setOnClickListener { copyInviteCode() }
         binding.profileUpdate.setOnClickListener { lifecycleScope.launch { checkUpdate() } }
         binding.profileLogout.setOnClickListener { logout() }
@@ -148,7 +148,9 @@ class XingsuiProfileActivity : AppCompatActivity() {
         return if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) {
             downloadUrl
         } else {
-            WEBSITE_URL + if (downloadUrl.startsWith("/")) downloadUrl else "/" + downloadUrl
+            // Prepend the currently-reachable origin so the update download works even
+            // when the primary domain is blocked and the app failed over to the mirror.
+            XingsuiApiClient.activeWebOrigin() + if (downloadUrl.startsWith("/")) downloadUrl else "/" + downloadUrl
         }
     }
 
@@ -181,7 +183,6 @@ class XingsuiProfileActivity : AppCompatActivity() {
             (cause as? XingsuiHttpException)?.isUnauthorized == true
 
     companion object {
-        private const val WEBSITE_URL = "https://xingsui.org"
         private const val VIP_ACTIVE = "active"
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     }

@@ -127,7 +127,8 @@ class XingsuiVipActivity : AppCompatActivity() {
     }
 
     private fun openWebsiteRecharge() {
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(WEBSITE_RECHARGE_URL)))
+        // Open recharge on whichever domain is currently reachable (primary or mirror).
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(XingsuiApiClient.activeWebOrigin() + RECHARGE_PATH)))
     }
 
     private fun renderInvitationSummary(summary: InvitationSummary) {
@@ -214,6 +215,6 @@ class XingsuiVipActivity : AppCompatActivity() {
         private const val MIN_ACCOUNT_LENGTH = 4
         private const val ALIPAY_ACCOUNT_TYPE = "alipay"
         private const val WITHDRAW_WECHAT_ID = "xinsuui"
-        private const val WEBSITE_RECHARGE_URL = "https://xingsui.org/vip"
+        private const val RECHARGE_PATH = "/vip"
     }
 }
