@@ -682,6 +682,13 @@ PAYMENT_QR = {
 EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 PASSWORD_ITERATIONS = 120_000
 FREE_TRAFFIC_QUOTA_BYTES = 60 * 1024 * 1024
+# Anti-abuse floor. Client-reported usage is untrusted (the same /usage/report call also
+# renews the lease), so a client reporting 0 bytes could otherwise ride the free tier
+# forever. For non-VIP users we charge at least this many bytes per second of connected
+# time, so free usage is bounded regardless of what the client claims. Honest clients
+# report far more than this and are unaffected. Default ~50 KB/s => 60MB lasts ~20 min
+# even if a client reports nothing. Set to 0 to disable (not recommended).
+FREE_TRAFFIC_MIN_BYTES_PER_SEC = max(0, int(os.getenv("FREE_TRAFFIC_MIN_BYTES_PER_SEC", str(50 * 1024))))
 ACCESS_TOKEN_TTL_SECONDS = max(300, int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "86400")))
 VPN_LEASE_TTL_SECONDS = min(3600, max(60, int(os.getenv("VPN_LEASE_TTL_SECONDS", "300"))))
 VPN_LEASE_SWEEP_SECONDS = max(10, int(os.getenv("VPN_LEASE_SWEEP_SECONDS", "30")))
@@ -2613,7 +2620,16 @@ def report_usage(
     if effective_vip_status(principal.user.vip_status, principal.user.vip_expired_at) != "active":
         rx_delta = max(0, int(payload.rx_bytes_delta))
         tx_delta = max(0, int(payload.tx_bytes_delta))
-        principal.user.free_traffic_used_bytes = int(principal.user.free_traffic_used_bytes or 0) + rx_delta + tx_delta
+        reported_delta = rx_delta + tx_delta
+        # Untrusted client report: charge at least a time-based floor for the interval
+        # since the previous report so a client that under-reports (or reports 0) still
+        # exhausts the free quota in bounded time instead of riding the free tier forever.
+        previous_report_at = current_expiry - timedelta(seconds=VPN_LEASE_TTL_SECONDS)
+        elapsed_seconds = max(0.0, min((now - previous_report_at).total_seconds(), float(VPN_LEASE_TTL_SECONDS)))
+        floor_delta = int(elapsed_seconds * FREE_TRAFFIC_MIN_BYTES_PER_SEC)
+        principal.user.free_traffic_used_bytes = (
+            int(principal.user.free_traffic_used_bytes or 0) + max(reported_delta, floor_delta)
+        )
     entitlement = build_vpn_entitlement(principal.user)
     if not entitlement.allowed:
         revoke_vpn_device(db, device)
