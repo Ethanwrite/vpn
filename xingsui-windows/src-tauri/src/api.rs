@@ -8,8 +8,8 @@ use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-const VERSION_CODE: &str = "5";
-const VERSION_NAME: &str = "1.0.21";
+const VERSION_CODE: &str = "6";
+const VERSION_NAME: &str = "1.0.22";
 
 /// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退：
 /// 主域名优先，xingsuico.com 为等价备用镜像（同一后端）。大陆部分 Wi-Fi 对主域名
@@ -173,9 +173,9 @@ impl ApiClient {
 /// 把后端授权失败原因码映射成用户可读文案；未知原因回退到通用同步失败提示。
 fn friendly_reason_message(detail: &str) -> String {
     match detail.trim() {
-        "free_traffic_exhausted" => "30MB 免费流量已用完，请开通 VIP 后继续使用".to_string(),
-        "vip_required" => "该节点需开通 VIP 后使用".to_string(),
-        "vip_expired" => "VIP 已过期，请续费后继续使用".to_string(),
+        "free_traffic_exhausted" => "免费体验流量已用完，请前往官网开通会员后继续使用".to_string(),
+        "vip_required" => "该线路为会员专属，请前往官网开通会员后使用".to_string(),
+        "vip_expired" => "会员已到期，请前往官网续费后继续使用".to_string(),
         _ => crate::error::CONNECTION_SYNC_ERROR.to_string(),
     }
 }
@@ -201,9 +201,9 @@ mod tests {
 
     #[test]
     fn maps_entitlement_reasons_to_friendly_text() {
-        assert!(friendly_reason_message("free_traffic_exhausted").contains("30MB"));
+        assert!(friendly_reason_message("free_traffic_exhausted").contains("官网"));
         assert!(friendly_reason_message("vip_expired").contains("续费"));
-        assert!(friendly_reason_message("vip_required").contains("VIP"));
+        assert!(friendly_reason_message("vip_required").contains("会员"));
         // 未知原因回退到通用同步失败提示
         assert_eq!(
             friendly_reason_message("something_else"),
