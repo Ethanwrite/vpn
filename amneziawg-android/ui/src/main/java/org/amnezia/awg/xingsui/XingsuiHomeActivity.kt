@@ -776,13 +776,112 @@ class XingsuiHomeActivity : AppCompatActivity() {
     }
 
     private fun showEntitlementRequired(reason: String) {
-        val messageRes = when (reason) {
-            REASON_FREE_TRAFFIC_EXHAUSTED -> R.string.xingsui_free_trial_exhausted
-            REASON_VIP_EXPIRED -> R.string.xingsui_vip_expired
-            else -> R.string.xingsui_vip_required_active
+        val (titleRes, bodyRes) = when (reason) {
+            REASON_FREE_TRAFFIC_EXHAUSTED ->
+                R.string.xingsui_paywall_free_title to R.string.xingsui_paywall_free_body
+            REASON_VIP_EXPIRED ->
+                R.string.xingsui_paywall_vip_expired_title to R.string.xingsui_paywall_vip_expired_body
+            else ->
+                R.string.xingsui_paywall_vip_required_title to R.string.xingsui_paywall_vip_required_body
         }
-        Snackbar.make(binding.root, messageRes, Snackbar.LENGTH_LONG).show()
-        openVipCenter()
+        showPaywallCard(titleRes, bodyRes)
+    }
+
+    /**
+     * 免费流量用尽 / 会员到期时的友好提示卡片。样式与节点选择底部卡片保持一致，
+     * 只提醒用户前往官网开通会员，**不再自动跳转 App 内充值页**。
+     */
+    private fun showPaywallCard(titleRes: Int, bodyRes: Int) {
+        val dialog = BottomSheetDialog(this)
+        val dp = resources.displayMetrics.density
+        val scroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            isFillViewport = true
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0xFF1B1829.toInt(), 0xFF0D0D16.toInt()),
+            ).apply {
+                cornerRadii = floatArrayOf(28 * dp, 28 * dp, 28 * dp, 28 * dp, 0f, 0f, 0f, 0f)
+                setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF343047.toInt())
+            }
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((22 * dp).toInt(), (10 * dp).toInt(), (22 * dp).toInt(), (26 * dp).toInt())
+        }
+        scroll.addView(root)
+
+        root.addView(View(this).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = 999f
+                setColor(0xFF545064.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams((42 * dp).toInt(), (4 * dp).toInt()).also {
+                it.gravity = Gravity.CENTER_HORIZONTAL
+                it.bottomMargin = (20 * dp).toInt()
+            }
+        })
+        root.addView(TextView(this).apply {
+            setText(titleRes)
+            setTextColor(0xFFF7F5FF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        root.addView(TextView(this).apply {
+            setText(bodyRes)
+            setTextColor(0xFFA7AEC2.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setLineSpacing(6 * dp, 1f)
+            setPadding(0, (10 * dp).toInt(), 0, (24 * dp).toInt())
+        })
+        root.addView(TextView(this).apply {
+            setText(R.string.xingsui_paywall_open_website)
+            gravity = Gravity.CENTER
+            setTextColor(0xFFFFFFFF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(0xFF8B5CF6.toInt(), 0xFF6D3FEA.toInt()),
+            ).apply { cornerRadius = 16 * dp }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (52 * dp).toInt(),
+            )
+            setOnClickListener {
+                dialog.dismiss()
+                openWebsite()
+            }
+        })
+        root.addView(TextView(this).apply {
+            setText(R.string.xingsui_paywall_dismiss)
+            gravity = Gravity.CENTER
+            setTextColor(0xFF9AA1B8.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (48 * dp).toInt(),
+            ).also { it.topMargin = (6 * dp).toInt() }
+            setOnClickListener { dialog.dismiss() }
+        })
+
+        dialog.setOnShowListener {
+            dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
+                sheet.setBackgroundColor(Color.TRANSPARENT)
+                sheet.elevation = 24 * dp
+                BottomSheetBehavior.from(sheet).state = BottomSheetBehavior.STATE_EXPANDED
+            }
+            dialog.window?.setDimAmount(0.72f)
+        }
+        dialog.setContentView(scroll)
+        dialog.show()
+    }
+
+    private fun openWebsite() {
+        val origin = XingsuiApiClient.activeWebOrigin()
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(origin))) }
+            .onFailure { Snackbar.make(binding.root, R.string.xingsui_api_unavailable, Snackbar.LENGTH_LONG).show() }
     }
 
     private fun startConnectingAnimation() {

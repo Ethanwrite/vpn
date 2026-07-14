@@ -209,8 +209,17 @@
     <string name="xingsui_withdraw_unavailable">Minimum withdrawal is ¥10</string>
     <string name="xingsui_vip_required_login">Please sign in to Xingsui before starting VPN</string>
     <string name="xingsui_vip_required_active">An active VIP subscription is required to connect.</string>
-    <string name="xingsui_free_trial_exhausted">Your 30MB free trial is used up. Upgrade to VIP to keep using the VPN.</string>
+    <string name="xingsui_free_trial_exhausted">Your 60MB free trial is used up. Upgrade to VIP to keep using the VPN.</string>
     <string name="xingsui_vip_expired">VIP has expired. Renew before starting VPN</string>
+    <!-- Free-traffic / membership prompt card (app-consistent bottom sheet; no jump to recharge page) -->
+    <string name="xingsui_paywall_free_title">Free data used up</string>
+    <string name="xingsui_paywall_free_body">Your free trial data is used up. Open VIP on our website to unlock every high-speed line with unlimited data and speed.</string>
+    <string name="xingsui_paywall_vip_expired_title">Membership expired</string>
+    <string name="xingsui_paywall_vip_expired_body">Your membership has expired. Renew on our website to keep enjoying all high-speed lines.</string>
+    <string name="xingsui_paywall_vip_required_title">Members-only line</string>
+    <string name="xingsui_paywall_vip_required_body">This line is for members only. Open VIP on our website to use every high-speed line.</string>
+    <string name="xingsui_paywall_open_website">Open website</string>
+    <string name="xingsui_paywall_dismiss">Got it</string>
     <string name="xingsui_vip_verify_failed">Unable to verify VIP status. Check network and backend status</string>
     <string name="xingsui_copy_invite">Copy invite code</string>
     <string name="xingsui_invite_copied">Invite code copied</string>
