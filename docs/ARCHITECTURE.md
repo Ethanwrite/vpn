@@ -2,7 +2,7 @@
 
 > 面向维护者与后续开发的权威参考。涵盖系统组成、完整业务流程、协议与抗封策略、
 > 部署方式、数据模型，以及**后续加需求时必须注意的事项**。
-> 凭证一律不写入本文，只注明存放位置。最后更新：2026-07-12。
+> 凭证一律不写入本文，只注明存放位置。最后更新：2026-07-14。
 
 ## 目录
 1. [概览](#1-概览)
@@ -23,8 +23,9 @@
 
 - **统一账号**：官网、Android、Windows 用同一邮箱/密码登录，账户、VIP、流量状态全部由控制面后端统一下发。
 - **两种协议**：Android 走 **AmneziaWG (awg)**；Windows 走 **VLESS + Reality + Vision**（内置 sing-box）。第三方客户端（Clash/mihomo）通过**订阅链接**导入 VLESS 节点。
-- **免费 + VIP**：新账号 30MB 免费体验流量；VIP 由管理员在后台手动确认订单后开通。
+- **免费 + VIP**：新账号 **60MB** 免费体验流量（**服务端按节点实测流量计费**，见 §4.2）；VIP 由管理员在后台手动确认订单后开通。
 - **节点动态下发**：客户端**不硬编码**节点，全部通过 API 获取，并领取**短期租约**（≤1 小时）。
+- **双域名抗封**：`xingsui.org` 与 `xingsuico.com` 均为完整官网/API 入口（互为镜像、不跳转）；客户端内置双域名故障转移（见 §5、§9）。
 
 仓库：`https://github.com/Ethanwrite/vpn`（分支 `main`）。
 
@@ -36,15 +37,15 @@
 |---|---|---|---|
 | 控制面后端 | Python / FastAPI + SQLAlchemy | `amneziawg-android/backend` | API + 官网 SPA + 管理后台 + 支付页，单一 FastAPI app |
 | 数据库 | PostgreSQL 16 | （容器） | 用户/订单/节点/设备/邀请/提现/订阅审计 |
-| 反向代理 | Caddy 2 | `deploy/control-plane/Caddyfile` | 自动 TLS，反代到 api（TCP 443；UDP 443 已让给大阪 awg） |
+| 反向代理 | Caddy 2 | `deploy/control-plane/Caddyfile` | 自动 TLS，反代到 api；`xingsui.org`+`xingsuico.com` 双域名完整镜像。TCP 443；HTTP/3 关闭、UDP 443 让给大阪 awg |
 | Android 客户端 | Kotlin / AmneziaWG | `amneziawg-android`（`ui/.../xingsui`） | awg 协议；一键连接=智能选节点 |
 | Windows 客户端 | Tauri (Rust) + React/TS | `xingsui-windows` | VLESS/Reality/Vision（sing-box + wintun） |
-| 边缘节点 Agent | Python | `deploy/edge-node/agent.py` | 通过 `awg set` / sing-box 动态增删 user/peer，上报心跳，管理租约 |
+| 边缘节点 Agent | Python | `deploy/edge-node/agent.py` | 通过 `awg set` / sing-box 动态增删 user/peer，上报心跳，管理租约；`POST /peer/usage` 返回每-peer 实测流量供服务端计费 |
 | 新加坡中转 | nftables + relay service | `deploy/relay` | 大阪→新加坡 UDP/TCP 中转落地 |
 
 **后端子模块**（`backend/app/`）：`main.py`（全部路由/鉴权中间件/节点调度/租约签发）、`site_page.py`（官网 SPA）、`payment_page.py`（支付页）、`admin_page.py`（管理后台）、`payment_config.py`（收款码/深链）、`node_service.py`（节点评分与配置渲染）、`db_models.py`/`database.py`（ORM）。
 
-**Agent 关键函数**：`add_peer/remove_peer`（awg）、`add_vless_user/remove_vless_user`（sing-box）、`register_lease`（本地租约，`expires_at`）、`reconcile_*`（清理不在租约表里的 user/peer）、`static_vless_uuids()`（保留订阅永久 user）。
+**Agent 关键函数**：`add_peer/remove_peer`（awg）、`add_vless_user/remove_vless_user`（sing-box）、`register_lease`（本地租约，`expires_at`）、`reconcile_*`（清理不在租约表里的 user/peer）、`static_vless_uuids()`（保留订阅永久 user）、`peer_usage()`（`wg show dump` 每-peer 实测 rx+tx，供后端计费）。
 
 ---
 
@@ -70,21 +71,25 @@
 `POST /auth/email/register|login` → 返回 `access_token`（Bearer）。客户端本地保存会话；会话在 DB `auth_sessions`，有独立过期时间。
 
 ### 4.2 免费流量 vs VIP（连接授权，核心规则）
-1. 新账号固定 **30MB** 免费流量（`FREE_TRAFFIC_QUOTA_BYTES`）。
+1. 新账号固定 **60MB** 免费流量（`FREE_TRAFFIC_QUOTA_BYTES`；2026-07-14 由 30→60MB，**仅对新注册生效**，老用户保留原配额）。
 2. 非 VIP 只要**剩余流量 > 0** 就允许连接（`reason=free_trial`）。
-3. 用完返回 `free_traffic_exhausted`；前端提示「30MB 免费流量已用完，请开通 VIP 后继续使用」。
+3. 用完返回 `free_traffic_exhausted`；客户端弹「免费流量已用完，前往官网开通会员」卡片（见 §9 客户端）。
 4. VIP 有效则**不扣**免费流量（`reason=vip_active`）；VIP 过期 `reason=vip_expired`。
 
-实现：`main.py::build_entitlement`。`/vpn/authorize`、`/vpn/config`、`/vpn/nodes/{id}/config`、`/usage/report` 均据此判定 `allowed`。两个客户端都以 `entitlement.allowed` 为准，**不再要求 `vip_status==active`**（历史上误改成 VIP-only 的 bug 已修）。
+实现：`main.py::build_vpn_entitlement`。`/vpn/authorize`、`/vpn/config`、`/vpn/nodes/{id}/config`、`/usage/report` 均据此判定 `allowed`。两个客户端都以 `entitlement.allowed` 为准，**不再要求 `vip_status==active`**。
+
+**流量计费必须服务端实测，切勿信任客户端自报（2026-07-14 修复重大漏洞）**：`/usage/report` 曾按客户端自报字节扣费、且同一调用负责续租，客户端报 `0` 即可保持租约不断、`used` 永远为 0 → **非 VIP 无限白嫖**。现改为：
+- **awg**：后端 `reconcile_node_usage()` 循环（默认 20s，`NODE_USAGE_SWEEP_SECONDS`）向各节点 Agent `POST /peer/usage` 拉取每-peer 实测累计流量，按 `vpn_devices.measured_bytes` 基线扣**真实增量**、用尽即撤销 peer。`/usage/report` 对 awg **不再扣费**（仅续租）。**VIP 永不计费；免费用户按真实字节计费，无速率/时长限制。**
+- **VLESS**：sing-box 暂无逐-user 统计，仍走"客户端自报 + 时间下限"兜底（`FREE_TRAFFIC_MIN_BYTES_PER_SEC`，默认 50KB/s，防自报 0 白嫖）；节点实测计费是待办。
 
 ### 4.3 VPN 连接
-**Android（awg）**：`GET /vpn/authorize`（查授权）→ 一键连接 `GET /vpn/config`（后端 `select_pool_node` 按权重/在线/负载选最优节点，Agent 远程签发 peer，返回带 **5 分钟租约**的 awg 配置）；手动选节点 `GET /vpn/nodes/{id}/config`。连接后周期 `POST /usage/report` 上报流量增量 → 扣减免费流量 + 续租；`allowed=false` 即断开。
+**Android（awg）**：`GET /vpn/authorize`（查授权）→ 一键连接 `GET /vpn/config`（后端 `select_pool_node` 按权重/在线/负载选最优节点，Agent 远程签发 peer，返回带 **5 分钟租约**的 awg 配置）；手动选节点 `GET /vpn/nodes/{id}/config`。连接后周期 `POST /usage/report` **续租**（awg 扣费改由服务端每 20s 拉节点实测流量，见 §4.2，此调用不再据自报扣费）；`allowed=false` 即断开。
 
 **Windows（VLESS）**：`GET /vpn/nodes/{id}/config`（仅 `protocol=vless` 节点）→ 后端 `provision_vless_device` 生成 uuid、调 Agent `agent_add_vless_user` 动态注册到 sing-box、返回 Reality 参数。客户端 sing-box 建链。校验在 `src-tauri/src/vless.rs`，续租在 `stats.rs`。
 
 ### 4.4 支付 → 开通 VIP
-1. 官网选套餐 → 跳转 `/payment?plan_id=...`。
-2. `/payment` 显示微信/支付宝深链按钮 + **收款码兜底**（`https://xingsui.org/pay/{wechat,alipay}.jpg`）。
+1. 官网选套餐 → 跳转 `/payment?plan_id=...`。当前套餐：**首月 ¥18 / 季度 ¥48 / 年度 ¥158**（`vip_plans` 表；改价需**同时**改 `main.py` seed 与生产 DB `UPDATE vip_plans`，另 `site_page.py` 有一份 JS 兜底价与文案）。
+2. `/payment` 显示微信/支付宝深链按钮 + **收款码兜底**（**站内相对路径** `/pay/{wechat,alipay}.jpg`，随当前域名加载，两个镜像域名均可用）。
 3. 点「我已完成支付」→ `POST /orders` → `POST /orders/{id}/paid` → 订单 `pending_confirm`，前端弹「订单已提交成功…」。
 4. 管理员 `POST /admin/orders/{id}/confirm` → 用户 VIP 激活（按套餐天数）。`reject` 亦可。
 
@@ -110,6 +115,8 @@
 - **flow = `xtls-rprx-vision`**，三处必须一致：sing-box 服务端每个 user、DB `params_json.VlessFlow`、订阅链接 `flow=`。Agent 发放动态 user 的 flow 由 `/etc/xingsui/agent.env` 的 `XS_VLESS_FLOW` 控制。
 - pbk/sid 是每台服务器的 Reality 密钥对，与 SNI 无关；**DB `VlessPublicKey/VlessShortId` 必须与 sing-box 实际密钥一致**（见 §9）。
 
+**双域名镜像 `xingsuico.com`（抗封冗余）**：与 `xingsui.org` 同一后端、完整镜像官网/API/下载/`/pay`，**不做互相跳转**（跳转到被封域名等于没修，冗余要求两域名各自独立可用）。两域名 DNS 都指向 212。**Reality SNI 仍固定 `xingsui.org`，不要把镜像域名设成 Reality `serverName`**。用途仅是网站/API 抗 DNS 污染/SNI 阻断的备用入口；若 `xingsui.org` 名称本身遭 SNI 阻断进而影响 VLESS，可服务端轮换 DB `VlessServerName`（无需重打包）。客户端 API 双域名故障转移见 §9。
+
 ---
 
 ## 6. 数据模型（关键表）
@@ -117,7 +124,7 @@
 - **users**：id、email、password_(salt/hash)、invite_code、`invited_by_user_id`（自引用）、`vip_status`/`vip_expired_at`、`cash_balance_cents`、`free_traffic_quota_bytes`/`_used_bytes`、`status`、`subscription_token_*`。
 - **vpn_nodes**：id、name、region、`protocol`(awg/vless/dual)、enabled、weight、`vip_only`、max_clients、endpoint、`agent_host`/`agent_port`、awg 字段(server_public_key/allowed_ips/dns/mtu/params_json)、VLESS 字段(在 params_json：VlessHost/VlessPort/VlessPublicKey/VlessShortId/VlessServerName/VlessFlow/VlessUUID)。
 - **vpn_node_health**：node_id、last_heartbeat_at、peer_count、cpu_load（节点在线/负载）。
-- **vpn_devices**：每个租约一行（user/node/protocol/lease_id/lease_expires_at/vless_uuid/status）。
+- **vpn_devices**：每个租约一行（user/node/protocol/lease_id/lease_expires_at/vless_uuid/status/**`measured_bytes`**=该 peer 上次节点实测累计 rx+tx，awg 计费基线，2026-07-14 新增，需 `ALTER TABLE` 手动迁移）。
 - **orders / vip_plans / promotion_activities**：下单与套餐。
 - **invitations / withdrawals**：邀请返现与提现。
 - **auth_sessions / subscription_audit_logs / node_request_nonces**：会话、订阅审计、Agent 防重放。
@@ -134,7 +141,8 @@
 scp app/*.py root@212.50.232.111:/opt/xingsui/backend/app/
 ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose build api && docker compose up -d api'
 ```
-仓库 `amneziawg-android/backend` 与服务器 `/opt/xingsui/backend` 需保持一致。纯 env 改动只需 `docker compose up -d api`。
+仓库 `amneziawg-android/backend` 与服务器 `/opt/xingsui/backend` 需保持一致。纯 env 改动只需 `docker compose up -d api`。**长时构建易被 SSH 会话截断**：可 `nohup docker compose build api >/tmp/b.log 2>&1 &` 后台跑再 `up -d api`。
+**表结构变更无 Alembic**：新增列须手动 `docker compose exec -T db psql -U <u> -d <d> -c "ALTER TABLE ... ADD COLUMN IF NOT EXISTS ..."`（`create_all` 不会改已存在表），且**先迁移再上新代码**。
 
 ### 7.2 Android（本地构建 + 签名 + 上传）
 ```bash
@@ -145,7 +153,15 @@ ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose 
 之后同步 `.env` 的 `APP_VERSION_CODE/NAME` 并重启 api，App 内更新检查才提示。
 
 ### 7.3 Windows（GitHub Actions 构建 + 脚本部署）
-推送 `xingsui-windows/**` 触发工作流 → 产出 NSIS/MSI artifact → 下载 → `scripts/upload-windows-installer.sh` 部署到 `/opt/xingsui/download/xingsui-windows-setup.exe`。当前 CI 工作流是 `windows-client.yml`（更严格的 `build.yml` 在 `backup/local-main-b0d584e` 分支，启用需带 `workflow` scope 的 token）。
+推送 `xingsui-windows/**` 触发工作流 → 产出 NSIS/MSI artifact → 下载 → `scripts/upload-windows-installer.sh` 部署到 `/opt/xingsui/download/xingsui-windows-setup.exe`。当前 CI 工作流是 `windows-client.yml`（更严格的 `build.yml` 在 `backup/local-main-b0d584e` 分支，启用需带 `workflow` scope 的 token）。版本改 `src-tauri/{tauri.conf.json,Cargo.toml,Cargo.lock}` 与 `api.rs` 的 `VERSION_*`。
+
+### 7.4 节点 Agent（手动 scp + 重启）
+Agent 代码部署到每个节点 `/opt/xingsui/agent.py`，systemd 服务 `xingsui-agent.service`：
+```bash
+scp deploy/edge-node/agent.py root@<节点>:/opt/xingsui/agent.py
+ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口，现有 peer 不掉
+```
+改 Agent（如新增 `/peer/usage`）须部署到**所有 awg 节点**（大阪 212 / 达拉斯 172.86.91.81 / 犹他 144.172.97.191 / 新加坡 61.13.236.140），否则漏部署的节点上免费用户不计费（见 §9）。部署前 `diff` 服务器现有 `agent.py` 与仓库版本确认一致。
 
 ---
 
@@ -163,8 +179,10 @@ ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose 
 
 ### 运维开关 / 一致性
 - **`ADMIN_WRITES_ENABLED`**：为非 `true` 时中间件拦截**所有**管理写操作（确认订单/授 VIP/删用户），返回 503「Admin writes are temporarily disabled during security review」。**管理员任何操作报 503 先查这个开关**（在生产 `.env`）。
-- **大阪 UDP 443 依赖**：①Caddy 关闭 HTTP/3（`docker-compose.yml` 不发布 `443:443/udp`）②awg0.conf 的 REDIRECT PostUp。从仓库重新部署 Caddy 或重装大阪节点后务必确认这两点未被还原，否则大阪失联。
-- **收款码域名**：`PAYMENT_WECHAT_QR_URL`/`PAYMENT_ALIPAY_QR_URL` 必须指向 `xingsui.org/pay/*.jpg`（`/pay/` 只在 xingsui.org 生效）。
+- **大阪 UDP 443 依赖**：①Caddy 关闭 HTTP/3（`docker-compose.yml` 不发布 `443:443/udp`，**且 Caddyfile 全局 `servers { protocols h1 h2 }`** 使其不再广播 `alt-svc h3`）②awg0.conf 的 REDIRECT PostUp。从仓库重新部署 Caddy 或重装大阪节点后务必确认这几点未被还原，否则大阪失联。
+- **双域名镜像 `xingsuico.com`**：Caddyfile 里 `xingsuico.com`(含 `www.`) 是与 `{$SITE_DOMAIN}` 完全一致的 `reverse_proxy api` 块（不是只转 `/api/*` 的旧兼容桩）。两域名**各自独立可用、不互相跳转**；`CORS_ALLOW_ORIGINS`、`SITE_DOMAIN` 需含两域名。改 Caddyfile 后 `caddy validate` 再 `reload`（就地 `cp`，勿 `mv`，绑定挂载认 inode）。
+- **收款码用相对路径**：`PAYMENT_WECHAT_QR_URL`/`PAYMENT_ALIPAY_QR_URL` 与 DB `payment_settings.qr_url` 一律用**站内相对** `/pay/*.jpg`（勿写死绝对域名，否则镜像页在主域名被封时二维码挂）；`/pay/` 由 API 提供，两域名都生效。
+- **免费流量按节点实测计费（勿退回自报）**：awg 计费依赖各节点 Agent 的 `/peer/usage` + 后端 `reconcile_node_usage()` 循环 + `vpn_devices.measured_bytes` 列。**所有 awg 节点 Agent 必须同步含 `/peer/usage`**（见 §7.4），漏部署的节点上 awg 免费用户**不计费也无 floor 兜底**。`measured_bytes` 列缺失会导致后端启动/查询报错——新库或重建库须确认已 `ALTER TABLE`。VLESS 仍靠 `FREE_TRAFFIC_MIN_BYTES_PER_SEC` 时间下限兜底。
 - **订阅节点文件权限**：`/opt/xingsui/download/subscription-links.txt` 必须能被 API 容器用户（`appuser` gid 999）读取，否则 `/sub` 返回 500。设为 `640 root:999`。**手动改该文件后重新 `chown root:999 && chmod 640`**。
 
 ### VLESS / Reality（最容易踩坑）
@@ -175,7 +193,8 @@ ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose 
 
 ### 客户端 vs 服务端
 - **绝大多数配置改动是服务端驱动、无需重新打包 App**：节点、SNI、flow、MTU、pbk/sid 都来自后端/DB，客户端下次连接自动生效。只有客户端 UI/逻辑（如提示文案、页面）改动才需重新构建（Android 本地打包、Windows 走 CI）。
-- **两端业务规则一致**：免费流量/VIP 判定以后端 `entitlement.allowed` 为准；客户端错误提示要按 `reason`（`free_traffic_exhausted`/`vip_expired`/`vip_required`）映射友好文案（Android 在 `XingsuiVipGate`，Windows 在 `api.rs::friendly_reason_message`）。
+- **两端业务规则一致**：免费流量/VIP 判定以后端 `entitlement.allowed` 为准；客户端错误提示按 `reason`（`free_traffic_exhausted`/`vip_expired`/`vip_required`）映射友好文案：**Android** 用尽时弹 `XingsuiHomeActivity.showPaywallCard`（与节点选择卡片同风格的底部卡片，提示前往官网开通，**不再自动跳 App 内充值页**）；连接期 403 原因由 `XingsuiManagedConfig` 的 `XingsuiEntitlementException` 透传。**Windows** 在 `api.rs::friendly_reason_message`（文案指向官网）。
+- **客户端双域名故障转移**：Android `XingsuiApiClient.buildApiBaseUrls`（含 `xingsuico.com`，sticky `activeBaseUrl`）+ `activeWebOrigin()`（官网/下载/充值走当前可达域名）；Windows `api.rs BASE_URLS` + sticky `preferred_base`。加/改镜像域名两端都要动、各自出新包。
 
 ### 其它
 - **GitHub token 无 `workflow` scope**：无法通过 API 改 `.github/workflows/`。
@@ -185,13 +204,13 @@ ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose 
 
 ---
 
-## 10. 当前已部署版本（2026-07-12）
+## 10. 当前已部署版本（2026-07-14）
 
 | 端 | 版本 | 状态 |
 |---|---|---|
-| 后端 | — | 免费流量规则、支付、删用户、订阅、VLESS(xingsui.org+Vision)、pbk/sid 修正均已上线 |
-| Android | `2.0.19 (29)` | 已签名上传官网；后端播报 29 |
-| Windows | `1.0.20` | CI 构建；含免费流量友好提示；4 个节点均可用 |
-| 节点 | 大阪 / 达拉斯 / 犹他 / 新加坡(经大阪中转) | VLESS 全部 xingsui.org SNI + Vision；awg MTU 1280 |
+| 后端 | — | 60MB 免费额度、**awg 节点实测计费**（修复自报 0 白嫖漏洞）、双域名镜像+相对收款码、套餐价 ¥18/¥48/¥158，均已上线 |
+| Android | `2.0.22 (32)` | 已签名上传官网；后端播报 32。含用尽卡片、`xingsuico.com` API 故障转移 |
+| Windows | `1.0.22` | CI 构建；含官网文案、`xingsuico.com` API 故障转移 |
+| 节点 | 大阪 / 达拉斯 / 犹他 / 新加坡(经大阪中转) | 4 节点 Agent 均含 `/peer/usage`；VLESS 全部 xingsui.org SNI + Vision；awg MTU 1280 |
 
-> 回归建议：非 VIP 真机走 30MB→用尽提示→下单→管理员确认→VIP；VIP 逐个切换 4 个节点确认可连；订阅导入 Clash 确认 4 节点 + 到期节点。
+> 回归建议：非 VIP 真机走 60MB→**真机跑满 60MB（节点实测）应被切断，客户端自报 0 也应被切**→用尽弹卡片→官网下单→管理员确认→VIP；VIP 逐个切 4 节点确认可连且 `used` **不增长**（不计费）；主域名被 DNS 污染/封锁时确认 `xingsuico.com` 可打开且 App 仍能登录/连接；订阅导入 Clash 确认 4 节点 + 到期节点。
