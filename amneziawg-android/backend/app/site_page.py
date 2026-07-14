@@ -639,7 +639,7 @@ SITE_HTML = """<!doctype html>
       <div class="sectionHead">
         <div>
           <h2>VIP 套餐</h2>
-          <p>不限流量、不限速，智能匹配稳定线路。首月限时 18 元，季度 38 元，年度 98 元，到账后自动同步官网与 App 会员状态。</p>
+          <p>不限流量、不限速，智能匹配稳定线路。首月限时 18 元，季度 48 元，年度 158 元，到账后自动同步官网与 App 会员状态。</p>
         </div>
         <span class="tag" id="vipCountdown">优惠加载中</span>
       </div>
@@ -1007,8 +1007,8 @@ SITE_HTML = """<!doctype html>
       if (!box) return;
       const plans = (state.plans.length ? state.plans : [
         { id: 'plan_month', name: '首月会员', duration_days: 30, original_price_cents: 2880, sale_price_cents: 1800 },
-        { id: 'plan_quarter', name: '季度会员', duration_days: 90, original_price_cents: 8640, sale_price_cents: 3800 },
-        { id: 'plan_year', name: '年度会员', duration_days: 365, original_price_cents: 34560, sale_price_cents: 9800 },
+        { id: 'plan_quarter', name: '季度会员', duration_days: 90, original_price_cents: 8640, sale_price_cents: 4800 },
+        { id: 'plan_year', name: '年度会员', duration_days: 365, original_price_cents: 34560, sale_price_cents: 15800 },
       ]).slice().sort((a, b) => {
         const order = { plan_month: 1, plan_quarter: 2, plan_year: 3 };
         return (order[a.id] || 99) - (order[b.id] || 99);

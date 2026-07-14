@@ -681,7 +681,7 @@ PAYMENT_QR = {
 }
 EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 PASSWORD_ITERATIONS = 120_000
-FREE_TRAFFIC_QUOTA_BYTES = 30 * 1024 * 1024
+FREE_TRAFFIC_QUOTA_BYTES = 60 * 1024 * 1024
 ACCESS_TOKEN_TTL_SECONDS = max(300, int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "86400")))
 VPN_LEASE_TTL_SECONDS = min(3600, max(60, int(os.getenv("VPN_LEASE_TTL_SECONDS", "300"))))
 VPN_LEASE_SWEEP_SECONDS = max(10, int(os.getenv("VPN_LEASE_SWEEP_SECONDS", "30")))
@@ -2102,14 +2102,14 @@ def seed_database() -> None:
                         name="季度会员",
                         duration_days=90,
                         original_price_cents=8640,
-                        sale_price_cents=3800,
+                        sale_price_cents=4800,
                     ),
                     VipPlanRow(
                         id="plan_year",
                         name="年度会员",
                         duration_days=365,
                         original_price_cents=34560,
-                        sale_price_cents=9800,
+                        sale_price_cents=15800,
                     ),
                 ]
             )
