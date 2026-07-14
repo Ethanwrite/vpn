@@ -69,12 +69,14 @@ async def lifespan(_: FastAPI):
     if env_flag("RESTORE_ACTIVE_PEERS_ON_START", False):
         restore_active_vpn_peers()
     cleanup_task = asyncio.create_task(vpn_lease_cleanup_loop())
+    usage_task = asyncio.create_task(node_usage_reconcile_loop())
     try:
         yield
     finally:
-        cleanup_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await cleanup_task
+        for task in (cleanup_task, usage_task):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 api_docs_enabled = os.getenv("ENABLE_API_DOCS", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -692,6 +694,9 @@ FREE_TRAFFIC_MIN_BYTES_PER_SEC = max(0, int(os.getenv("FREE_TRAFFIC_MIN_BYTES_PE
 ACCESS_TOKEN_TTL_SECONDS = max(300, int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "86400")))
 VPN_LEASE_TTL_SECONDS = min(3600, max(60, int(os.getenv("VPN_LEASE_TTL_SECONDS", "300"))))
 VPN_LEASE_SWEEP_SECONDS = max(10, int(os.getenv("VPN_LEASE_SWEEP_SECONDS", "30")))
+# How often the backend pulls authoritative per-peer usage from awg nodes to charge
+# free traffic by ACTUAL bytes forwarded (not client self-report). Shorter = tighter cutoff.
+NODE_USAGE_SWEEP_SECONDS = max(5, int(os.getenv("NODE_USAGE_SWEEP_SECONDS", "20")))
 SUPPORTED_VPN_PLATFORMS = {"android": "awg", "windows": "vless"}
 ONLINE_WINDOW_SECONDS = 5 * 60
 EXPIRING_SOON_DAYS = 7
@@ -1521,6 +1526,74 @@ async def vpn_lease_cleanup_loop() -> None:
             await asyncio.to_thread(sweep_expired_vpn_leases)
         except Exception:
             security_logger.error("VPN lease cleanup failed")
+
+
+def reconcile_node_usage() -> None:
+    """Charge free traffic by ACTUAL per-peer bytes measured on the awg nodes.
+
+    This is the authoritative, tamper-proof accounting: it ignores client self-reports
+    and charges exactly what each peer forwarded. VIP users are never charged; honest
+    free users are billed their real usage (no floor/no artificial cap), and a client
+    that under-reports (or reports 0) is still cut off at the real 60MB.
+    """
+    with SessionLocal() as db:
+        devices = db.scalars(
+            select(VpnDeviceRow)
+            .where(VpnDeviceRow.status == "active")
+            .where(VpnDeviceRow.protocol == "awg")
+        ).all()
+        if not devices:
+            return
+        by_node: dict[str, list[VpnDeviceRow]] = {}
+        for device in devices:
+            by_node.setdefault(device.node_id, []).append(device)
+        changed = False
+        for node_id, node_devices in by_node.items():
+            node = db.get(VpnNodeRow, node_id)
+            if node is None:
+                continue
+            try:
+                usage = node_service.agent_peer_usage(node, timeout=3.0)
+            except Exception:
+                # Agent unreachable this round; cumulative counters mean the usage is
+                # simply charged on a later successful poll — nothing is lost.
+                continue
+            for device in node_devices:
+                public_key = (device.client_public_key or "").strip()
+                current = usage.get(public_key)
+                if current is None:
+                    continue
+                baseline = int(device.measured_bytes or 0)
+                if current < baseline:
+                    # Peer counters reset (re-added); rebase without charging.
+                    device.measured_bytes = current
+                    changed = True
+                    continue
+                delta = current - baseline
+                if delta <= 0:
+                    continue
+                device.measured_bytes = current
+                changed = True
+                user = db.get(UserRow, device.user_id)
+                if user is None:
+                    continue
+                if effective_vip_status(user.vip_status, user.vip_expired_at) == "active":
+                    continue
+                ensure_free_traffic_quota(user)
+                user.free_traffic_used_bytes = int(user.free_traffic_used_bytes or 0) + delta
+                if not build_vpn_entitlement(user).allowed:
+                    revoke_vpn_device(db, device)
+        if changed:
+            db.commit()
+
+
+async def node_usage_reconcile_loop() -> None:
+    while True:
+        await asyncio.sleep(NODE_USAGE_SWEEP_SECONDS)
+        try:
+            await asyncio.to_thread(reconcile_node_usage)
+        except Exception:
+            security_logger.error("Node usage reconciliation failed")
 
 
 def user_is_vip(user: UserRow) -> bool:
@@ -2618,18 +2691,24 @@ def report_usage(
         raise HTTPException(status_code=503, detail="vpn_node_unavailable")
     ensure_free_traffic_quota(principal.user)
     if effective_vip_status(principal.user.vip_status, principal.user.vip_expired_at) != "active":
-        rx_delta = max(0, int(payload.rx_bytes_delta))
-        tx_delta = max(0, int(payload.tx_bytes_delta))
-        reported_delta = rx_delta + tx_delta
-        # Untrusted client report: charge at least a time-based floor for the interval
-        # since the previous report so a client that under-reports (or reports 0) still
-        # exhausts the free quota in bounded time instead of riding the free tier forever.
-        previous_report_at = current_expiry - timedelta(seconds=VPN_LEASE_TTL_SECONDS)
-        elapsed_seconds = max(0.0, min((now - previous_report_at).total_seconds(), float(VPN_LEASE_TTL_SECONDS)))
-        floor_delta = int(elapsed_seconds * FREE_TRAFFIC_MIN_BYTES_PER_SEC)
-        principal.user.free_traffic_used_bytes = (
-            int(principal.user.free_traffic_used_bytes or 0) + max(reported_delta, floor_delta)
-        )
+        if principal.protocol == "awg":
+            # awg free usage is charged authoritatively from node-measured bytes by
+            # reconcile_node_usage(); the client-reported bytes here are untrusted and NOT
+            # charged, so honest free users are billed their exact real usage — no floor,
+            # no artificial speed/time cap.
+            pass
+        else:
+            # VLESS is not node-measured yet: fall back to the client report with a time
+            # floor so it cannot ride the free tier by under-reporting.
+            rx_delta = max(0, int(payload.rx_bytes_delta))
+            tx_delta = max(0, int(payload.tx_bytes_delta))
+            reported_delta = rx_delta + tx_delta
+            previous_report_at = current_expiry - timedelta(seconds=VPN_LEASE_TTL_SECONDS)
+            elapsed_seconds = max(0.0, min((now - previous_report_at).total_seconds(), float(VPN_LEASE_TTL_SECONDS)))
+            floor_delta = int(elapsed_seconds * FREE_TRAFFIC_MIN_BYTES_PER_SEC)
+            principal.user.free_traffic_used_bytes = (
+                int(principal.user.free_traffic_used_bytes or 0) + max(reported_delta, floor_delta)
+            )
     entitlement = build_vpn_entitlement(principal.user)
     if not entitlement.allowed:
         revoke_vpn_device(db, device)

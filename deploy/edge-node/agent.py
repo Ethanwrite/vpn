@@ -465,6 +465,31 @@ def collect_status() -> dict[str, float]:
     }
 
 
+def peer_usage() -> dict[str, int]:
+    """Cumulative rx+tx bytes per awg peer public key, read from the live interface.
+
+    This is the authoritative, tamper-proof usage source: it reflects bytes actually
+    forwarded for each peer, independent of any client self-report.
+    """
+    usage: dict[str, int] = {}
+    try:
+        dump = run([wg_tool(), "show", iface(), "dump"])
+        for line in dump.splitlines()[1:]:  # first line describes the interface, not a peer
+            columns = line.split("\t")
+            if len(columns) < 7:
+                continue
+            public_key = columns[0].strip()
+            if not public_key:
+                continue
+            try:
+                usage[public_key] = int(columns[5] or 0) + int(columns[6] or 0)
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return usage
+
+
 def mem_used_percent() -> float:
     try:
         info: dict[str, int] = {}
@@ -576,6 +601,10 @@ class Handler(BaseHTTPRequestHandler):
                     remove_peer(public_key)
                     remove_lease_by_identity("awg", public_key)
                 self._send(200, {"status": "removed"})
+            elif path == "/peer/usage":
+                # Read-only: authoritative per-peer transfer for server-side free-quota
+                # enforcement. No lease lock needed (wg show does not mutate state).
+                self._send(200, {"peers": peer_usage()})
             elif path == "/vless/add":
                 user_uuid = validate_uuid(payload.get("uuid"))
                 lease_id = validate_lease_id(payload.get("lease_id"))

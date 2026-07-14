@@ -168,6 +168,9 @@ class VpnDeviceRow(Base):
     client_address: Mapped[str] = mapped_column(String(64), index=True)
     config_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(24), default="active", index=True)
+    # Last node-measured cumulative rx+tx bytes for this peer (authoritative free-quota
+    # accounting baseline). Persisted so restarts never double-count or lose usage.
+    measured_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

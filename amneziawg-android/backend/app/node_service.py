@@ -517,6 +517,20 @@ def agent_remove_peer(node: Any, public_key: str, *, timeout: float | None = Non
     return agent_request(node, "/peer/remove", {"public_key": public_key}, timeout=timeout)
 
 
+def agent_peer_usage(node: Any, *, timeout: float | None = None) -> dict[str, int]:
+    """Authoritative per-peer cumulative rx+tx bytes (by public key) from the node."""
+    result = agent_request(node, "/peer/usage", {}, timeout=timeout)
+    peers = result.get("peers") if isinstance(result, dict) else None
+    usage: dict[str, int] = {}
+    if isinstance(peers, dict):
+        for public_key, total in peers.items():
+            try:
+                usage[str(public_key)] = max(0, int(total))
+            except (TypeError, ValueError):
+                continue
+    return usage
+
+
 def agent_add_vless_user(
     node: Any,
     user_uuid: str,
