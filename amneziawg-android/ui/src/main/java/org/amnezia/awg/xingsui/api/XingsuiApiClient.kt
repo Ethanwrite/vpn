@@ -95,8 +95,12 @@ class XingsuiApiClient(
         JSONObject(request("GET", "/app/version?version_code=$currentVersionCode")).toAppVersionInfo()
     }
 
-    suspend fun getDefaultVpnConfig(rotate: Boolean = false): VpnNodeConfig = withContext(Dispatchers.IO) {
-        val path = if (rotate) "/vpn/config?rotate=true" else "/vpn/config"
+    suspend fun getDefaultVpnConfig(rotate: Boolean = false, excludeNodeId: String? = null): VpnNodeConfig = withContext(Dispatchers.IO) {
+        val params = buildList {
+            if (rotate) add("rotate=true")
+            excludeNodeId?.takeIf { NODE_ID_QUERY_PATTERN.matches(it) }?.let { add("exclude_node=$it") }
+        }
+        val path = if (params.isEmpty()) "/vpn/config" else "/vpn/config?${params.joinToString("&")}"
         JSONObject(request("GET", path, allowFailover = false)).toVpnNodeConfig()
     }
 
@@ -356,6 +360,7 @@ class XingsuiApiClient(
         @Volatile
         private var activeBaseUrl: String? = null
 
+        private val NODE_ID_QUERY_PATTERN = Regex("[A-Za-z0-9._-]{1,64}")
         private const val CONNECT_TIMEOUT_MS = 5000
         private const val READ_TIMEOUT_MS = 7000
         private const val CANONICAL_API_BASE_URL = "https://xingsui.org"

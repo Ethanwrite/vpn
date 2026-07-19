@@ -23,10 +23,23 @@ class XingsuiManagedConfigValidatorTest {
     }
 
     @Test
-    fun rejectsFreeTrialEntitlement() {
-        val freeTrial = validEntitlement().copy(vipStatus = "inactive", vipExpiredAt = null)
+    fun acceptsFreeTrialEntitlement() {
+        // 2026-07-14 业务规则：以 entitlement.allowed 为准，免费试用（非 VIP）也放行。
+        val freeTrial = validEntitlement().copy(
+            reason = "free_trial",
+            vipStatus = "inactive",
+            vipExpiredAt = null,
+            freeTrafficQuotaBytes = 62_914_560,
+            freeTrafficRemainingBytes = 62_914_560,
+        )
+        XingsuiManagedConfigValidator.validate(validResponse().copy(entitlement = freeTrial), now)
+    }
+
+    @Test
+    fun rejectsDeniedEntitlement() {
+        val denied = validEntitlement().copy(allowed = false, reason = "free_traffic_exhausted")
         assertThrows(IllegalArgumentException::class.java) {
-            XingsuiManagedConfigValidator.validate(validResponse().copy(entitlement = freeTrial), now)
+            XingsuiManagedConfigValidator.validate(validResponse().copy(entitlement = denied), now)
         }
     }
 

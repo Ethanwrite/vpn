@@ -2,7 +2,7 @@
 
 > 面向维护者与后续开发的权威参考。涵盖系统组成、完整业务流程、协议与抗封策略、
 > 部署方式、数据模型，以及**后续加需求时必须注意的事项**。
-> 凭证一律不写入本文，只注明存放位置。最后更新：2026-07-14。
+> 凭证一律不写入本文，只注明存放位置。最后更新：2026-07-18。
 
 ## 目录
 1. [概览](#1-概览)
@@ -53,15 +53,18 @@
 
 | 主机 | 角色 | 关键监听 |
 |---|---|---|
-| `212.50.232.111` | **主服务器**：控制面（Postgres+API+Caddy）、大阪 awg0、大阪 VLESS(8443)、xingsui-agent、新加坡 VLESS 中转入口(10444)、awg 心跳汇聚 | TCP 443(Caddy)、TCP 8443(大阪 VLESS)、UDP 443→51820(大阪 awg REDIRECT)、TCP 10444(→SG 中转) |
-| `172.86.91.81` | 美国达拉斯边缘节点（awg + VLESS 8443） | 443、8443 |
-| `144.172.97.191` | 美国犹他边缘节点（awg + VLESS 8443） | 443、8443 |
-| `61.13.236.140` | 新加坡节点（VLESS 10443，经主服务器中转；SSH 端口 18827） | 10443 |
+| `64.90.24.84` | **控制面服务器**（2026-07-15 迁移）：Postgres+API+Caddy，纯 API 不做节点；两域名 DNS 均指向此机 | TCP 80/443(Caddy) |
+| `64.83.40.66` | **日本节点**（node-japan-02，2026-07-16 新增；user 端显示名 **"大阪 CN2 优化线路"**，接替已下线的 212）：awg(UDP 443) + VLESS(8443) + 承载新加坡中转。awg0=10.70.0.1/24，Ubuntu 22.04 需装 HWE 6.8 内核 amneziawg DKMS 才编得过（老 5.15 内核缺 timer_delete） | 443(awg)、8443(VLESS)、51823→SG、10444→SG、51821(agent) |
+| `172.86.91.81` | 美国达拉斯边缘节点（awg + VLESS 8443；显示名"星隧高速线路"） | 443、8443 |
+| `144.172.97.191` | 美国犹他边缘节点（awg + VLESS 8443；显示名"星隧高速线路"） | 443、8443 |
+| `61.13.236.140` | 新加坡节点（VLESS 10443/awg 51820，经日本节点中转；SSH 端口 18827） | 10443、51820 |
+| ~~`212.50.232.111`~~ | **已下线**（2026-07-17，带宽耗尽被机房断网）。原主服务器/大阪节点，控制面与新加坡中转此前均已迁走，节点已从 DB 池删除 | — |
 
 **端口策略（抗封关键）**：国内移动网络常封高位 UDP 端口，能稳定连通的都走 **443** 或伪装良好的 Reality。
-- 大阪 awg：awg0 实际听 51820，主服务器 nftables `REDIRECT udp/443→51820`（写在 `/etc/amnezia/amneziawg/awg0.conf` PostUp/PostDown），并**关闭了 Caddy HTTP/3** 腾出 UDP 443。
-- VLESS：8443 TCP（新加坡经主服务器 10444 中转到 10443）。
-- **新加坡只能经大阪（主服务器）中转连接**：客户端连 `212.50.232.111:10444`，主服务器转发到 `61.13.236.140:10443`。
+- 边缘节点 awg 直接监听 UDP 443（无 Caddy 占用，不用 REDIRECT）；日本节点同此。
+- VLESS：8443 TCP（新加坡经日本节点 10444 中转到 10443）。
+- ⚠️ **新加坡 awg 入口是高位 UDP 51823（日本中转），对移动网络不友好，禁止设为节点池最高权重**。2026-07-17 大阪 212 下线后新加坡（权重 180）曾自动顶为一键连接默认节点，移动网络用户握手成功但数据流几十秒内被运营商掐断 → App 隧道内 `/usage/report` 超时 → 连接约 1 分钟被客户端自动断开（多名用户反馈）。2026-07-18 修复：japan-02 权重 50→220（继承原大阪，UDP 443 入口），新加坡 180→60（保留手动选择与兜底）。
+- **新加坡经日本节点中转连接**（2026-07-16 从 212 迁至 64.83.40.66，212 下线后为唯一入口）：客户端连 `64.83.40.66:10444`(VLESS)/awg 双入口 `64.83.40.66:4500`（**首选**，IPsec NAT-T 端口、移动网络为 VoWiFi 普遍放行，2026-07-19 加入并抓包验证）与 `:51823`（legacy，兼容存量配置），均中转到 `61.13.236.140:10443`/`:51820`。中转 nft 表 `xingsui_singapore_relay`（systemd `xingsui-singapore-relay.service`），SG 侧 ufw 放行中转机 IP。DB `vpn_nodes.endpoint` 应指向 4500 入口。
 
 ---
 
@@ -83,7 +86,7 @@
 - **VLESS**：sing-box 暂无逐-user 统计，仍走"客户端自报 + 时间下限"兜底（`FREE_TRAFFIC_MIN_BYTES_PER_SEC`，默认 50KB/s，防自报 0 白嫖）；节点实测计费是待办。
 
 ### 4.3 VPN 连接
-**Android（awg）**：`GET /vpn/authorize`（查授权）→ 一键连接 `GET /vpn/config`（后端 `select_pool_node` 按权重/在线/负载选最优节点，Agent 远程签发 peer，返回带 **5 分钟租约**的 awg 配置）；手动选节点 `GET /vpn/nodes/{id}/config`。连接后周期 `POST /usage/report` **续租**（awg 扣费改由服务端每 20s 拉节点实测流量，见 §4.2，此调用不再据自报扣费）；`allowed=false` 即断开。
+**Android（awg）**：`GET /vpn/authorize`（查授权）→ 一键连接 `GET /vpn/config`（后端 `select_pool_node` 按权重/在线/负载选最优节点，Agent 远程签发 peer，返回带 **5 分钟租约**的 awg 配置；支持 `?exclude_node=<id>` 供客户端死链换节点重连，排除后池空则忽略排除，2026-07-19 加入）；手动选节点 `GET /vpn/nodes/{id}/config`。连接后周期 `POST /usage/report` **续租**（awg 扣费改由服务端每 20s 拉节点实测流量，见 §4.2，此调用不再据自报扣费）；`allowed=false` 即断开。客户端 2.0.23 起 App 自身排除出隧道（`ExcludedApplications` 客户端注入），上报/续租不走隧道内。
 
 **Windows（VLESS）**：`GET /vpn/nodes/{id}/config`（仅 `protocol=vless` 节点）→ 后端 `provision_vless_device` 生成 uuid、调 Agent `agent_add_vless_user` 动态注册到 sing-box、返回 Reality 参数。客户端 sing-box 建链。校验在 `src-tauri/src/vless.rs`，续租在 `stats.rs`。
 
@@ -96,11 +99,16 @@
 ### 4.5 订阅链接（VIP，供第三方客户端）
 - VIP 在用户中心「导出订阅链接」→ `GET /user/subscription-link` → 返回 `https://xingsui.org/api/sub?token=...`。
 - Token 为 **HMAC-SHA256** 签名（`user_id:version`，不可枚举）；**限频** 5次/60s（重置 1次/10min）；审计日志对 token **脱敏**；全程 **HTTPS**。
-- 第三方拉取 `GET /sub?token=...` → 返回 Clash YAML（节点来自 `subscription-links.txt`）。YAML 首个节点是「⏳ 会员到期 …」信息节点，让用户在客户端节点列表直接看到到期时间。
-- 非 VIP 点导出 → 友好提示「开通 VIP 后即可导出订阅链接」；`/sub` 对无效 token 返回 401，非 VIP 返回对应 code。泄露可「重置」（`POST /user/subscription-link/reset`，version+1，旧链接立即失效）。
+- 第三方拉取 `GET /sub?token=...` → 返回 Clash YAML。YAML 首个节点是「⏳ 会员到期 …」信息节点，让用户在客户端节点列表直接看到到期时间。
+- **每用户独立 UUID（2026-07-16 改造，取代共享静态 UUID）**：`/sub` 渲染时 `provision_subscription_credentials` 为该用户在每个可用 VLESS 节点 get-or-create 一个**专属 UUID**（`subscription_credentials` 表，每 user×node 一行），经 Agent `POST /vless/subscription/add` 注册到节点，**绑定 VIP 到期时间**（`expires_at`，节点 Agent 侧到期自动撤销，`MAX_SUBSCRIPTION_SECONDS`=400天）。每个 UUID 用 `name=u-{user_id}` 标记。**重置**（`/user/subscription-link/reset`）会先 `revoke_subscription_credentials` 逐节点 `POST /vless/subscription/remove` 撤销旧 UUID 再 version+1 → **旧配置（含已复制/泄漏的）立即失效**（旧共享静态 UUID 时代重置无效，因静态 UUID 永久存活）。
+- **按 UUID 计量（源 IP 审计）**：XTLS-vision 握手后 splice 到内核，sing-box 的 v2ray_api（本二进制未编译）/clash_api 都拿不到逐-user 字节。改用**节点 sing-box `info` 日志**：每条有效连接打印 `[u-{user_id}] inbound connection to ...` 与源 IP，Agent `/vless/usage` 按 UUID 聚合**不同源 IP 数/连接数**，后端 `audit_subscription_usage()` 循环（`SUBSCRIPTION_AUDIT_SWEEP_SECONDS`，默认 300s）拉取并写入 `subscription_credentials.last_distinct_source_ips` 及**当日峰值** `daily_peak_source_ips`，超 `SUBSCRIPTION_SHARING_ALERT_IPS`（默认 5）告警——**一个 UUID 多源 IP = 共享/泄漏信号**。字节级配额对不计费的 VIP 无意义，故不做。
+- **共享自动撤销**（`enforce_subscription_sharing_revocation`）：某用户单节点源 IP 峰值 ≥ `SUBSCRIPTION_REVOKE_SOURCE_IPS`（默认 10，远高于告警 5）**连续 2 次审计**（strike 防抖，回落即清零）→ 自动 `revoke_subscription_credentials`+`reset_subscription_token`（version+1 杀旧链接）+ 写 `auto_revoke_share` 审计日志。开关 `SUBSCRIPTION_AUTO_REVOKE_ENABLED`（默认 on）。
+- **发放容错**：`provision_subscription_credentials` 遍历节点时单个节点 Agent 不可达（如带宽耗尽）会**跳过该节点**、用其余节点照常出配置，不再整单 503（212 下线时验证）。
+- 非 VIP 点导出 → 友好提示「开通 VIP 后即可导出订阅链接」；`/sub` 对无效 token 返回 401，非 VIP 返回对应 code。**撤销 VIP（`revoke-vip`）与删除用户（`DELETE /admin/users/{id}`）均会撤销其节点侧订阅 UUID。**
 
 ### 4.6 管理后台
-`/admin`（`ADMIN_SESSION` cookie：`Secure`+`SameSite=strict`+`path=/admin`）。功能：概览、订单确认/拒绝、授/撤 VIP、**删除用户**（`DELETE /admin/users/{id}`，级联清理订单/设备/邀请/提现/会话/审计并撤销节点 peer）、节点增删改、收款码配置、促销、财务提现。
+`/admin`（`ADMIN_SESSION` cookie：`Secure`+`SameSite=strict`+`path=/admin`）。功能：概览、订单确认/拒绝、授/撤 VIP、**删除用户**（`DELETE /admin/users/{id}`，级联清理订单/设备/邀请/提现/会话/审计/**订阅凭证**并撤销节点 peer 与订阅 UUID）、节点增删改、收款码配置、促销、财务提现。
+用户列表含 **「订阅用量」列**：显示每用户当日订阅源 IP 峰值（`subscription_source_ips_today`=各节点 `daily_peak_source_ips` 的 max），≥5 标红「疑似共享」——供人工识别泄漏/共享（自动撤销见 §4.5）。
 所有写操作额外受 **`ADMIN_WRITES_ENABLED`** 开关控制（见 §9）。
 
 ---
@@ -115,21 +123,22 @@
 - **flow = `xtls-rprx-vision`**，三处必须一致：sing-box 服务端每个 user、DB `params_json.VlessFlow`、订阅链接 `flow=`。Agent 发放动态 user 的 flow 由 `/etc/xingsui/agent.env` 的 `XS_VLESS_FLOW` 控制。
 - pbk/sid 是每台服务器的 Reality 密钥对，与 SNI 无关；**DB `VlessPublicKey/VlessShortId` 必须与 sing-box 实际密钥一致**（见 §9）。
 
-**双域名镜像 `xingsuico.com`（抗封冗余）**：与 `xingsui.org` 同一后端、完整镜像官网/API/下载/`/pay`，**不做互相跳转**（跳转到被封域名等于没修，冗余要求两域名各自独立可用）。两域名 DNS 都指向 212。**Reality SNI 仍固定 `xingsui.org`，不要把镜像域名设成 Reality `serverName`**。用途仅是网站/API 抗 DNS 污染/SNI 阻断的备用入口；若 `xingsui.org` 名称本身遭 SNI 阻断进而影响 VLESS，可服务端轮换 DB `VlessServerName`（无需重打包）。客户端 API 双域名故障转移见 §9。
+**双域名镜像 `xingsuico.com`（抗封冗余）**：与 `xingsui.org` 同一后端、完整镜像官网/API/下载/`/pay`，**不做互相跳转**（跳转到被封域名等于没修，冗余要求两域名各自独立可用）。两域名 DNS 都指向 212。**Reality SNI 仍固定 `xingsui.org`，不要把镜像域名设成 Reality `serverName`**。用途仅是网站/API 抗 DNS 污染/SNI 阻断的备用入口；若 `xingsui.org` 名称本身遭 SNI 阻断进而影响 VLESS，可服务端轮换 DB `VlessServerName`（无需重打包）。客户端 API 双域名故障转移见 §9。（**两域名 DNS 现均指向控制面 64.90.24.84**，2026-07-15 迁移后。）
 
 ---
 
 ## 6. 数据模型（关键表）
 
-- **users**：id、email、password_(salt/hash)、invite_code、`invited_by_user_id`（自引用）、`vip_status`/`vip_expired_at`、`cash_balance_cents`、`free_traffic_quota_bytes`/`_used_bytes`、`status`、`subscription_token_*`。
+- **users**：id、email、password_(salt/hash)、invite_code、`invited_by_user_id`（自引用）、`vip_status`/`vip_expired_at`、`cash_balance_cents`、`free_traffic_quota_bytes`/`_used_bytes`、`status`、`subscription_token_*`。除 ORM 的 `ix_users_email` 唯一索引外，另有**手工加的 `ix_users_email_lower`（lower(email) 唯一）**防大小写变体重复注册——`create_all` 不会创建它，重建库需手动补。
 - **vpn_nodes**：id、name、region、`protocol`(awg/vless/dual)、enabled、weight、`vip_only`、max_clients、endpoint、`agent_host`/`agent_port`、awg 字段(server_public_key/allowed_ips/dns/mtu/params_json)、VLESS 字段(在 params_json：VlessHost/VlessPort/VlessPublicKey/VlessShortId/VlessServerName/VlessFlow/VlessUUID)。
 - **vpn_node_health**：node_id、last_heartbeat_at、peer_count、cpu_load（节点在线/负载）。
 - **vpn_devices**：每个租约一行（user/node/protocol/lease_id/lease_expires_at/vless_uuid/status/**`measured_bytes`**=该 peer 上次节点实测累计 rx+tx，awg 计费基线，2026-07-14 新增，需 `ALTER TABLE` 手动迁移）。
+- **subscription_credentials**（2026-07-16 新增，订阅每用户独立 UUID）：每 user×node 一行（唯一约束 `uq_subscription_user_node`）：`vless_uuid`、`user_name`(=u-{user_id})、`token_version`、`expires_at`(=VIP 到期)、`last_distinct_source_ips`/`last_audit_at`、`daily_peak_source_ips`/`daily_peak_day`（当日源 IP 峰值，管理后台用量列）。**新表由 `create_all` 自动建；后加的 daily_peak_* 两列须手动 `ALTER TABLE ADD COLUMN IF NOT EXISTS`。**
 - **orders / vip_plans / promotion_activities**：下单与套餐。
 - **invitations / withdrawals**：邀请返现与提现。
-- **auth_sessions / subscription_audit_logs / node_request_nonces**：会话、订阅审计、Agent 防重放。
+- **auth_sessions / subscription_audit_logs / node_request_nonces**：会话、订阅审计（含 `auto_revoke_share`）、Agent 防重放。**设备登录限制**：`MAX_ACTIVE_AUTH_SESSIONS`（默认 2）——登录时 `prune_user_sessions` 只保留最新 2 个 active 会话（手机+电脑），第 3 次登录踢最老。**注意：订阅链接用 HMAC token 认证、不占会话，不受此限制**（可无限第三方客户端同时用；靠订阅源 IP 审计+自动撤销兜底，见 §4.5）。
 
-引用 `users.id` 的表（删用户需按序清理）：auth_sessions、orders、vpn_devices、withdrawals、subscription_audit_logs、invitations(inviter/invitee)、users.invited_by_user_id。
+引用 `users.id` 的表（删用户需按序清理）：auth_sessions、orders、vpn_devices、**subscription_credentials**、withdrawals、subscription_audit_logs、invitations(inviter/invitee)、users.invited_by_user_id。
 
 ---
 
@@ -138,8 +147,8 @@
 ### 7.1 后端（直接同步 + 重建镜像，**不走 CI**）
 镜像 `xingsui-backend:latest` 从 `/opt/xingsui/backend` 构建（代码打进镜像，非挂载）：
 ```bash
-scp app/*.py root@212.50.232.111:/opt/xingsui/backend/app/
-ssh root@212.50.232.111 'cd /opt/xingsui/deploy/control-plane && docker compose build api && docker compose up -d api'
+scp app/*.py root@64.90.24.84:/opt/xingsui/backend/app/
+ssh root@64.90.24.84 'cd /opt/xingsui/deploy/control-plane && docker compose build api && docker compose up -d api'
 ```
 仓库 `amneziawg-android/backend` 与服务器 `/opt/xingsui/backend` 需保持一致。纯 env 改动只需 `docker compose up -d api`。**长时构建易被 SSH 会话截断**：可 `nohup docker compose build api >/tmp/b.log 2>&1 &` 后台跑再 `up -d api`。
 **表结构变更无 Alembic**：新增列须手动 `docker compose exec -T db psql -U <u> -d <d> -c "ALTER TABLE ... ADD COLUMN IF NOT EXISTS ..."`（`create_all` 不会改已存在表），且**先迁移再上新代码**。
@@ -161,7 +170,7 @@ Agent 代码部署到每个节点 `/opt/xingsui/agent.py`，systemd 服务 `xing
 scp deploy/edge-node/agent.py root@<节点>:/opt/xingsui/agent.py
 ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口，现有 peer 不掉
 ```
-改 Agent（如新增 `/peer/usage`）须部署到**所有 awg 节点**（大阪 212 / 达拉斯 172.86.91.81 / 犹他 144.172.97.191 / 新加坡 61.13.236.140），否则漏部署的节点上免费用户不计费（见 §9）。部署前 `diff` 服务器现有 `agent.py` 与仓库版本确认一致。
+改 Agent 须部署到**所有节点**（日本 64.83.40.66 / 达拉斯 172.86.91.81 / 犹他 144.172.97.191 / 新加坡 61.13.236.140；212 已下线），否则漏部署的节点上免费用户不计费、订阅端点缺失（见 §9）。部署前 `diff` 服务器现有 `agent.py` 与仓库版本确认一致。**当前 Agent 版本 2.1.0**（含 `/vless/subscription/{add,remove}`、`/vless/usage` 源 IP 审计）；订阅计量依赖各节点 **sing-box 日志级别 = `info`**（`/vless/usage` 解析日志），新建/重装节点须确认。新建 VLESS 节点的 sing-box service **必须有 `ExecReload=/bin/kill -HUP $MAINPID`**，否则 Agent 的 `systemctl reload` 失败、`/vless/add` 报 "Node agent unavailable"。
 
 ---
 
@@ -204,13 +213,13 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 
 ---
 
-## 10. 当前已部署版本（2026-07-14）
+## 10. 当前已部署版本（2026-07-17 更新）
 
 | 端 | 版本 | 状态 |
 |---|---|---|
-| 后端 | — | 60MB 免费额度、**awg 节点实测计费**（修复自报 0 白嫖漏洞）、双域名镜像+相对收款码、套餐价 ¥18/¥48/¥158，均已上线 |
-| Android | `2.0.22 (32)` | 已签名上传官网；后端播报 32。含用尽卡片、`xingsuico.com` API 故障转移 |
-| Windows | `1.0.22` | CI 构建；含官网文案、`xingsuico.com` API 故障转移 |
-| 节点 | 大阪 / 达拉斯 / 犹他 / 新加坡(经大阪中转) | 4 节点 Agent 均含 `/peer/usage`；VLESS 全部 xingsui.org SNI + Vision；awg MTU 1280 |
+| 控制面 | 独立服务器 `64.90.24.84`（2026-07-15 迁移，纯 API/DB/Caddy）| 部署改 `scp app/*.py root@64.90.24.84:/opt/xingsui/backend/app/` 后重建。60MB 免费额度、awg 实测计费、双域名镜像、套餐 ¥18/¥48/¥158、**订阅每用户独立 UUID+源 IP 审计+共享自动撤销**、管理后台订阅用量列，均已上线。回滚镜像 `xingsui-backend:pre-sub-overhaul` |
+| Android | `2.0.23 (33)` | 2026-07-19 已签名上传官网（`.env` `APP_VERSION_*` 待同步成 33/2.0.23 并重启 api 才会提示更新）。新增：①App 自身排除出隧道（控制面调用不随隧道死）；②用量上报连续失败 3 次才断（授权拒绝仍立即断）；③死链检测（握手 >180s 判死）→ 提示原因并自动带 `exclude_node` 换节点重连一次（仅智能连接；手动选节点只提示不换）。R8 混淆 + Keystore 加密 token；含用尽卡片、`xingsuico.com` API 故障转移。**缺 API 证书固定（建议加，需重新打包）** |
+| Windows | `1.0.22` | CI 构建。sing-box 二进制 SHA256 完整性固定；含官网文案、`xingsuico.com` API 故障转移。**缺 API 证书固定** |
+| 节点 | 日本 64.83.40.66（显示"大阪 CN2 优化线路"）/ 达拉斯 172 / 犹他 144 /（两美国节点显示"星隧高速线路"）/ 新加坡(经日本中转) | **4 节点，Agent 2.1.0**（含 `/peer/usage`、`/vless/subscription/*`、`/vless/usage`）；sing-box 日志级 `info`；VLESS 全部 xingsui.org SNI + Vision；awg MTU 1280。**212(原大阪) 2026-07-17 带宽耗尽已下线** |
 
-> 回归建议：非 VIP 真机走 60MB→**真机跑满 60MB（节点实测）应被切断，客户端自报 0 也应被切**→用尽弹卡片→官网下单→管理员确认→VIP；VIP 逐个切 4 节点确认可连且 `used` **不增长**（不计费）；主域名被 DNS 污染/封锁时确认 `xingsuico.com` 可打开且 App 仍能登录/连接；订阅导入 Clash 确认 4 节点 + 到期节点。
+> 回归建议：非 VIP 真机走 60MB→**真机跑满 60MB（节点实测）应被切断，客户端自报 0 也应被切**→用尽弹卡片→官网下单→管理员确认→VIP；VIP 逐个切 4 节点确认可连且 `used` **不增长**（不计费）；主域名被 DNS 污染/封锁时确认 `xingsuico.com` 可打开且 App 仍能登录/连接；订阅导入 Clash 确认 4 节点 + 到期节点，**重置订阅后旧配置立即失效**，同一订阅多源 IP 触发共享告警/自动撤销。

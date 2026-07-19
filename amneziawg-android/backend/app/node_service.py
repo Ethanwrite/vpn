@@ -387,6 +387,18 @@ def select_best_nodes(
     return [node for _, _, node in scored]
 
 
+def pick_pool_node(ranked: list[Any], exclude_node_id: str | None = None) -> Any | None:
+    """从已排序节点里取第一名；exclude_node_id 用于换节点重连（跳过刚失败的节点）。
+
+    若排除后没有其它候选，则忽略排除——宁可回到原节点也不给用户 503。
+    """
+    if exclude_node_id:
+        preferred = [node for node in ranked if node.id != exclude_node_id]
+        if preferred:
+            return preferred[0]
+    return ranked[0] if ranked else None
+
+
 def render_node_client_config(node: Any, private_key: str, client_address: str) -> str:
     """基于节点存储参数（而非全局 env）渲染客户端配置。"""
     lines = [
@@ -553,3 +565,41 @@ def agent_add_vless_user(
 
 def agent_remove_vless_user(node: Any, user_uuid: str, *, timeout: float | None = None) -> dict[str, Any]:
     return agent_request(node, "/vless/remove", {"uuid": user_uuid}, timeout=timeout)
+
+
+def agent_add_subscription_user(
+    node: Any,
+    user_uuid: str,
+    name: str,
+    expires_at: datetime,
+    *,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """Register a long-lived subscription VLESS user (bound to VIP expiry, tagged with
+    a name for per-user source-IP auditing). Survives reconcile until it expires."""
+    return agent_request(
+        node,
+        "/vless/subscription/add",
+        {
+            "uuid": user_uuid,
+            "name": name,
+            "expires_at": expires_at.astimezone(UTC).isoformat(),
+        },
+        timeout=timeout,
+    )
+
+
+def agent_remove_subscription_user(node: Any, user_uuid: str, *, timeout: float | None = None) -> dict[str, Any]:
+    return agent_request(node, "/vless/subscription/remove", {"uuid": user_uuid}, timeout=timeout)
+
+
+def agent_vless_usage(node: Any, *, timeout: float | None = None) -> dict[str, dict[str, Any]]:
+    """Per-user (by name) connection/source-IP audit from the node's sing-box logs."""
+    result = agent_request(node, "/vless/usage", {}, timeout=timeout)
+    users = result.get("users") if isinstance(result, dict) else None
+    usage: dict[str, dict[str, Any]] = {}
+    if isinstance(users, dict):
+        for name, stats in users.items():
+            if isinstance(stats, dict):
+                usage[str(name)] = stats
+    return usage

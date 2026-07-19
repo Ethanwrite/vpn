@@ -31,19 +31,27 @@ class XingsuiConnectionSyncException(message: String) : IllegalStateException(me
 class XingsuiEntitlementException(val reason: String) : IllegalStateException(reason)
 
 object XingsuiManagedConfigProvider {
-    suspend fun fetch(context: Context, nodeId: String? = null): FreshManagedConfig = withContext(Dispatchers.IO) {
+    suspend fun fetch(
+        context: Context,
+        nodeId: String? = null,
+        excludeNodeId: String? = null,
+    ): FreshManagedConfig = withContext(Dispatchers.IO) {
         try {
             val sessionStore = XingsuiSessionStore(context)
             val session = sessionStore.load() ?: throw IllegalStateException("missing_session")
             val api = XingsuiApiClient(accessToken = session.accessToken)
             val response = if (nodeId.isNullOrBlank()) {
-                api.getDefaultVpnConfig()
+                api.getDefaultVpnConfig(excludeNodeId = excludeNodeId)
             } else {
                 require(NODE_ID_PATTERN.matches(nodeId)) { "managed_node_id_rejected" }
                 api.getNodeConfig(nodeId)
             }
             XingsuiManagedConfigValidator.validate(response)
-            val parsed = ByteArrayInputStream(response.configText.toByteArray(StandardCharsets.UTF_8)).use {
+            // Keep the app's own control-plane traffic (login, /usage/report lease renewal,
+            // failover probes) OFF the tunnel: a dead data path must not take down the
+            // API channel that reports and recovers from it.
+            val configText = withOwnAppExcluded(response.configText, context.packageName)
+            val parsed = ByteArrayInputStream(configText.toByteArray(StandardCharsets.UTF_8)).use {
                 Config.parse(it)
             }
             require(parsed.peers.size == 1) { "managed_config_requires_one_peer" }
@@ -65,6 +73,20 @@ object XingsuiManagedConfigProvider {
             )
             throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
         }
+    }
+
+    /**
+     * Inserts `ExcludedApplications = <own package>` into the [Interface] section so the
+     * client's own traffic bypasses the tunnel. Runs after server-config validation; skipped
+     * if the server ever starts sending its own exclusion list (avoids duplicate keys).
+     */
+    private fun withOwnAppExcluded(configText: String, packageName: String): String {
+        if (configText.contains("excludedapplications", ignoreCase = true)) return configText
+        val lines = configText.lines().toMutableList()
+        val interfaceIndex = lines.indexOfFirst { it.trim().equals("[Interface]", ignoreCase = true) }
+        if (interfaceIndex < 0) return configText
+        lines.add(interfaceIndex + 1, "ExcludedApplications = $packageName")
+        return lines.joinToString("\n")
     }
 
     /**

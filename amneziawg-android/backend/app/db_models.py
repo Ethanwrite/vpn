@@ -175,6 +175,36 @@ class VpnDeviceRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class SubscriptionCredentialRow(Base):
+    """Per-user, per-node VLESS UUID handed out through the subscription link.
+
+    Replaces the shared static UUIDs: each subscriber gets their own UUID on each
+    node, bound to their VIP expiry and tagged with a name so node-side logs attribute
+    connections (and their source IPs) back to the user. Resetting the subscription
+    revokes these at the nodes, so a leaked/copied config stops working.
+    """
+
+    __tablename__ = "subscription_credentials"
+    __table_args__ = (UniqueConstraint("user_id", "node_id", name="uq_subscription_user_node"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), index=True)
+    node_id: Mapped[str] = mapped_column(String(64), index=True)
+    vless_uuid: Mapped[str] = mapped_column(String(64), index=True)
+    user_name: Mapped[str] = mapped_column(String(80), index=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Latest node-observed connection audit (source-IP based; see agent vless_usage).
+    last_distinct_source_ips: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_audit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Peak distinct source IPs seen within a single day (UTC), for the admin daily usage
+    # view. Resets when the day rolls over; the peak is the sharing/leak indicator.
+    daily_peak_source_ips: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    daily_peak_day: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class VpnNodeRow(Base):
     __tablename__ = "vpn_nodes"
 

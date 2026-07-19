@@ -3,22 +3,22 @@ SITE_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>星隧 - 安全高速网络通道</title>
+  <title>星隧 - 智能全球网络</title>
   <style>
     :root {
-      color-scheme: light;
-      --ink: #102033;
-      --muted: #66758a;
-      --soft: #f4fbfa;
-      --line: #d9eeeb;
-      --mint: #19c5a2;
-      --mint-dark: #08a58b;
-      --cyan: #2dd7ef;
-      --blue: #132b68;
-      --purple: #6b5cff;
-      --gold: #ff9f1c;
-      --danger: #e5484d;
-      --surface: rgba(255, 255, 255, .88);
+      color-scheme: dark;
+      --ink: #e9f2ff;
+      --muted: #93a7c6;
+      --faint: #64789a;
+      --line: rgba(150, 198, 255, .11);
+      --line-strong: rgba(150, 198, 255, .2);
+      --glass: rgba(12, 27, 52, .52);
+      --glass-deep: rgba(8, 19, 39, .74);
+      --cyan: #5ee7d0;
+      --ice: #7ec8ff;
+      --gold: #e6c680;
+      --danger: #ff8087;
+      --grad: linear-gradient(135deg, #54e0c6 0%, #58b7ff 100%);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     }
     * { box-sizing: border-box; }
@@ -28,408 +28,401 @@ SITE_HTML = """<!doctype html>
       min-height: 100vh;
       color: var(--ink);
       background:
-        radial-gradient(circle at 78% 10%, rgba(45, 215, 239, .18), transparent 30%),
-        radial-gradient(circle at 12% 18%, rgba(25, 197, 162, .12), transparent 28%),
-        linear-gradient(180deg, #f8fffd 0, #f1fbff 48%, #ffffff 100%);
+        radial-gradient(1100px 700px at 84% -12%, rgba(64, 150, 255, .16), transparent 62%),
+        radial-gradient(900px 620px at -12% 28%, rgba(84, 224, 198, .10), transparent 60%),
+        radial-gradient(1300px 900px at 52% 118%, rgba(96, 112, 255, .10), transparent 62%),
+        linear-gradient(180deg, #050e20 0%, #081831 52%, #050d1d 100%);
+      background-attachment: fixed;
       letter-spacing: 0;
+    }
+    body:before {
+      content: "";
+      position: fixed;
+      inset: -20% -10%;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        radial-gradient(620px 340px at 70% 18%, rgba(94, 231, 208, .07), transparent 70%),
+        radial-gradient(720px 420px at 22% 64%, rgba(126, 200, 255, .06), transparent 70%);
+      animation: auroraDrift 36s ease-in-out infinite alternate;
+    }
+    @keyframes auroraDrift {
+      0% { transform: translate3d(0, 0, 0); opacity: .8; }
+      100% { transform: translate3d(3%, 2%, 0); opacity: 1; }
     }
     a { color: inherit; text-decoration: none; }
     button, input, select { font: inherit; letter-spacing: 0; }
     button { cursor: pointer; }
-    .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; }
+    .shell { width: min(1140px, calc(100% - 36px)); margin: 0 auto; }
     .topbar {
       position: sticky;
       top: 0;
       z-index: 10;
-      border-bottom: 1px solid rgba(217, 238, 235, .78);
-      background: rgba(247, 255, 254, .86);
-      backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--line);
+      background: rgba(6, 15, 31, .66);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
     }
-    .nav { min-height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 900; font-size: 22px; color: var(--blue); }
+    .nav { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 800; font-size: 21px; color: var(--ink); }
     .mark {
-      width: 36px; height: 36px; border-radius: 9px;
+      width: 34px; height: 34px; border-radius: 10px;
       background:
-        radial-gradient(circle at 65% 32%, #fff 0 8%, transparent 9%),
-        linear-gradient(135deg, #112764 0%, #2459e7 44%, #23d4ee 72%, #b4fff1 100%);
-      box-shadow: 0 10px 30px rgba(25, 197, 162, .28);
+        radial-gradient(circle at 66% 30%, rgba(255,255,255,.9) 0 8%, transparent 9%),
+        linear-gradient(135deg, #123a7a 0%, #2b6ae0 46%, #35cfe0 78%, #aefaea 100%);
+      box-shadow: 0 8px 26px rgba(64, 190, 230, .28);
       position: relative;
       overflow: hidden;
     }
     .mark:after {
       content: "";
       position: absolute;
-      width: 54px; height: 18px; left: -15px; bottom: 5px;
+      width: 52px; height: 17px; left: -14px; bottom: 4px;
       border-radius: 100% 100% 0 0;
-      background: rgba(184, 243, 255, .74);
+      background: rgba(196, 246, 255, .6);
       transform: rotate(-28deg);
     }
-    .links { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-    .menuToggle { display: none; min-height: 38px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--blue); padding: 0 12px; font-weight: 900; }
-    .links a, .ghost, .pill {
+    .links { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+    .menuToggle { display: none; min-height: 38px; border: 1px solid var(--line-strong); border-radius: 10px; background: transparent; color: var(--ink); padding: 0 14px; font-weight: 600; }
+    .links a, .ghost {
       min-height: 38px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 8px;
-      padding: 0 12px;
-      color: #355066;
+      border-radius: 10px;
+      padding: 0 13px;
+      color: var(--muted);
       background: transparent;
       border: 1px solid transparent;
-      font-weight: 700;
+      font-weight: 600;
+      transition: color .3s, background .3s;
     }
-    .links a.active, .links a:hover, .ghost:hover { background: #edf9f6; color: var(--mint-dark); border-color: var(--line); }
-    .links a.telegram {
-      color: #06344a;
-      background: linear-gradient(135deg, rgba(42, 171, 238, .16), rgba(45, 215, 239, .18));
-      border-color: rgba(42, 171, 238, .34);
-      gap: 7px;
-    }
-    .links a.telegram:hover {
-      color: #062430;
-      background: linear-gradient(135deg, #2AABEE, #2dd7ef);
-      transform: translateY(-1px);
-      box-shadow: 0 12px 28px rgba(42, 171, 238, .22);
-    }
-    .tgIcon { width: 17px; height: 17px; fill: currentColor; flex: 0 0 auto; }
+    .links a.active, .links a:hover, .ghost:hover { color: var(--ink); background: rgba(126, 200, 255, .08); }
+    .links a.telegram { color: #9fd2f5; gap: 7px; }
+    .links a.telegram:hover { color: #cfeaff; background: rgba(42, 171, 238, .12); }
+    .tgIcon { width: 16px; height: 16px; fill: currentColor; flex: 0 0 auto; }
     .primary, .secondary, .unavailable, .danger {
       min-height: 46px;
-      border-radius: 8px;
+      border-radius: 11px;
       border: 0;
-      padding: 0 18px;
-      font-weight: 900;
+      padding: 0 20px;
+      font-weight: 700;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
       white-space: nowrap;
+      transition: transform .35s ease, box-shadow .35s ease, background .35s ease, border-color .35s ease;
     }
-    .primary { background: linear-gradient(135deg, #17c7a8, #43c8f4); color: #062430; box-shadow: 0 12px 28px rgba(20, 177, 164, .18); }
-    .secondary { border: 1px solid var(--line); color: var(--blue); background: rgba(255,255,255,.92); }
-    .unavailable { border: 1px solid var(--line); color: var(--muted); background: #f5f7fb; cursor: not-allowed; }
-    .danger { background: #fff1f1; color: var(--danger); border: 1px solid #ffd6d6; }
-    .hero { min-height: calc(100vh - 70px); display: grid; grid-template-columns: 1.04fr .96fr; gap: 34px; align-items: center; padding: 44px 0 34px; }
-    .tag { display: inline-flex; width: fit-content; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; color: #097160; background: #eafbf6; border: 1px solid #c7eee6; font-weight: 900; }
-    h1 { margin: 18px 0 14px; font-size: clamp(34px, 5.7vw, 62px); line-height: 1.08; color: var(--blue); letter-spacing: 0; max-width: 760px; }
-    .lead { margin: 0; max-width: 690px; color: var(--muted); font-size: clamp(16px, 2vw, 20px); line-height: 1.82; }
-    .serviceCloud { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; max-width: 720px; }
-    .servicePill {
-      min-height: 36px;
+    .primary { background: var(--grad); color: #04263a; box-shadow: 0 12px 34px rgba(84, 190, 255, .2); }
+    .primary:hover { transform: translateY(-1px); box-shadow: 0 16px 40px rgba(84, 190, 255, .28); }
+    .secondary { border: 1px solid var(--line-strong); color: var(--ink); background: rgba(14, 30, 56, .5); }
+    .secondary:hover { border-color: rgba(150, 198, 255, .38); background: rgba(20, 40, 72, .6); }
+    .unavailable { border: 1px solid var(--line); color: var(--faint); background: rgba(10, 22, 42, .5); cursor: not-allowed; }
+    .danger { background: rgba(255, 110, 118, .1); color: var(--danger); border: 1px solid rgba(255, 110, 118, .26); }
+
+    /* ---------- 首页 ---------- */
+    .hero { min-height: calc(100vh - 72px); display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding: 56px 0 48px; }
+    .eyebrow {
+      margin: 0;
       display: inline-flex;
       align-items: center;
-      border: 1px solid rgba(217, 238, 235, .9);
-      border-radius: 999px;
-      padding: 0 12px;
-      background: rgba(255, 255, 255, .72);
-      color: #355066;
-      font-weight: 800;
-      box-shadow: 0 8px 20px rgba(57, 104, 122, .05);
+      gap: 10px;
+      color: var(--faint);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .18em;
     }
-    .priceLine { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
-    .now { font-size: clamp(38px, 6vw, 62px); color: var(--mint-dark); font-weight: 950; }
-    .old { color: #9aa8b6; text-decoration: line-through; font-size: 18px; }
-    .countdown { color: var(--gold); font-weight: 900; }
-    .heroActions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+    .eyebrow:before { content: ""; width: 26px; height: 1px; background: linear-gradient(90deg, var(--cyan), transparent); }
+    h1 { margin: 22px 0 18px; font-size: clamp(30px, 4.1vw, 48px); line-height: 1.22; font-weight: 700; color: var(--ink); max-width: 640px; }
+    h1 em {
+      font-style: normal;
+      background: linear-gradient(120deg, #8ff3de 0%, #7ec8ff 90%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .lead { margin: 0; max-width: 540px; color: var(--muted); font-size: clamp(15px, 1.6vw, 17px); line-height: 1.95; }
+    .keyline { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 26px; color: #b7cbe8; font-size: 14px; font-weight: 600; letter-spacing: .06em; }
+    .keyline i { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+    .heroActions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 30px; }
+    .heroDeal { margin: 22px 0 0; color: var(--faint); font-size: 14px; }
+    .heroDeal b { color: var(--gold); font-weight: 700; font-size: 16px; }
+
+    /* 智能网络核心舱 */
     .heroPanel {
       position: relative;
-      min-height: 540px;
-      border-radius: 24px;
+      border-radius: 26px;
       background:
-        radial-gradient(circle at 58% 42%, rgba(35, 208, 184, .30), transparent 28%),
-        radial-gradient(circle at 28% 18%, rgba(45, 199, 244, .22), transparent 24%),
-        linear-gradient(145deg, rgba(8, 24, 53, .96), rgba(12, 53, 78, .92) 48%, rgba(6, 29, 50, .98));
-      border: 1px solid rgba(129, 235, 226, .26);
-      box-shadow: 0 24px 76px rgba(14, 75, 96, .26);
+        radial-gradient(560px 380px at 52% 34%, rgba(52, 132, 226, .16), transparent 70%),
+        linear-gradient(158deg, rgba(13, 30, 58, .66), rgba(7, 17, 36, .78));
+      border: 1px solid var(--line);
+      box-shadow: 0 30px 90px rgba(3, 12, 28, .5), inset 0 1px 0 rgba(180, 224, 255, .07);
       overflow: hidden;
-      padding: 24px;
-      display: grid;
-      place-items: center;
+      padding: 26px 26px 0;
       isolation: isolate;
-    }
-    .heroPanel:before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      z-index: -1;
-      opacity: .28;
-      background:
-        linear-gradient(rgba(111, 246, 235, .14) 1px, transparent 1px) 0 0 / 26px 26px,
-        linear-gradient(90deg, rgba(111, 246, 235, .12) 1px, transparent 1px) 0 0 / 26px 26px;
-      mask-image: radial-gradient(circle at 50% 45%, #000 0 52%, transparent 78%);
-    }
-    .networkScene {
-      position: relative;
-      width: min(560px, 100%);
-      min-height: 492px;
-      z-index: 1;
-    }
-    .networkScene:before {
-      content: "";
-      position: absolute;
-      inset: 72px 44px 86px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(49, 231, 194, .14), transparent 64%);
-      filter: blur(4px);
-    }
-    .mapStage {
-      position: absolute;
-      inset: 96px 20px 78px;
-      border-radius: 22px;
-      background:
-        radial-gradient(circle at 52% 48%, rgba(43, 225, 183, .13), transparent 42%),
-        linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.025));
-      border: 1px solid rgba(158, 243, 236, .13);
-      box-shadow: inset 0 0 42px rgba(47, 221, 205, .08);
-      overflow: hidden;
-    }
-    .worldMap {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      filter: drop-shadow(0 0 16px rgba(38, 227, 197, .22));
-    }
-    .mapDot { fill: rgba(131, 246, 231, .64); }
-    .mapDot.dim { fill: rgba(118, 190, 210, .28); }
-    .originNode { fill: #d4fff7; stroke: #20e7bc; stroke-width: 4; filter: drop-shadow(0 0 9px rgba(32,231,188,.9)); }
-    .nodePulse { fill: none; stroke: #30f1c8; stroke-width: 2; opacity: .72; animation: pulseNode 2.4s ease-out infinite; }
-    .fiberLine {
-      fill: none;
-      stroke: url(#fiberGradient);
-      stroke-width: 3.2;
-      stroke-linecap: round;
-      stroke-dasharray: 9 12;
-      animation: dashFlow 2.8s linear infinite;
-      filter: drop-shadow(0 0 9px rgba(33, 241, 194, .85));
-    }
-    .fiberLine.alt { animation-duration: 3.4s; opacity: .78; }
-    .nodeLabel {
-      position: absolute;
-      z-index: 6;
-      min-width: 132px;
-      padding: 9px 11px;
-      border-radius: 13px;
-      color: #eafffb;
-      background: rgba(8, 31, 55, .68);
-      border: 1px solid rgba(132, 247, 232, .25);
-      box-shadow: 0 16px 34px rgba(0, 0, 0, .20), inset 0 1px 0 rgba(255,255,255,.09);
       backdrop-filter: blur(14px);
-      font-size: 13px;
-      line-height: 1.35;
+      -webkit-backdrop-filter: blur(14px);
     }
-    .nodeLabel strong { display: block; color: #ffffff; font-size: 14px; margin-bottom: 2px; }
-    .nodeLabel em { color: #42f1c8; font-style: normal; font-weight: 900; }
-    .nodeTokyo { right: 26px; top: 210px; }
-    .nodeSilicon { left: 26px; top: 220px; }
-    .nodeSingapore { right: 92px; bottom: 88px; }
-    .nodeFrankfurt { left: 220px; top: 72px; }
-    .metricCard {
-      position: absolute;
-      z-index: 5;
-      border-radius: 16px;
-      padding: 14px;
-      color: #dffefa;
-      background: rgba(7, 28, 49, .62);
-      border: 1px solid rgba(132, 247, 232, .20);
-      box-shadow: 0 18px 42px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.08);
-      backdrop-filter: blur(16px);
+    .coreCaption { display: flex; justify-content: space-between; align-items: center; color: var(--faint); font-size: 12px; letter-spacing: .22em; font-weight: 600; }
+    .coreCaption span:last-child { display: inline-flex; align-items: center; gap: 7px; letter-spacing: .08em; color: #7fd9c4; }
+    .coreCaption span:last-child:before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); animation: breathe 3.6s ease-in-out infinite; }
+    @keyframes breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+    .coreScene { position: relative; margin: 0 auto; width: min(520px, 100%); transition: transform .7s cubic-bezier(.22, .61, .36, 1); will-change: transform; }
+    .coreScene svg { display: block; width: 100%; height: auto; }
+    .coreStats {
+      display: flex;
+      margin: 4px -26px 0;
+      padding: 16px 10px;
+      border-top: 1px solid var(--line);
+      background: rgba(6, 14, 30, .4);
     }
-    .metricCard h3 { margin: 0 0 9px; color: #ffffff; font-size: 14px; letter-spacing: 0; }
-    .metricValue { color: #38f2c8; font-size: 22px; font-weight: 950; }
-    .metricSub { margin-top: 5px; color: rgba(223,254,250,.72); font-size: 12px; line-height: 1.45; }
-    .aiMatrix { left: 0; top: 0; width: 210px; }
-    .throughput { left: 8px; bottom: 0; width: 190px; }
-    .backbone { right: 0; bottom: 0; width: 214px; }
-    .nodeState { right: 0; top: 18px; width: 190px; }
-    .appIcons { display: flex; gap: 7px; align-items: center; margin-bottom: 9px; }
-    .appIcon {
-      width: 30px;
-      height: 30px;
-      border-radius: 9px;
-      display: grid;
-      place-items: center;
-      font-size: 11px;
-      font-weight: 950;
-      color: #061f34;
-      background: linear-gradient(135deg, #eafffb, #47dfef);
-      box-shadow: 0 8px 18px rgba(38, 218, 209, .18);
+    .coreStats > div { flex: 1; text-align: center; padding: 2px 6px; }
+    .coreStats > div + div { border-left: 1px solid var(--line); }
+    .coreStats b { display: block; color: var(--ink); font-size: 17px; font-weight: 700; }
+    .coreStats span { color: var(--faint); font-size: 12px; }
+
+    .orbitRing { fill: none; stroke: rgba(140, 206, 255, .14); stroke-width: 1; }
+    .orbitDot { fill: #9fe2ff; opacity: .8; }
+    .orbitDot.small { opacity: .5; }
+    .globeLine { fill: none; stroke: rgba(150, 214, 255, .13); stroke-width: 1; }
+    .globeEdge { fill: url(#globeBody); stroke: rgba(150, 214, 255, .2); stroke-width: 1; }
+    .beamPath { fill: none; stroke: url(#beamGrad); stroke-width: 1.4; opacity: .55; stroke-linecap: round; }
+    .particle { fill: #c8f7ec; filter: drop-shadow(0 0 4px rgba(120, 240, 214, .9)); }
+    .nodeCore { fill: #eafffa; stroke: rgba(94, 231, 208, .9); stroke-width: 1.6; filter: drop-shadow(0 0 6px rgba(94, 231, 208, .8)); }
+    .nodeHalo { fill: none; stroke: rgba(94, 231, 208, .5); stroke-width: 1.2; animation: haloPulse 4.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+    @keyframes haloPulse {
+      0% { transform: scale(.5); opacity: .7; }
+      70% { transform: scale(1.9); opacity: 0; }
+      100% { transform: scale(1.9); opacity: 0; }
     }
-    .waveLine {
-      width: 100%;
-      height: 22px;
-      margin-top: 7px;
-    }
-    .waveLine polyline { fill: none; stroke: #36f0c6; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-    .barChart { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; align-items: end; height: 52px; margin-top: 8px; }
-    .barChart span {
-      border-radius: 999px 999px 4px 4px;
-      background: linear-gradient(180deg, #34f0c5, #2dc9ef);
-      box-shadow: 0 0 18px rgba(48, 230, 207, .26);
-    }
-    .ringMini {
-      width: 62px;
-      height: 62px;
-      border-radius: 50%;
-      background: conic-gradient(#37f1c8 0 74%, rgba(255,255,255,.14) 74% 100%);
-      display: grid;
-      place-items: center;
-      margin-left: auto;
-      box-shadow: 0 0 24px rgba(55,241,200,.20);
-    }
-    .ringMini:after {
-      content: "BGP";
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      color: #dffefa;
-      background: #09213a;
-      font-weight: 950;
-      font-size: 11px;
-    }
-    @keyframes dashFlow { to { stroke-dashoffset: -84; } }
-    @keyframes pulseNode {
-      0% { r: 7; opacity: .8; }
-      100% { r: 26; opacity: 0; }
-    }
-    section.page { display: none; padding: 34px 0 72px; }
+    .nodeText { fill: rgba(206, 230, 255, .72); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
+    .nodeText.origin { fill: rgba(240, 250, 255, .9); font-size: 12px; }
+
+    /* ---------- 页面通用 ---------- */
+    section.page { display: none; padding: 48px 0 88px; }
     section.page.active { display: block; }
     section.hero.active { display: grid; }
-    .sectionHead { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
-    .sectionHead h2 { margin: 0; font-size: clamp(28px, 4vw, 44px); color: var(--blue); letter-spacing: 0; }
-    .sectionHead p { margin: 8px 0 0; color: var(--muted); line-height: 1.7; }
-    .grid { display: grid; gap: 14px; }
+    .sectionHead { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 30px; }
+    .sectionHead h2 { margin: 0; font-size: clamp(26px, 3.6vw, 40px); font-weight: 700; color: var(--ink); }
+    .sectionHead p { margin: 12px 0 0; color: var(--muted); line-height: 1.8; max-width: 560px; }
+    .grid { display: grid; gap: 16px; }
     .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .panel, .plan, .formBox {
-      background: rgba(255,255,255,.88);
+    .panel, .formBox {
+      background: var(--glass);
       border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 18px;
-      box-shadow: 0 10px 28px rgba(57, 104, 122, .06);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 16px 44px rgba(3, 12, 28, .3);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
     }
-    .panel h3, .plan h3, .formBox h2 { margin: 0 0 8px; color: var(--blue); letter-spacing: 0; }
-    .panel p, .plan p { margin: 0; color: var(--muted); line-height: 1.7; }
-    .formPage { min-height: calc(100vh - 70px); display: grid; place-items: center; padding: 34px 0; }
-    .formBox { width: min(440px, 100%); }
-    label { display: block; font-weight: 800; color: #304960; margin: 12px 0 8px; }
+    .panel h3, .formBox h2 { margin: 0 0 10px; color: var(--ink); font-weight: 700; }
+    .panel p { margin: 0; color: var(--muted); line-height: 1.8; }
+    .formPage { min-height: calc(100vh - 72px); display: grid; place-items: center; padding: 40px 0; }
+    .formBox { width: min(440px, 100%); padding: 30px; }
+    label { display: block; font-weight: 600; color: #b8cbe8; margin: 14px 0 8px; }
     input, select {
       width: 100%;
       min-height: 46px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: rgba(7, 17, 34, .66);
       color: var(--ink);
-      padding: 0 12px;
-      outline-color: var(--mint);
+      padding: 0 13px;
+      outline: none;
+      transition: border-color .3s, box-shadow .3s;
     }
-    .formBox .primary, .plan .primary { width: 100%; margin-top: 14px; }
+    input:focus, select:focus { border-color: rgba(94, 231, 208, .55); box-shadow: 0 0 0 3px rgba(94, 231, 208, .12); }
+    .formBox .primary { width: 100%; margin-top: 18px; }
     .muted { color: var(--muted); }
+    .muted a { color: var(--ice); }
     .status { min-height: 24px; color: var(--muted); line-height: 1.6; }
     .status.error { color: var(--danger); }
-    .status.ok { color: var(--mint-dark); }
+    .status.ok { color: var(--cyan); }
     .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-    .metric strong { display: block; color: var(--blue); font-size: 22px; margin-top: 6px; overflow-wrap: anywhere; }
-    .plan { position: relative; overflow: hidden; }
-    .plan.hot { border-color: rgba(255, 159, 28, .44); box-shadow: 0 20px 50px rgba(255,159,28,.12); }
-    .badge { display: inline-flex; border-radius: 999px; padding: 6px 10px; color: #764200; background: #fff0cd; font-weight: 900; font-size: 13px; }
-    .planLead { margin-top: 12px; color: var(--muted); line-height: 1.65; min-height: 54px; }
-    .planBenefits { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-    .planBenefits span {
+    .metric strong { display: block; color: var(--ink); font-size: 20px; margin-top: 6px; overflow-wrap: anywhere; font-weight: 700; }
+
+    /* ---------- 套餐 ---------- */
+    .dealTag {
       display: inline-flex;
       align-items: center;
-      min-height: 30px;
-      padding: 0 10px;
-      border-radius: 999px;
-      background: #eefbf8;
-      border: 1px solid #d3f0ea;
-      color: #096e60;
-      font-weight: 900;
-      font-size: 13px;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      color: var(--gold);
+      background: rgba(230, 198, 128, .08);
+      border: 1px solid rgba(230, 198, 128, .24);
+      font-weight: 700;
+      white-space: nowrap;
     }
-    .planPrice { display: flex; align-items: baseline; gap: 8px; margin: 12px 0; }
-    .planPrice b { color: var(--mint-dark); font-size: 34px; }
-    .planPrice span { text-decoration: line-through; color: #9aa8b6; }
-    .orderBox { display: none; margin-top: 18px; }
+    .plansGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: stretch; padding-top: 14px; }
+    .plan {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      border-radius: 20px;
+      padding: 28px 26px;
+      background: var(--glass);
+      border: 1px solid var(--line);
+      box-shadow: 0 16px 44px rgba(3, 12, 28, .3);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      transition: transform .45s ease, box-shadow .45s ease, border-color .45s ease;
+    }
+    .plan:hover { transform: translateY(-4px); }
+    .plan h3 { margin: 0; color: var(--ink); font-size: 21px; font-weight: 700; }
+    .planTagline { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .planTag {
+      position: absolute;
+      top: -13px;
+      left: 26px;
+      padding: 5px 13px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #06301f;
+      background: var(--grad);
+      box-shadow: 0 8px 22px rgba(84, 224, 198, .3);
+    }
+    .planPrice { display: flex; align-items: baseline; gap: 6px; margin: 24px 0 4px; }
+    .planPrice em { font-style: normal; color: var(--ink); font-size: 18px; font-weight: 700; }
+    .planPrice b { color: var(--ink); font-size: 42px; font-weight: 800; line-height: 1; }
+    .planPrice span { color: var(--faint); font-size: 14px; }
+    .perMonth { margin: 6px 0 0; color: var(--faint); font-size: 13px; min-height: 18px; }
+    .planFeatures { list-style: none; margin: 22px 0 26px; padding: 0; display: grid; gap: 12px; flex: 1; }
+    .planFeatures li { display: flex; align-items: start; gap: 10px; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+    .planFeatures li:before {
+      content: "✓";
+      flex: 0 0 auto;
+      width: 18px; height: 18px;
+      margin-top: 2px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--cyan);
+      background: rgba(94, 231, 208, .1);
+      border: 1px solid rgba(94, 231, 208, .28);
+    }
+    .planBtn {
+      width: 100%;
+      min-height: 46px;
+      border-radius: 11px;
+      border: 1px solid var(--line-strong);
+      background: rgba(14, 30, 56, .5);
+      color: var(--ink);
+      font-weight: 700;
+      transition: transform .35s ease, box-shadow .35s ease, background .35s ease, border-color .35s ease;
+    }
+    .planBtn:hover { border-color: rgba(150, 198, 255, .4); background: rgba(20, 40, 72, .65); }
+
+    .plan.featured {
+      transform: translateY(-12px);
+      border: 1px solid transparent;
+      background:
+        linear-gradient(rgba(11, 26, 50, .92), rgba(11, 26, 50, .92)) padding-box,
+        linear-gradient(165deg, rgba(94, 231, 208, .7), rgba(88, 183, 255, .4) 55%, rgba(94, 231, 208, .2)) border-box;
+      box-shadow: 0 34px 80px rgba(4, 16, 36, .55), 0 0 70px rgba(72, 200, 220, .1);
+    }
+    .plan.featured:hover { transform: translateY(-18px); box-shadow: 0 42px 90px rgba(4, 16, 36, .6), 0 0 90px rgba(72, 200, 220, .16); }
+    .plan.featured .planBtn { background: var(--grad); border: 0; color: #04263a; box-shadow: 0 12px 32px rgba(84, 190, 255, .22); }
+    .plan.featured .planBtn:hover { transform: translateY(-1px); box-shadow: 0 16px 38px rgba(84, 190, 255, .3); }
+
+    .plan.gold { background: linear-gradient(168deg, rgba(9, 20, 42, .9), rgba(6, 13, 29, .94)); border-color: rgba(230, 198, 128, .22); }
+    .plan.gold:before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 1px;
+      border-radius: 1px;
+      background: linear-gradient(90deg, transparent, rgba(230, 198, 128, .55), transparent);
+    }
+    .plan.gold .planTag { color: #3d2c07; background: linear-gradient(135deg, #f2ddac, #d9b878); box-shadow: 0 8px 22px rgba(217, 184, 120, .24); }
+    .plan.gold .planPrice b, .plan.gold .planPrice em { color: #f0dcae; }
+    .plan.gold .planFeatures li:before {
+      color: var(--gold);
+      background: rgba(230, 198, 128, .08);
+      border-color: rgba(230, 198, 128, .3);
+    }
+    .plan.gold .planBtn { border-color: rgba(230, 198, 128, .3); color: #f0dcae; background: rgba(230, 198, 128, .06); }
+    .plan.gold .planBtn:hover { border-color: rgba(230, 198, 128, .5); background: rgba(230, 198, 128, .12); }
+
+    .planFootnote { margin: 26px 0 0; color: var(--faint); font-size: 13.5px; line-height: 1.8; text-align: center; }
+    .faqPanel { margin-top: 40px; }
+    .faqPanel h3 { margin-bottom: 16px; }
+    .faqItem + .faqItem { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .faqItem strong { display: block; color: #c6d8f2; margin-bottom: 5px; font-size: 15px; }
+    .faqItem span { color: var(--muted); font-size: 14px; line-height: 1.75; }
+
+    .orderBox { display: none; margin-top: 26px; }
     .orderBox.active { display: block; }
-    .qr { width: 210px; height: 210px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: white; padding: 8px; }
-    .subscriptionCard { margin-top: 14px; }
+    .qr { width: 210px; height: 210px; object-fit: contain; border: 1px solid var(--line-strong); border-radius: 12px; background: #fff; padding: 8px; }
+
+    /* ---------- 用户中心 / 其它 ---------- */
+    .subscriptionCard { margin-top: 16px; }
     .subscriptionCard .status { margin: 10px 0 0; }
-    .subscriptionActions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    .subscriptionActions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
     .subscriptionLinkBox { display: none; margin-top: 14px; }
     .subscriptionLinkBox.active { display: block; }
     .subscriptionInput { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-    .importGuide { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
-    .importGuide h4 { margin: 0 0 10px; color: var(--blue); font-size: 16px; }
     .clientGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
-    .clientTip {
-      min-height: 86px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fbfffe;
-      padding: 12px;
-    }
-    .clientTip strong { display: block; color: var(--blue); margin-bottom: 5px; }
-    .clientTip span { color: var(--muted); line-height: 1.55; font-size: 13px; }
-    .guidePanel { margin-top: 14px; }
+    .clientTip { min-height: 86px; border: 1px solid var(--line); border-radius: 12px; background: rgba(9, 20, 40, .5); padding: 14px; }
+    .clientTip strong { display: block; color: var(--ink); margin-bottom: 5px; }
+    .clientTip span { color: var(--muted); line-height: 1.6; font-size: 13px; }
+    .guidePanel { margin-top: 16px; }
     .guidePanel h3 { margin-bottom: 10px; }
-    .guideList { margin: 0; padding-left: 20px; color: var(--muted); line-height: 1.8; }
-    .guideList strong { color: var(--blue); }
     .securityHint {
       margin-top: 12px;
-      padding: 10px 12px;
-      border-radius: 8px;
-      background: #fff7e6;
-      border: 1px solid #ffe0a6;
-      color: #7a4a00;
-      font-weight: 800;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: rgba(230, 198, 128, .07);
+      border: 1px solid rgba(230, 198, 128, .22);
+      color: #dfc48d;
+      font-weight: 600;
       line-height: 1.6;
     }
-    .steps { counter-reset: step; }
-    .step { position: relative; padding-left: 48px; min-height: 54px; }
+    .steps { counter-reset: step; display: grid; gap: 22px; }
+    .step { position: relative; padding-left: 50px; }
     .step:before {
       counter-increment: step;
       content: counter(step);
       position: absolute; left: 0; top: 0;
       width: 32px; height: 32px; border-radius: 50%;
-      display: grid; place-items: center; color: #062430; font-weight: 950;
-      background: linear-gradient(135deg, #18d0ad, #23c2ff);
+      display: grid; place-items: center; color: #04263a; font-weight: 800;
+      background: var(--grad);
+      box-shadow: 0 8px 20px rgba(84, 190, 255, .2);
     }
-    .centerNav { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
-    footer { border-top: 1px solid var(--line); padding: 26px 0; color: var(--muted); background: rgba(255,255,255,.62); }
-    @media (max-width: 860px) {
+    .step h3 { margin: 3px 0 6px; color: var(--ink); }
+    .centerNav { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    .vipGold { color: var(--gold); }
+    footer { border-top: 1px solid var(--line); padding: 30px 0; color: var(--faint); background: rgba(5, 12, 26, .5); font-size: 14px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *:before, *:after { animation: none !important; transition: none !important; }
+    }
+    @media (max-width: 920px) {
       .nav { min-height: 64px; flex-wrap: wrap; }
       .menuToggle { display: inline-flex; align-items: center; justify-content: center; }
-      .links {
-        display: none;
-        width: 100%;
-        padding: 0 0 12px;
-        align-items: stretch;
-        flex-direction: column;
-      }
+      .links { display: none; width: 100%; padding: 0 0 12px; align-items: stretch; flex-direction: column; }
       .links.open { display: flex; }
-      .hero { grid-template-columns: 1fr; padding-top: 28px; }
-      .heroPanel { min-height: 620px; padding: 16px; }
-      .networkScene { min-height: 590px; }
-      .mapStage { inset: 150px 8px 138px; }
-      .networkScene:before { inset: 150px 24px 130px; }
-      .aiMatrix { left: 0; top: 0; width: min(210px, 56%); }
-      .nodeState { right: 0; top: 0; width: min(180px, 42%); }
-      .throughput { left: 0; bottom: 0; width: min(190px, 48%); }
-      .backbone { right: 0; bottom: 0; width: min(210px, 50%); }
-      .nodeLabel { min-width: 116px; padding: 8px 9px; font-size: 12px; }
-      .nodeLabel strong { font-size: 13px; }
-      .nodeTokyo { right: 4px; top: 268px; }
-      .nodeSilicon { left: 4px; top: 268px; }
-      .nodeSingapore { right: 52px; bottom: 158px; }
-      .nodeFrankfurt { left: 142px; top: 138px; }
-      .metricCard { padding: 12px; border-radius: 14px; }
-      .metricValue { font-size: 20px; }
+      .links a { min-height: 44px; justify-content: flex-start; }
+      .hero { grid-template-columns: 1fr; gap: 34px; padding-top: 36px; min-height: 0; }
+      h1 { font-size: clamp(30px, 8vw, 40px); }
+      .heroPanel { padding: 20px 20px 0; border-radius: 22px; }
+      .coreCaption { font-size: 10.5px; letter-spacing: .12em; }
+      .coreCaption span { white-space: nowrap; }
+      .coreStats { margin: 2px -20px 0; flex-wrap: wrap; }
+      .coreStats > div { flex: 1 1 40%; padding: 8px 6px; }
+      .coreStats > div:nth-child(3) { border-left: 0; }
+      .plansGrid { grid-template-columns: 1fr; gap: 26px; padding-top: 6px; }
+      .plan.featured { transform: none; }
+      .plan.featured:hover { transform: translateY(-4px); }
       .grid.three, .grid.two, .metrics, .clientGrid { grid-template-columns: 1fr; }
       .sectionHead { align-items: start; flex-direction: column; }
-      .links a { min-height: 42px; justify-content: flex-start; padding: 0 12px; }
-      .brand { font-size: 20px; }
+      .brand { font-size: 19px; }
     }
   </style>
 </head>
@@ -446,7 +439,7 @@ SITE_HTML = """<!doctype html>
         <a href="/guide" data-route="guide">帮助中心</a>
         <a class="telegram" href="https://t.me/+peCBtyuzOzNjNzA1" target="_blank" rel="noopener noreferrer" aria-label="加入星隧 Telegram 官方群">
           <svg class="tgIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.78 15.64 9.39 21c.56 0 .8-.24 1.09-.53l2.62-2.5 5.43 3.98c1 .55 1.7.26 1.97-.92l3.57-16.73c.32-1.48-.53-2.06-1.5-1.7L1.62 10.65c-1.43.56-1.41 1.36-.24 1.72l5.36 1.67L19.2 6.25c.59-.39 1.12-.17.68.22z"/></svg>
-          加入官方群
+          官方群
         </a>
         <a href="/login" data-route="login" id="loginLink">登录</a>
       </nav>
@@ -455,96 +448,121 @@ SITE_HTML = """<!doctype html>
 
   <main>
     <section class="shell hero page active" id="page-home">
-      <div>
-        <span class="tag">限时特惠 · 首月 18 元 · ISP 专线 · 住宅节点</span>
-        <h1>解锁全球网络，畅连主流 AI 与 8K 流媒体</h1>
-        <p class="lead">星隧采用自研协议与智能调度策略，接入 ISP 专线和住宅节点资源，为 AI 工具、海外网站与高清流媒体提供更稳定的连接体验。一键连接高速节点，轻松访问 ChatGPT、Claude、Gemini、YouTube、Netflix 与 8K 高清流媒体。</p>
-        <div class="serviceCloud" aria-label="支持的主流服务">
-          <span class="servicePill">ISP 专线</span>
-          <span class="servicePill">住宅节点</span>
-          <span class="servicePill">自研协议</span>
-          <span class="servicePill">智能调度</span>
-          <span class="servicePill">ChatGPT</span>
-          <span class="servicePill">Claude</span>
-          <span class="servicePill">Gemini</span>
-          <span class="servicePill">YouTube</span>
-          <span class="servicePill">Netflix</span>
-          <span class="servicePill">海外网站</span>
-          <span class="servicePill">8K 流媒体</span>
-        </div>
-        <div class="priceLine">
-          <span class="now" id="homeNow">18 元/月</span>
-          <span class="old" id="homeOld">原价 28.8 元</span>
-          <span class="countdown" id="homeCountdown">优惠加载中</span>
-        </div>
+      <div class="heroCopy">
+        <p class="eyebrow">XINGSUI · 智能网络服务</p>
+        <h1>更快抵达世界，<br/><em>更稳定连接每一次灵感</em></h1>
+        <p class="lead">面向 AI 工具、全球网站与高清流媒体的智能网络服务。自动匹配更优线路，在不同网络环境下依然保持稳定连接。</p>
+        <div class="keyline"><span>稳定</span><i></i><span>AI 专线</span><i></i><span>低延迟</span><i></i><span>智能调度</span></div>
         <div class="heroActions">
-          <a class="primary" href="/register" data-route="register">立即注册</a>
-          <a class="secondary" href="/download/android">下载 Android APK</a>
-          <a class="secondary" href="/download/windows">下载 Windows 客户端</a>
+          <a class="primary" href="/register" data-route="register">立即开始</a>
           <a class="secondary" href="/vip" data-route="vip">查看套餐</a>
+          <a class="ghost" href="/download" data-route="download">下载客户端</a>
         </div>
+        <p class="heroDeal">新用户首月 <b id="homeNow">¥18</b> · 不限流量 · 多端会员同步</p>
       </div>
-      <div class="heroPanel" aria-label="星隧全球节点网络状态">
-        <div class="networkScene">
-          <div class="metricCard aiMatrix">
-            <h3>AI 专线矩阵</h3>
-            <div class="appIcons" aria-label="AI 服务连通">
-              <span class="appIcon">GPT</span>
-              <span class="appIcon">CL</span>
-              <span class="appIcon">GM</span>
-            </div>
-            <div class="metricValue">100%</div>
-            <div class="metricSub">ChatGPT / Claude / Gemini 连通率</div>
-            <svg class="waveLine" viewBox="0 0 168 22" aria-hidden="true"><polyline points="0,12 26,12 34,8 42,16 50,12 168,12"/></svg>
-          </div>
 
-          <div class="metricCard nodeState">
-            <h3>智能调度</h3>
-            <div class="metricValue">4 条</div>
-            <div class="metricSub">美西 / 日本 / 新加坡 / 法兰克福核心节点</div>
-          </div>
+      <div class="heroPanel" id="heroPanel" aria-label="星隧智能网络核心">
+        <div class="coreCaption"><span>GLOBAL NETWORK CORE</span><span>智能调度运行中</span></div>
+        <div class="coreScene" id="coreScene">
+          <svg viewBox="0 0 560 540" role="img" aria-label="星隧全球智能网络：从国内出发通往日本、美国、新加坡、澳大利亚、法国与新西兰的线路">
+            <defs>
+              <radialGradient id="coreGlow" cx="50%" cy="46%" r="55%">
+                <stop offset="0" stop-color="rgba(96, 205, 255, .16)"/>
+                <stop offset=".55" stop-color="rgba(70, 150, 255, .06)"/>
+                <stop offset="1" stop-color="rgba(70, 150, 255, 0)"/>
+              </radialGradient>
+              <radialGradient id="globeBody" cx="38%" cy="30%" r="80%">
+                <stop offset="0" stop-color="rgba(64, 130, 220, .18)"/>
+                <stop offset=".5" stop-color="rgba(24, 58, 116, .14)"/>
+                <stop offset="1" stop-color="rgba(8, 20, 44, .3)"/>
+              </radialGradient>
+              <linearGradient id="beamGrad" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0" stop-color="#5ee7d0"/>
+                <stop offset="1" stop-color="#58b7ff"/>
+              </linearGradient>
+            </defs>
 
-          <div class="mapStage">
-            <svg class="worldMap" viewBox="0 0 720 430" role="img" aria-label="星隧点阵世界地图与全球光纤线路">
-              <defs>
-                <linearGradient id="fiberGradient" x1="0" x2="1" y1="0" y2="0">
-                  <stop offset="0" stop-color="#b8fff2"/>
-                  <stop offset=".45" stop-color="#36f1c8"/>
-                  <stop offset="1" stop-color="#35c8ff"/>
-                </linearGradient>
-              </defs>
-              <g opacity=".92">
-                <circle class="mapDot" cx="104" cy="154" r="2.4"/><circle class="mapDot" cx="128" cy="144" r="2.4"/><circle class="mapDot" cx="152" cy="148" r="2.4"/><circle class="mapDot" cx="176" cy="164" r="2.4"/><circle class="mapDot" cx="126" cy="176" r="2.4"/><circle class="mapDot" cx="156" cy="190" r="2.4"/><circle class="mapDot dim" cx="184" cy="206" r="2.4"/><circle class="mapDot" cx="210" cy="230" r="2.4"/><circle class="mapDot dim" cx="226" cy="262" r="2.4"/><circle class="mapDot" cx="242" cy="296" r="2.4"/><circle class="mapDot dim" cx="252" cy="330" r="2.4"/>
-                <circle class="mapDot" cx="310" cy="136" r="2.4"/><circle class="mapDot" cx="336" cy="126" r="2.4"/><circle class="mapDot" cx="362" cy="134" r="2.4"/><circle class="mapDot" cx="386" cy="152" r="2.4"/><circle class="mapDot" cx="338" cy="168" r="2.4"/><circle class="mapDot" cx="372" cy="186" r="2.4"/><circle class="mapDot dim" cx="398" cy="214" r="2.4"/><circle class="mapDot" cx="416" cy="244" r="2.4"/><circle class="mapDot dim" cx="438" cy="278" r="2.4"/>
-                <circle class="mapDot" cx="442" cy="152" r="2.4"/><circle class="mapDot" cx="470" cy="142" r="2.4"/><circle class="mapDot" cx="496" cy="154" r="2.4"/><circle class="mapDot" cx="520" cy="176" r="2.4"/><circle class="mapDot" cx="476" cy="188" r="2.4"/><circle class="mapDot" cx="506" cy="212" r="2.4"/><circle class="mapDot" cx="532" cy="236" r="2.4"/><circle class="mapDot" cx="456" cy="252" r="2.4"/><circle class="mapDot" cx="488" cy="278" r="2.4"/><circle class="mapDot dim" cx="548" cy="288" r="2.4"/>
-                <circle class="mapDot" cx="576" cy="250" r="2.4"/><circle class="mapDot" cx="602" cy="268" r="2.4"/><circle class="mapDot dim" cx="626" cy="296" r="2.4"/><circle class="mapDot" cx="650" cy="318" r="2.4"/>
-              </g>
-              <path class="fiberLine" d="M468 206 C500 196, 520 180, 552 164"/>
-              <path class="fiberLine alt" d="M468 206 C358 132, 246 132, 154 158"/>
-              <path class="fiberLine" d="M468 206 C450 232, 444 258, 452 292"/>
-              <path class="fiberLine alt" d="M468 206 C430 146, 386 132, 352 142"/>
-              <circle class="nodePulse" cx="468" cy="206" r="7"/>
-              <circle class="originNode" cx="468" cy="206" r="6"/>
-              <circle class="originNode" cx="552" cy="164" r="5"/><circle class="originNode" cx="154" cy="158" r="5"/><circle class="originNode" cx="452" cy="292" r="5"/><circle class="originNode" cx="352" cy="142" r="5"/>
-            </svg>
-          </div>
+            <circle cx="280" cy="252" r="252" fill="url(#coreGlow)"/>
 
-          <div class="nodeLabel nodeTokyo"><strong>东京节点</strong><span>延迟 <em>28ms</em></span></div>
-          <div class="nodeLabel nodeSilicon"><strong>硅谷节点</strong><span>延迟 <em>110ms</em></span></div>
+            <g transform="rotate(-14 280 252)">
+              <ellipse class="orbitRing" cx="280" cy="252" rx="252" ry="84"/>
+              <circle class="orbitDot" r="3">
+                <animateMotion dur="52s" repeatCount="indefinite" path="M 28,252 a 252,84 0 1 0 504,0 a 252,84 0 1 0 -504,0"/>
+              </circle>
+              <circle class="orbitDot small" r="2">
+                <animateMotion dur="52s" begin="-26s" repeatCount="indefinite" path="M 28,252 a 252,84 0 1 0 504,0 a 252,84 0 1 0 -504,0"/>
+              </circle>
+            </g>
+            <g transform="rotate(22 280 252)">
+              <ellipse class="orbitRing" cx="280" cy="252" rx="226" ry="112" style="opacity:.6"/>
+              <circle class="orbitDot small" r="2.4">
+                <animateMotion dur="68s" repeatCount="indefinite" path="M 54,252 a 226,112 0 1 0 452,0 a 226,112 0 1 0 -452,0"/>
+              </circle>
+            </g>
 
-          <div class="metricCard throughput">
-            <h3>8K 极速吞吐</h3>
-            <div class="appIcons"><span class="appIcon">YT</span><span class="appIcon">NF</span></div>
-            <div class="metricValue">145 Mbps</div>
-            <div class="metricSub">4K / 8K 预加载完成</div>
-          </div>
+            <circle class="globeEdge" cx="280" cy="252" r="168"/>
+            <g>
+              <ellipse class="globeLine" cx="280" cy="252" rx="56" ry="168"/>
+              <ellipse class="globeLine" cx="280" cy="252" rx="112" ry="168"/>
+              <ellipse class="globeLine" cx="280" cy="252" rx="158" ry="168"/>
+              <ellipse class="globeLine" cx="280" cy="252" rx="168" ry="52"/>
+              <ellipse class="globeLine" cx="280" cy="252" rx="168" ry="108"/>
+              <ellipse class="globeLine" cx="280" cy="252" rx="168" ry="150"/>
+            </g>
 
-          <div class="metricCard backbone">
-            <h3>骨干网状态</h3>
-            <div class="ringMini" aria-hidden="true"></div>
-            <div class="metricSub">ISP 专线端到端<br/>BGP 中转 / IEPL 专线</div>
-            <div class="barChart" aria-hidden="true"><span style="height:42%"></span><span style="height:68%"></span><span style="height:54%"></span><span style="height:86%"></span><span style="height:72%"></span></div>
-          </div>
+            <g>
+              <path class="beamPath" id="arcJP" d="M322,215 Q350,196 372,203"/>
+              <path class="beamPath" id="arcUS" d="M322,215 Q240,138 158,203"/>
+              <path class="beamPath" id="arcSG" d="M322,215 Q332,254 316,289"/>
+              <path class="beamPath" id="arcAU" d="M322,215 Q354,276 350,336"/>
+              <path class="beamPath" id="arcNZ" d="M322,215 Q396,282 400,352"/>
+              <path class="beamPath" id="arcFR" d="M322,215 Q266,152 198,145"/>
+            </g>
+            <g>
+              <circle class="particle" r="2.4"><animateMotion dur="6.5s" repeatCount="indefinite" path="M322,215 Q350,196 372,203"/></circle>
+              <circle class="particle" r="2.4"><animateMotion dur="9s" begin="-3s" repeatCount="indefinite" path="M322,215 Q240,138 158,203"/></circle>
+              <circle class="particle" r="2.4"><animateMotion dur="7s" begin="-1.5s" repeatCount="indefinite" path="M322,215 Q332,254 316,289"/></circle>
+              <circle class="particle" r="2.4"><animateMotion dur="8s" begin="-5s" repeatCount="indefinite" path="M322,215 Q354,276 350,336"/></circle>
+              <circle class="particle" r="2.4"><animateMotion dur="9.5s" begin="-2s" repeatCount="indefinite" path="M322,215 Q396,282 400,352"/></circle>
+              <circle class="particle" r="2.4"><animateMotion dur="8.5s" begin="-6s" repeatCount="indefinite" path="M322,215 Q266,152 198,145"/></circle>
+            </g>
+
+            <g>
+              <circle class="nodeHalo" cx="322" cy="215" r="9"/>
+              <circle class="nodeCore" cx="322" cy="215" r="5"/>
+              <text class="nodeText origin" x="316" y="200" text-anchor="end">国内智能接入</text>
+
+              <circle class="nodeHalo" cx="372" cy="203" r="7" style="animation-delay:-1s"/>
+              <circle class="nodeCore" cx="372" cy="203" r="3.6"/>
+              <text class="nodeText" x="382" y="199">日本</text>
+
+              <circle class="nodeHalo" cx="158" cy="203" r="7" style="animation-delay:-2.2s"/>
+              <circle class="nodeCore" cx="158" cy="203" r="3.6"/>
+              <text class="nodeText" x="148" y="196" text-anchor="end">美国</text>
+
+              <circle class="nodeHalo" cx="316" cy="289" r="7" style="animation-delay:-3.1s"/>
+              <circle class="nodeCore" cx="316" cy="289" r="3.6"/>
+              <text class="nodeText" x="300" y="304" text-anchor="end">新加坡</text>
+
+              <circle class="nodeHalo" cx="350" cy="336" r="7" style="animation-delay:-1.7s"/>
+              <circle class="nodeCore" cx="350" cy="336" r="3.6"/>
+              <text class="nodeText" x="336" y="356" text-anchor="end">澳大利亚</text>
+
+              <circle class="nodeHalo" cx="400" cy="352" r="7" style="animation-delay:-4s"/>
+              <circle class="nodeCore" cx="400" cy="352" r="3.6"/>
+              <text class="nodeText" x="410" y="364">新西兰</text>
+
+              <circle class="nodeHalo" cx="198" cy="145" r="7" style="animation-delay:-2.8s"/>
+              <circle class="nodeCore" cx="198" cy="145" r="3.6"/>
+              <text class="nodeText" x="188" y="134" text-anchor="end">法国</text>
+            </g>
+          </svg>
+        </div>
+        <div class="coreStats">
+          <div><b>6+</b><span>全球区域</span></div>
+          <div><b>99.9%</b><span>连接可用性</span></div>
+          <div><b>48ms</b><span>平均延迟</span></div>
+          <div><b>全天候</b><span>智能调度</span></div>
         </div>
       </div>
     </section>
@@ -638,12 +656,13 @@ SITE_HTML = """<!doctype html>
     <section class="shell page" id="page-vip">
       <div class="sectionHead">
         <div>
-          <h2>VIP 套餐</h2>
-          <p>不限流量、不限速，智能匹配稳定线路。首月限时 18 元，季度 48 元，年度 158 元，到账后自动同步官网与 App 会员状态。</p>
+          <h2>选择适合你的连接周期</h2>
+          <p>所有套餐均包含不限流量、智能线路、节点自动切换与多端会员同步。</p>
         </div>
-        <span class="tag" id="vipCountdown">优惠加载中</span>
+        <span class="dealTag" id="vipDeal">新用户首月 ¥18</span>
       </div>
-      <div class="grid three" id="plans"></div>
+      <div class="plansGrid" id="plans"></div>
+      <p class="planFootnote">适合经常使用 ChatGPT、Claude、YouTube 与海外网站的用户。支付后由人工确认开通，会员状态自动同步官网与 App。</p>
       <div class="panel orderBox" id="orderBox">
         <h3>安全支付</h3>
         <p class="muted" id="orderSummary">订单已生成，请按页面提示完成付款。</p>
@@ -658,10 +677,16 @@ SITE_HTML = """<!doctype html>
               <option value="wechat">微信支付</option>
               <option value="alipay">支付宝支付</option>
             </select>
-            <button class="primary" id="submitPaid">我已完成付款</button>
+            <button class="primary" id="submitPaid" style="width:100%; margin-top:14px;">我已完成付款</button>
             <p class="muted">提交后订单进入待确认列表，确认到账后 VIP 会同步到官网和 App。</p>
           </div>
         </div>
+      </div>
+      <div class="panel faqPanel">
+        <h3>常见问题</h3>
+        <div class="faqItem"><strong>会员在 App 和官网通用吗？</strong><span>通用。官网注册的邮箱账号在 Android、Windows 客户端直接登录，会员状态与到期时间自动同步。</span></div>
+        <div class="faqItem"><strong>支付后多久开通？</strong><span>提交付款后由人工确认到账，通常几分钟内完成，开通后无需任何额外操作。</span></div>
+        <div class="faqItem"><strong>可以在多台设备上使用吗？</strong><span>支持手机与电脑同时在线，VIP 还可导出订阅链接在 Clash 等第三方客户端中使用。</span></div>
       </div>
     </section>
 
@@ -676,11 +701,11 @@ SITE_HTML = """<!doctype html>
           <a class="secondary" href="/download/windows">下载 Windows 客户端</a>
         </div>
       </div>
-      <div class="grid three">
+      <div class="grid two">
         <div class="panel"><h3>统一账号</h3><p>官网注册后，App 直接用邮箱和密码登录，下载即可同步使用。</p></div>
         <div class="panel"><h3>智能线路</h3><p>自动匹配可用节点，减少手动配置成本，适合新手直接上手。</p></div>
-        <div class="panel"><h3>专线节点</h3><p>接入 ISP 专线与住宅节点资源，面向 AI 工具、海外网站和高清流媒体场景优化。</p></div>
-        <div class="panel"><h3>自研协议</h3><p>结合自研协议、混淆参数和智能调度策略，弱网环境下连接更稳。</p></div>
+        <div class="panel"><h3>专线节点</h3><p>接入 ISP 专线与优质节点资源，面向 AI 工具、海外网站和高清流媒体场景优化。</p></div>
+        <div class="panel"><h3>稳定连接</h3><p>结合自研协议与智能调度策略，弱网环境下连接更稳。</p></div>
       </div>
     </section>
 
@@ -703,7 +728,7 @@ SITE_HTML = """<!doctype html>
   </main>
 
   <footer>
-    <div class="shell">星隧 · 解锁全球网络 · 畅连 AI 工具与高清流媒体</div>
+    <div class="shell">星隧 · 智能全球网络 · 让 AI 与灵感触手可及</div>
   </footer>
 
   <script>
@@ -790,12 +815,6 @@ SITE_HTML = """<!doctype html>
         loginLink.setAttribute('href', state.token ? '/center' : '/login');
         loginLink.hidden = Boolean(state.token);
       }
-      if (state.user) {
-        const previewId = $('previewId');
-        const previewVip = $('previewVip');
-        if (previewId) previewId.textContent = state.user.id.slice(0, 5).toUpperCase();
-        if (previewVip) previewVip.textContent = vipText(state.user.vip_status);
-      }
     }
 
     function vipText(status) {
@@ -822,6 +841,7 @@ SITE_HTML = """<!doctype html>
         localStorage.setItem('xingsui_user', JSON.stringify(me));
         $('meEmail').textContent = me.email;
         $('meVip').textContent = vipText(me.vip_status);
+        $('meVip').classList.toggle('vipGold', me.vip_status === 'active');
         $('meExpiry').textContent = fmtDate(me.vip_expired_at);
         $('meInvite').textContent = me.invite_code;
         $('sessionState').textContent = `当前浏览器已登录，账号 ID：${me.id}`;
@@ -901,9 +921,9 @@ SITE_HTML = """<!doctype html>
       card.scrollIntoView({ behavior: 'smooth', block: 'start' });
       card.animate(
         [
-          { boxShadow: '0 0 0 0 rgba(25, 197, 162, 0)' },
-          { boxShadow: '0 0 0 4px rgba(25, 197, 162, .24)' },
-          { boxShadow: '0 10px 28px rgba(57, 104, 122, .06)' },
+          { boxShadow: '0 0 0 0 rgba(94, 231, 208, 0)' },
+          { boxShadow: '0 0 0 4px rgba(94, 231, 208, .22)' },
+          { boxShadow: '0 16px 44px rgba(3, 12, 28, .3)' },
         ],
         { duration: 1100, easing: 'ease-out' },
       );
@@ -969,18 +989,6 @@ SITE_HTML = """<!doctype html>
       }
     }
 
-    function startCountdown(endsAt, ids) {
-      const target = endsAt ? new Date(endsAt).getTime() : Date.now() + 3 * 86400000;
-      const tick = () => {
-        const diff = Math.max(0, target - Date.now());
-        const days = Math.floor(diff / 86400000);
-        const hours = Math.floor((diff % 86400000) / 3600000);
-        ids.forEach(id => $(id).textContent = `优惠仅剩 ${days} 天 ${hours} 小时`);
-      };
-      tick();
-      setInterval(tick, 60000);
-    }
-
     async function loadOffer() {
       try {
         const [plans, promo] = await Promise.all([
@@ -989,24 +997,51 @@ SITE_HTML = """<!doctype html>
         ]);
         state.plans = plans;
         state.promo = promo;
-        const plan = plans.find(item => item.id === (promo?.plan_id || 'plan_month')) || plans[0];
-        if (plan) {
-          const sale = promo?.promo_price_cents || plan.sale_price_cents;
-          $('homeNow').textContent = `${money(sale)} 元/月`;
-          $('homeOld').textContent = `原价 ${money(plan.original_price_cents)} 元`;
+        const monthPlan = plans.find(item => item.id === 'plan_month');
+        if (monthPlan) {
+          const sale = (state.promo?.plan_id === 'plan_month' && state.promo?.promo_price_cents) || monthPlan.sale_price_cents;
+          const homeNow = $('homeNow');
+          const vipDeal = $('vipDeal');
+          if (homeNow) homeNow.textContent = `¥${money(sale)}`;
+          if (vipDeal) vipDeal.textContent = `新用户首月 ¥${money(sale)}`;
         }
-        startCountdown(promo?.ends_at, ['homeCountdown', 'vipCountdown']);
         renderPlans();
       } catch (_) {
-        startCountdown(null, ['homeCountdown', 'vipCountdown']);
+        renderPlans();
       }
     }
+
+    const PLAN_META = {
+      plan_month: {
+        title: '月度体验',
+        tagline: '适合首次使用和短期需求',
+        features: ['全部优质节点', 'AI 与海外网站支持', 'App 与官网状态同步'],
+        cta: '开始体验',
+        theme: '',
+      },
+      plan_quarter: {
+        title: '季度会员',
+        tagline: '稳定使用，综合性价比更高',
+        features: ['包含月度全部权益', '长期线路优化', '多设备使用'],
+        cta: '选择季度会员',
+        theme: 'featured',
+        tag: '最多用户选择',
+      },
+      plan_year: {
+        title: '年度会员',
+        tagline: '适合长期使用，单月成本更低',
+        features: ['包含全部会员权益', '一年内无需重复续费', '优先体验新增节点'],
+        cta: '选择年度会员',
+        theme: 'gold',
+        tag: '年度最省',
+      },
+    };
 
     function renderPlans() {
       const box = $('plans');
       if (!box) return;
       const plans = (state.plans.length ? state.plans : [
-        { id: 'plan_month', name: '首月会员', duration_days: 30, original_price_cents: 2880, sale_price_cents: 1800 },
+        { id: 'plan_month', name: '月度体验', duration_days: 30, original_price_cents: 2880, sale_price_cents: 1800 },
         { id: 'plan_quarter', name: '季度会员', duration_days: 90, original_price_cents: 8640, sale_price_cents: 4800 },
         { id: 'plan_year', name: '年度会员', duration_days: 365, original_price_cents: 34560, sale_price_cents: 15800 },
       ]).slice().sort((a, b) => {
@@ -1016,21 +1051,24 @@ SITE_HTML = """<!doctype html>
       box.innerHTML = plans.map(plan => {
         const promo = state.promo?.plan_id === plan.id ? state.promo : null;
         const sale = promo?.promo_price_cents || plan.sale_price_cents;
-        const hot = plan.id === 'plan_month' ? ' hot' : '';
-        const copy = {
-          plan_month: '适合先体验星隧线路质量，AI 工具、海外网站和高清流媒体都能稳定使用。',
-          plan_quarter: '适合长期日常使用，价格更划算，稳定覆盖办公、学习和流媒体场景。',
-          plan_year: '全年无忧使用，长期稳定连接，多端账号状态自动同步，省心更划算。',
-        }[plan.id] || '稳定连接全球网络，适合 AI 工具、海外网站和高清流媒体访问。';
-        const benefits = ['不限流量', '不限速', '稳定低延迟'];
-        return `<article class="plan${hot}">
-          <span class="badge">${promo?.tag || (plan.id === 'plan_month' ? '限时特惠' : '稳定套餐')}</span>
-          <h3>${plan.name}</h3>
-          <p>${plan.duration_days} 天会员 · 官网与 App 自动同步</p>
-          <p class="planLead">${copy}</p>
-          <div class="planBenefits">${benefits.map(item => `<span>${item}</span>`).join('')}</div>
-          <div class="planPrice"><b>${money(sale)} 元</b><span>${money(plan.original_price_cents)} 元</span></div>
-          <button class="primary" data-buy="${plan.id}">选择套餐</button>
+        const meta = PLAN_META[plan.id] || {
+          title: plan.name,
+          tagline: '稳定连接全球网络',
+          features: ['不限流量不限速', '智能线路调度', '多端会员同步'],
+          cta: '选择套餐',
+          theme: '',
+        };
+        const months = Math.round(plan.duration_days / 30);
+        const per = months > 1 ? Math.round((sale / 100 / months) * 10) / 10 : 0;
+        const perText = months > 1 ? `折合 ¥${per} / 月` : '新用户首次开通特惠价';
+        return `<article class="plan ${meta.theme}">
+          ${meta.tag ? `<span class="planTag">${meta.tag}</span>` : ''}
+          <h3>${meta.title}</h3>
+          <p class="planTagline">${meta.tagline}</p>
+          <div class="planPrice"><em>¥</em><b>${money(sale)}</b><span>/ ${plan.duration_days} 天</span></div>
+          <p class="perMonth">${perText}</p>
+          <ul class="planFeatures">${meta.features.map(item => `<li>${item}</li>`).join('')}</ul>
+          <button class="planBtn" data-buy="${plan.id}">${meta.cta}</button>
         </article>`;
       }).join('');
       box.querySelectorAll('[data-buy]').forEach(button => {
@@ -1072,6 +1110,21 @@ SITE_HTML = """<!doctype html>
       $('submitPaid').disabled = order.status !== 'pending_payment';
       $('submitPaid').textContent = order.status === 'pending_confirm' ? '已提交，等待确认' : '我已完成付款';
     }
+
+    // 核心舱视差：鼠标 / 触摸移动时轻微偏移
+    (function initParallax() {
+      const panel = $('heroPanel');
+      const scene = $('coreScene');
+      if (!panel || !scene) return;
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      panel.addEventListener('pointermove', (event) => {
+        const rect = panel.getBoundingClientRect();
+        const x = (event.clientX - rect.left) / rect.width - 0.5;
+        const y = (event.clientY - rect.top) / rect.height - 0.5;
+        scene.style.transform = `translate3d(${(x * 12).toFixed(1)}px, ${(y * 9).toFixed(1)}px, 0)`;
+      });
+      panel.addEventListener('pointerleave', () => { scene.style.transform = ''; });
+    })();
 
     document.addEventListener('click', (event) => {
       const routeEl = event.target.closest('[data-route]');

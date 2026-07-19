@@ -239,8 +239,11 @@ def test_payment_page_contains_deep_links_and_qr_fallback() -> None:
     assert "支付宝支付" in html
     assert "wxp://" in html
     assert "https%3A%2F%2Fqr.alipay.com%2F" in html
-    assert "https://xingsui.org/pay/wechat.jpg" in html
-    assert "https://xingsui.org/pay/alipay.jpg" in html
+    # 收款码必须是站内相对路径，双域名镜像下随当前域名加载（见 ARCHITECTURE §9）
+    assert "/pay/wechat.jpg" in html
+    assert "https://xingsui.org/pay/wechat.jpg" not in html
+    assert "/pay/alipay.jpg" in html
+    assert "https://xingsui.org/pay/alipay.jpg" not in html
     assert "支付完成后，点“我已经完成支付”提交订单。" in html
     assert "订单已提交成功！请等待管理员确认到账，确认后 VIP 会自动开通。" in html
     assert "intent://" in html

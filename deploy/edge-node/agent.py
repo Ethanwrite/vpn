@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import signal
 import ssl
@@ -21,15 +22,24 @@ import time
 import urllib.request
 from uuid import UUID
 
-AGENT_VERSION = "2.0.0"
+AGENT_VERSION = "2.1.0"
 MAX_REQUEST_BYTES = 64 * 1024
 SIGNATURE_WINDOW_SECONDS = 90
 MAX_LEASE_SECONDS = 60 * 60
+# Subscription VLESS users are long-lived (bound to the user's VIP expiry) rather
+# than short leases: Clash-style clients import a static config and never renew a
+# lease. Cap keeps a compromised control plane from minting effectively-permanent
+# credentials; 400 days comfortably covers an annual VIP plan plus slack.
+MAX_SUBSCRIPTION_SECONDS = 400 * 24 * 60 * 60
 NONCES: dict[str, int] = {}
 NONCE_LOCK = threading.Lock()
 LEASE_LOCK = threading.RLock()
 VLESS_LOCK = threading.RLock()
+SUBSCRIPTION_LOCK = threading.RLock()
 LEASES: dict[str, dict[str, object]] = {}
+# uuid -> {"name": str, "expires_at": iso}. Long-lived subscription users that must
+# survive reconcile until their VIP expiry, keyed so per-user usage is attributable.
+SUBSCRIPTIONS: dict[str, dict[str, object]] = {}
 UTC = timezone.utc
 
 
@@ -171,6 +181,14 @@ def validate_lease_id(value: object) -> str:
 
 
 def parse_expiry(value: object, now: datetime | None = None) -> datetime:
+    return _parse_expiry_bounded(value, MAX_LEASE_SECONDS, now)
+
+
+def parse_subscription_expiry(value: object, now: datetime | None = None) -> datetime:
+    return _parse_expiry_bounded(value, MAX_SUBSCRIPTION_SECONDS, now)
+
+
+def _parse_expiry_bounded(value: object, max_seconds: int, now: datetime | None) -> datetime:
     now = now or datetime.now(UTC)
     text = str(value or "").strip().replace("Z", "+00:00")
     try:
@@ -180,9 +198,20 @@ def parse_expiry(value: object, now: datetime | None = None) -> datetime:
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=UTC)
     expires_at = expires_at.astimezone(UTC)
-    if expires_at <= now or expires_at > now + timedelta(seconds=MAX_LEASE_SECONDS):
+    if expires_at <= now or expires_at > now + timedelta(seconds=max_seconds):
         raise ValueError("invalid lease expiry")
     return expires_at
+
+
+def validate_user_name(value: object) -> str:
+    """Subscription/lease user label used to attribute per-user usage in sing-box
+    logs. Restricted so it can be parsed back out of a log line unambiguously."""
+    name = str(value or "").strip()
+    if not name or len(name) > 80:
+        raise ValueError("invalid user name")
+    if any(ch.isspace() for ch in name) or "[" in name or "]" in name:
+        raise ValueError("invalid user name")
+    return name
 
 
 def add_peer(public_key: str, allowed_ip: str) -> None:
@@ -260,28 +289,37 @@ def write_vless_config(config: dict) -> None:
             pass
 
 
-def mutate_vless_user(user_uuid: str, *, add: bool) -> None:
+def build_vless_user_entry(user_uuid: str, name: str | None) -> dict[str, str]:
+    entry: dict[str, str] = {"uuid": user_uuid}
+    flow = env("XS_VLESS_FLOW")
+    if flow:
+        entry["flow"] = flow
+    # sing-box logs the user name in brackets on every accepted connection; it is
+    # how per-user source-IP usage is attributed. Always tag when a name is known.
+    if name:
+        entry["name"] = name
+    return entry
+
+
+def mutate_vless_user(user_uuid: str, *, add: bool, name: str | None = None) -> None:
     with VLESS_LOCK:
         path = vless_config_path()
         config = json.loads(path.read_text(encoding="utf-8"))
         users = vless_users(config)
+        desired = build_vless_user_entry(user_uuid, name)
         matching = [entry for entry in users if isinstance(entry, dict) and entry.get("uuid") == user_uuid]
-        flow = env("XS_VLESS_FLOW")
-        if add and len(matching) == 1 and str(matching[0].get("flow", "")) == flow:
+        if add and len(matching) == 1 and matching[0] == desired:
             return
         if not add and not matching:
             return
         users[:] = [entry for entry in users if not isinstance(entry, dict) or entry.get("uuid") != user_uuid]
         if add:
-            entry = {"uuid": user_uuid}
-            if flow:
-                entry["flow"] = flow
-            users.append(entry)
+            users.append(desired)
         write_vless_config(config)
 
 
-def add_vless_user(user_uuid: str) -> None:
-    mutate_vless_user(user_uuid, add=True)
+def add_vless_user(user_uuid: str, name: str | None = None) -> None:
+    mutate_vless_user(user_uuid, add=True, name=name)
 
 
 def remove_vless_user(user_uuid: str) -> None:
@@ -376,6 +414,14 @@ def cleanup_loop() -> None:
     interval = max(5, int(env("XS_LEASE_CLEANUP_INTERVAL", "15") or "15"))
     while True:
         cleanup_expired_leases()
+        # Enforce subscription expiry too: reconcile prunes expired subscription
+        # users from both the registry and sing-box (they hold no short lease).
+        protocols = {item.strip().lower() for item in env("XS_MANAGED_PROTOCOLS", "awg").split(",") if item.strip()}
+        if "vless" in protocols:
+            try:
+                reconcile_vless_users()
+            except Exception:
+                pass
         time.sleep(interval)
 
 
@@ -422,15 +468,103 @@ def static_vless_uuids() -> set[str]:
     }
 
 
+def subscription_state_path() -> Path:
+    return Path(os.getenv("XS_SUBSCRIPTION_STATE_PATH", "/var/lib/xingsui-agent/subscriptions.json"))
+
+
+def load_subscriptions() -> None:
+    path = subscription_state_path()
+    if not path.is_file():
+        return
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if isinstance(parsed, dict):
+        with SUBSCRIPTION_LOCK:
+            SUBSCRIPTIONS.clear()
+            SUBSCRIPTIONS.update(
+                {str(uuid): value for uuid, value in parsed.items() if isinstance(value, dict)}
+            )
+
+
+def save_subscriptions() -> None:
+    path = subscription_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with SUBSCRIPTION_LOCK:
+        temporary.write_text(json.dumps(SUBSCRIPTIONS, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def register_subscription(user_uuid: str, name: str, expires_at: datetime) -> None:
+    with SUBSCRIPTION_LOCK:
+        SUBSCRIPTIONS[user_uuid] = {"name": name, "expires_at": expires_at.astimezone(UTC).isoformat()}
+        save_subscriptions()
+
+
+def remove_subscription(user_uuid: str) -> None:
+    with SUBSCRIPTION_LOCK:
+        if SUBSCRIPTIONS.pop(user_uuid, None) is not None:
+            save_subscriptions()
+
+
+def active_subscriptions(now: datetime | None = None) -> dict[str, str]:
+    """Return {uuid: name} for subscription users whose expiry is still in the future.
+    Expired entries are pruned from the registry (and their sing-box user removed)."""
+    now = now or datetime.now(UTC)
+    active: dict[str, str] = {}
+    changed = False
+    with SUBSCRIPTION_LOCK:
+        for user_uuid, value in list(SUBSCRIPTIONS.items()):
+            try:
+                expires_at = datetime.fromisoformat(str(value["expires_at"]).replace("Z", "+00:00"))
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+            except Exception:
+                SUBSCRIPTIONS.pop(user_uuid, None)
+                changed = True
+                continue
+            if expires_at > now:
+                active[user_uuid] = str(value.get("name") or "")
+            else:
+                SUBSCRIPTIONS.pop(user_uuid, None)
+                changed = True
+        if changed:
+            save_subscriptions()
+    return active
+
+
 def reconcile_vless_users() -> None:
-    known = active_lease_identities("vless") | static_vless_uuids()
+    lease_uuids = active_lease_identities("vless")
+    static_uuids = static_vless_uuids()
+    subscriptions = active_subscriptions()
+    known = lease_uuids | static_uuids | set(subscriptions.keys())
     with VLESS_LOCK:
         path = vless_config_path()
         config = json.loads(path.read_text(encoding="utf-8"))
         users = vless_users(config)
-        filtered = [entry for entry in users if isinstance(entry, dict) and entry.get("uuid") in known]
-        if filtered != users:
-            users[:] = filtered
+        desired: list[dict] = []
+        seen: set[str] = set()
+        for entry in users:
+            if not isinstance(entry, dict):
+                continue
+            user_uuid = entry.get("uuid")
+            if user_uuid not in known or user_uuid in seen:
+                continue
+            seen.add(str(user_uuid))
+            # Keep subscription users tagged with their attribution name.
+            if user_uuid in subscriptions and subscriptions[user_uuid]:
+                desired.append(build_vless_user_entry(str(user_uuid), subscriptions[user_uuid]))
+            else:
+                desired.append(entry)
+        # Re-add any subscription user missing from the config (e.g. after a manual edit).
+        for user_uuid, name in subscriptions.items():
+            if user_uuid not in seen:
+                desired.append(build_vless_user_entry(user_uuid, name or None))
+        if desired != users:
+            users[:] = desired
             write_vless_config(config)
 
 
@@ -487,6 +621,74 @@ def peer_usage() -> dict[str, int]:
                 continue
     except Exception:
         pass
+    return usage
+
+
+# sing-box (log level info) emits two correlated lines per accepted VLESS connection,
+# with the connection id as "[<id> <duration>]" and ANSI colour codes around fields:
+#   INFO [<id> 0ms] inbound/vless[<tag>]: inbound connection from <SRC_IP>:<port>
+#   INFO [<id> Nms] inbound/vless[<tag>]: [<user_name>] inbound connection to <dst>
+# XTLS-vision splices to the kernel after the handshake, so byte counters are not
+# available per user; the source IP set per user is, and is the signal that matters
+# for detecting shared/leaked subscription credentials.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_CONN_FROM_RE = re.compile(r"\[(\d+) [^\]]*\] inbound/vless\[[^\]]*\]: inbound connection from ([0-9A-Fa-f:.]+):\d+")
+_CONN_USER_RE = re.compile(r"\[(\d+) [^\]]*\] inbound/vless\[[^\]]*\]: \[([^\]\s]+)\] inbound connection to ")
+
+
+def vless_usage(window_seconds: int | None = None) -> dict[str, dict[str, object]]:
+    """Per-user (by sing-box user name) connection audit over a recent window.
+
+    Returns {name: {"distinct_source_ips": int, "connections": int,
+    "source_ips": [str, ...]}}. Attribution comes from the user name tagged on each
+    VLESS user; a subscription credential that is being shared/leaked shows up as an
+    abnormally large distinct-source-IP count for a single name.
+    """
+    window_seconds = window_seconds or int(env("XS_VLESS_USAGE_WINDOW_SECONDS", "1800") or "1800")
+    service = env("XS_VLESS_SERVICE")
+    if not service:
+        return {}
+    try:
+        log = run(
+            [
+                env("XS_JOURNALCTL_BIN", "/usr/bin/journalctl"),
+                "-u",
+                service,
+                "--since",
+                f"-{int(window_seconds)}s",
+                "--no-pager",
+                "-o",
+                "cat",
+            ]
+        )
+    except Exception:
+        return {}
+    conn_source: dict[str, str] = {}
+    conn_user: dict[str, str] = {}
+    for raw_line in log.splitlines():
+        line = _ANSI_RE.sub("", raw_line)
+        match_from = _CONN_FROM_RE.search(line)
+        if match_from:
+            conn_source[match_from.group(1)] = match_from.group(2)
+            continue
+        match_user = _CONN_USER_RE.search(line)
+        if match_user:
+            conn_user[match_user.group(1)] = match_user.group(2)
+    per_user_ips: dict[str, set[str]] = {}
+    per_user_conns: dict[str, int] = {}
+    for conn_id, name in conn_user.items():
+        per_user_conns[name] = per_user_conns.get(name, 0) + 1
+        source_ip = conn_source.get(conn_id)
+        if source_ip:
+            per_user_ips.setdefault(name, set()).add(source_ip)
+    usage: dict[str, dict[str, object]] = {}
+    for name, count in per_user_conns.items():
+        ips = sorted(per_user_ips.get(name, set()))
+        usage[name] = {
+            "distinct_source_ips": len(ips),
+            "connections": count,
+            "source_ips": ips[:64],
+        }
     return usage
 
 
@@ -609,9 +811,10 @@ class Handler(BaseHTTPRequestHandler):
                 user_uuid = validate_uuid(payload.get("uuid"))
                 lease_id = validate_lease_id(payload.get("lease_id"))
                 expires_at = parse_expiry(payload.get("expires_at"))
+                name = validate_user_name(payload["name"]) if payload.get("name") else None
                 with LEASE_LOCK:
                     try:
-                        add_vless_user(user_uuid)
+                        add_vless_user(user_uuid, name)
                         register_lease(lease_id, "vless", user_uuid, expires_at)
                     except Exception:
                         try:
@@ -626,6 +829,30 @@ class Handler(BaseHTTPRequestHandler):
                     remove_vless_user(user_uuid)
                     remove_lease_by_identity("vless", user_uuid)
                 self._send(200, {"status": "removed"})
+            elif path == "/vless/subscription/add":
+                user_uuid = validate_uuid(payload.get("uuid"))
+                name = validate_user_name(payload.get("name"))
+                expires_at = parse_subscription_expiry(payload.get("expires_at"))
+                with LEASE_LOCK:
+                    try:
+                        add_vless_user(user_uuid, name)
+                        register_subscription(user_uuid, name, expires_at)
+                    except Exception:
+                        try:
+                            remove_vless_user(user_uuid)
+                        except Exception:
+                            pass
+                        raise
+                self._send(200, {"status": "added"})
+            elif path == "/vless/subscription/remove":
+                user_uuid = validate_uuid(payload.get("uuid"))
+                with LEASE_LOCK:
+                    remove_vless_user(user_uuid)
+                    remove_subscription(user_uuid)
+                self._send(200, {"status": "removed"})
+            elif path == "/vless/usage":
+                # Read-only per-user connection/source-IP audit (see vless_usage).
+                self._send(200, {"users": vless_usage()})
             else:
                 self._send(404, {"detail": "not found"})
         except (ValueError, RuntimeError, subprocess.CalledProcessError, OSError):
@@ -651,6 +878,7 @@ def validate_startup_configuration() -> None:
 def main() -> None:
     validate_startup_configuration()
     load_leases()
+    load_subscriptions()
     cleanup_expired_leases()
     reconcile_managed_credentials()
     threading.Thread(target=cleanup_loop, daemon=True).start()

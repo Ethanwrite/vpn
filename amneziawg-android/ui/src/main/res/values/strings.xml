@@ -134,6 +134,10 @@
     <string name="xingsui_home_traffic_vip">会员畅享 · 不限流量</string>
     <string name="xingsui_home_user_center">我的</string>
     <string name="xingsui_home_connect_failed">暂时无法连接，请稍后重试</string>
+    <string name="xingsui_link_switching">当前网络与该线路不稳定，正在自动切换线路…</string>
+    <string name="xingsui_link_switched">已自动切换到更稳定的线路</string>
+    <string name="xingsui_link_dead_disconnected">连接已断开：当前网络与该线路不兼容，请尝试其他线路或切换网络</string>
+    <string name="xingsui_link_report_failed">连接已断开：网络不稳定，请重试</string>
     <string name="xingsui_home_connect_timeout">VPN 握手超时，当前网络可能拦截 UDP，请切换网络后重试</string>
     <string name="xingsui_home_config_refreshed">握手超时，已刷新节点配置，请再次点击连接</string>
     <string name="xingsui_home_disconnect_failed">断开失败，请稍后重试</string>

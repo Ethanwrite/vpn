@@ -206,3 +206,16 @@ def test_node_status_label() -> None:
     assert node_service.node_status_label(make_health(now - timedelta(seconds=5)), now, 120) == "online"
     assert node_service.node_status_label(make_health(now - timedelta(seconds=600)), now, 120) == "offline"
     assert node_service.node_status_label(None, now, 120) == "offline"
+
+
+def test_pick_pool_node_exclusion() -> None:
+    japan = make_node(id="node-japan-02", weight=220)
+    utah = make_node(id="node-144", weight=150)
+    ranked = [japan, utah]
+    assert node_service.pick_pool_node(ranked) is japan
+    # 换节点重连：跳过刚失败的节点
+    assert node_service.pick_pool_node(ranked, "node-japan-02") is utah
+    # 排除后无其它候选时忽略排除，避免 503
+    assert node_service.pick_pool_node([japan], "node-japan-02") is japan
+    assert node_service.pick_pool_node([], "node-japan-02") is None
+    assert node_service.pick_pool_node([]) is None

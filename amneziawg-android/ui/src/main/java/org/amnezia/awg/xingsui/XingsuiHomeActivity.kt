@@ -20,6 +20,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -39,6 +40,7 @@ import org.amnezia.awg.backend.GoBackend
 import org.amnezia.awg.backend.Tunnel
 import org.amnezia.awg.databinding.XingsuiHomeActivityBinding
 import org.amnezia.awg.model.ObservableTunnel
+import org.amnezia.awg.model.TunnelManager
 import org.amnezia.awg.xingsui.api.XingsuiApiClient
 import org.amnezia.awg.xingsui.api.XingsuiHttpException
 import org.amnezia.awg.xingsui.model.UserAccount
@@ -116,7 +118,37 @@ class XingsuiHomeActivity : AppCompatActivity() {
             lifecycleScope.launch { showNodePicker() }
         }
 
+        collectManagedTunnelEvents()
         renderSignedOut()
+    }
+
+    /** 展示 TunnelManager 主动断开/自动切换线路的原因，避免静默断开。 */
+    private fun collectManagedTunnelEvents() {
+        lifecycleScope.launch {
+            Application.getTunnelManager().managedTunnelEvents.collect { event ->
+                if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@collect
+                when (event) {
+                    is TunnelManager.ManagedTunnelEvent.DeadLinkSwitching ->
+                        Snackbar.make(binding.root, R.string.xingsui_link_switching, Snackbar.LENGTH_LONG).show()
+                    is TunnelManager.ManagedTunnelEvent.DeadLinkSwitched -> {
+                        Snackbar.make(binding.root, R.string.xingsui_link_switched, Snackbar.LENGTH_LONG).show()
+                        renderTunnelState(findManagedTunnel())
+                    }
+                    is TunnelManager.ManagedTunnelEvent.DeadLinkDisconnected -> {
+                        Snackbar.make(binding.root, R.string.xingsui_link_dead_disconnected, Snackbar.LENGTH_LONG).show()
+                        renderTunnelState(null)
+                    }
+                    is TunnelManager.ManagedTunnelEvent.ReportFailureDisconnected -> {
+                        Snackbar.make(binding.root, R.string.xingsui_link_report_failed, Snackbar.LENGTH_LONG).show()
+                        renderTunnelState(null)
+                    }
+                    is TunnelManager.ManagedTunnelEvent.EntitlementDenied -> {
+                        renderTunnelState(null)
+                        showEntitlementRequired(event.reason)
+                    }
+                }
+            }
+        }
     }
 
     override fun onResume() {

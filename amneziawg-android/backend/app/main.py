@@ -44,6 +44,7 @@ from app.db_models import (
     PaymentSettingRow,
     PromotionActivityRow,
     SubscriptionAuditLogRow,
+    SubscriptionCredentialRow,
     UserRow,
     VipPlanRow,
     VpnDeviceRow,
@@ -70,10 +71,11 @@ async def lifespan(_: FastAPI):
         restore_active_vpn_peers()
     cleanup_task = asyncio.create_task(vpn_lease_cleanup_loop())
     usage_task = asyncio.create_task(node_usage_reconcile_loop())
+    sub_audit_task = asyncio.create_task(subscription_usage_audit_loop())
     try:
         yield
     finally:
-        for task in (cleanup_task, usage_task):
+        for task in (cleanup_task, usage_task, sub_audit_task):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
@@ -662,6 +664,9 @@ class AdminUserSummary(BaseModel):
     online: bool
     invited_count: int = 0
     paid_invite_count: int = 0
+    # Peak distinct source IPs across the user's subscription nodes today (sharing/leak
+    # signal). 0 when the user has not used a subscription link.
+    subscription_source_ips_today: int = 0
 
 
 class SystemHealthSummary(BaseModel):
@@ -697,6 +702,20 @@ VPN_LEASE_SWEEP_SECONDS = max(10, int(os.getenv("VPN_LEASE_SWEEP_SECONDS", "30")
 # How often the backend pulls authoritative per-peer usage from awg nodes to charge
 # free traffic by ACTUAL bytes forwarded (not client self-report). Shorter = tighter cutoff.
 NODE_USAGE_SWEEP_SECONDS = max(5, int(os.getenv("NODE_USAGE_SWEEP_SECONDS", "20")))
+# How often the backend pulls per-user VLESS connection/source-IP audits from nodes, and
+# the distinct-source-IP count on a single node above which a subscription credential is
+# flagged as likely shared/leaked (source-IP based; XTLS-vision hides per-user bytes).
+SUBSCRIPTION_AUDIT_SWEEP_SECONDS = max(30, int(os.getenv("SUBSCRIPTION_AUDIT_SWEEP_SECONDS", "300")))
+SUBSCRIPTION_SHARING_ALERT_IPS = max(2, int(os.getenv("SUBSCRIPTION_SHARING_ALERT_IPS", "5")))
+# When a single subscription is seen from at least this many distinct source IPs on one
+# node within the audit window, auto-revoke it (kill node UUIDs + invalidate the link so
+# the shared config dies; the user must re-export). Set well above the alert threshold so
+# legitimate mobile IP rotation does not trip it. Two consecutive over-threshold audits
+# are required, to ride out transient spikes. Toggle off with SUBSCRIPTION_AUTO_REVOKE_ENABLED=false.
+SUBSCRIPTION_AUTO_REVOKE_ENABLED = os.getenv("SUBSCRIPTION_AUTO_REVOKE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+SUBSCRIPTION_REVOKE_SOURCE_IPS = max(3, int(os.getenv("SUBSCRIPTION_REVOKE_SOURCE_IPS", "10")))
+# user_id -> consecutive audit cycles seen over the revoke threshold (in-memory strike count).
+SUBSCRIPTION_SHARING_STRIKES: dict[str, int] = {}
 SUPPORTED_VPN_PLATFORMS = {"android": "awg", "windows": "vless"}
 ONLINE_WINDOW_SECONDS = 5 * 60
 EXPIRING_SOON_DAYS = 7
@@ -1096,12 +1115,128 @@ def render_clash_yaml(user: UserRow, proxies: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
+def subscription_user_name(user: UserRow) -> str:
+    """Stable per-user label tagged on every node's VLESS user so sing-box logs
+    attribute connections (and source IPs) back to this account."""
+    return f"u-{user.id}"
+
+
+def eligible_subscription_nodes(db: Session) -> list[VpnNodeRow]:
+    nodes = list(
+        db.scalars(
+            select(VpnNodeRow)
+            .where(VpnNodeRow.enabled.is_(True))
+            .where(VpnNodeRow.protocol.in_(("vless", "dual")))
+            .order_by(VpnNodeRow.weight.desc(), VpnNodeRow.id)
+        ).all()
+    )
+    return [node for node in nodes if node_service.build_vless_config(node, str(uuid4())) is not None]
+
+
+def subscription_proxy_dict(node: VpnNodeRow, vless_uuid: str, used_names: set[str]) -> dict[str, object] | None:
+    config = node_service.build_vless_config(node, vless_uuid)
+    if config is None:
+        return None
+    label = unique_proxy_name(f"星隧-{node.region or node.name}", used_names)
+    proxy: dict[str, object] = {
+        "name": label,
+        "type": "vless",
+        "server": config["server"],
+        "port": int(config["server_port"]),
+        "uuid": config["uuid"],
+        "network": "tcp",
+        "udp": True,
+        "tls": True,
+        "servername": config["server_name"],
+        "client-fingerprint": config["utls_fingerprint"],
+        "reality-opts": {"public-key": config["public_key"], "short-id": config["short_id"]},
+    }
+    if config["flow"]:
+        proxy["flow"] = config["flow"]
+    return proxy
+
+
+def provision_subscription_credentials(db: Session, user: UserRow) -> list[tuple[VpnNodeRow, str]]:
+    """Ensure this user holds a per-node VLESS UUID (bound to their VIP expiry) on every
+    eligible node, registered with the node agent. Idempotent: only calls the agent when
+    a credential is newly issued, rotated (token version bumped) or its expiry changed."""
+    expires_at = coerce_utc(user.vip_expired_at)
+    if expires_at is None:
+        raise SubscriptionApiException(403, "VIP_REQUIRED", "开通 VIP 后即可导出订阅链接。")
+    name = subscription_user_name(user)
+    version = int(user.subscription_token_version or 0)
+    existing = {
+        row.node_id: row
+        for row in db.scalars(
+            select(SubscriptionCredentialRow).where(SubscriptionCredentialRow.user_id == user.id)
+        ).all()
+    }
+    issued: list[tuple[VpnNodeRow, str]] = []
+    for node in eligible_subscription_nodes(db):
+        row = existing.get(node.id)
+        # Already provisioned and current for this node: render it without re-pushing.
+        if row is not None and row.token_version == version and coerce_utc(row.expires_at) == expires_at:
+            issued.append((node, row.vless_uuid))
+            continue
+        rotating = row is not None and row.token_version != version
+        target_uuid = str(uuid4()) if (row is None or rotating) else row.vless_uuid
+        try:
+            if rotating:
+                # Subscription was reset: drop the old UUID before registering the new one.
+                with suppress(Exception):
+                    node_service.agent_remove_subscription_user(node, row.vless_uuid)
+            node_service.agent_add_subscription_user(node, target_uuid, name, expires_at)
+        except Exception:
+            # One node's agent being unreachable (e.g. out of bandwidth) must not break the
+            # whole subscription — skip it; its DB row is left untouched so a later pull retries.
+            logger.warning("subscription provisioning skipped node=%s (agent unavailable)", node.id)
+            continue
+        if row is None:
+            row = SubscriptionCredentialRow(
+                id=str(uuid4()),
+                user_id=user.id,
+                node_id=node.id,
+                vless_uuid=target_uuid,
+                user_name=name,
+                token_version=version,
+                expires_at=expires_at,
+            )
+            db.add(row)
+        else:
+            row.vless_uuid = target_uuid
+            row.token_version = version
+            row.expires_at = expires_at
+        issued.append((node, target_uuid))
+    if not issued:
+        raise SubscriptionApiException(503, "NO_AVAILABLE_NODES", "暂无可用订阅节点，请联系客服。")
+    return issued
+
+
+def revoke_subscription_credentials(db: Session, user: UserRow) -> None:
+    """Remove all of the user's subscription UUIDs from the nodes and drop the rows, so a
+    reset (or a leaked config) immediately stops working."""
+    rows = list(
+        db.scalars(
+            select(SubscriptionCredentialRow).where(SubscriptionCredentialRow.user_id == user.id)
+        ).all()
+    )
+    for row in rows:
+        node = db.get(VpnNodeRow, row.node_id)
+        if node is not None:
+            try:
+                node_service.agent_remove_subscription_user(node, row.vless_uuid)
+            except Exception:
+                logger.warning("failed to revoke subscription uuid on reset node=%s", row.node_id)
+        db.delete(row)
+
+
 def render_subscription_content(db: Session, user: UserRow) -> tuple[str, int]:
+    issued = provision_subscription_credentials(db, user)
     used_names: set[str] = set()
     proxies = [
         proxy
-        for link in read_subscription_links()
-        if (proxy := parse_proxy_link(link, used_names)) is not None
+        for node, vless_uuid in issued
+        if (proxy := subscription_proxy_dict(node, vless_uuid, used_names)) is not None
     ]
     if not proxies:
         raise SubscriptionApiException(503, "NO_AVAILABLE_NODES", "暂无可用订阅节点，请联系客服。")
@@ -1596,6 +1731,121 @@ async def node_usage_reconcile_loop() -> None:
             security_logger.error("Node usage reconciliation failed")
 
 
+def audit_subscription_usage() -> None:
+    """Pull each node's per-user VLESS connection audit and record how many distinct
+    source IPs each subscription credential is seen from. A single credential used from
+    many source IPs is the signature of a shared/leaked subscription config."""
+    with SessionLocal() as db:
+        nodes = list(
+            db.scalars(
+                select(VpnNodeRow)
+                .where(VpnNodeRow.enabled.is_(True))
+                .where(VpnNodeRow.protocol.in_(("vless", "dual")))
+            ).all()
+        )
+        now = datetime.now(UTC)
+        today = now.date().isoformat()
+        changed = False
+        # Peak distinct source IPs seen for each user on any single node this cycle.
+        user_peak_ips: dict[str, int] = {}
+        for node in nodes:
+            try:
+                usage = node_service.agent_vless_usage(node)
+            except Exception:
+                continue
+            for name, stats in usage.items():
+                if not name.startswith("u-"):
+                    continue
+                user_id = name[2:]
+                row = db.scalar(
+                    select(SubscriptionCredentialRow)
+                    .where(SubscriptionCredentialRow.user_id == user_id)
+                    .where(SubscriptionCredentialRow.node_id == node.id)
+                )
+                if row is None:
+                    continue
+                distinct = int(stats.get("distinct_source_ips") or 0)
+                user_peak_ips[user_id] = max(user_peak_ips.get(user_id, 0), distinct)
+                row.last_distinct_source_ips = distinct
+                row.last_audit_at = now
+                if row.daily_peak_day != today:
+                    row.daily_peak_day = today
+                    row.daily_peak_source_ips = distinct
+                elif distinct > int(row.daily_peak_source_ips or 0):
+                    row.daily_peak_source_ips = distinct
+                changed = True
+                if distinct >= SUBSCRIPTION_SHARING_ALERT_IPS:
+                    security_logger.warning(
+                        "subscription sharing suspected user_id=%s node=%s distinct_source_ips=%s",
+                        user_id,
+                        node.id,
+                        distinct,
+                    )
+        if changed:
+            db.commit()
+        enforce_subscription_sharing_revocation(db, user_peak_ips)
+
+
+def enforce_subscription_sharing_revocation(db: Session, user_peak_ips: dict[str, int]) -> None:
+    """Auto-revoke a subscription whose UUID is used from too many distinct source IPs
+    for two consecutive audits (shared/leaked config). Revocation pulls the per-node
+    UUIDs and rotates the token so the shared config dies; the user must re-export."""
+    # Clear strikes for users who are back under the threshold this cycle.
+    for tracked_id in list(SUBSCRIPTION_SHARING_STRIKES):
+        if user_peak_ips.get(tracked_id, 0) < SUBSCRIPTION_REVOKE_SOURCE_IPS:
+            SUBSCRIPTION_SHARING_STRIKES.pop(tracked_id, None)
+    if not SUBSCRIPTION_AUTO_REVOKE_ENABLED:
+        return
+    for user_id, peak in user_peak_ips.items():
+        if peak < SUBSCRIPTION_REVOKE_SOURCE_IPS:
+            continue
+        strikes = SUBSCRIPTION_SHARING_STRIKES.get(user_id, 0) + 1
+        SUBSCRIPTION_SHARING_STRIKES[user_id] = strikes
+        if strikes < 2:
+            security_logger.warning(
+                "subscription sharing strike %s user_id=%s distinct_source_ips=%s",
+                strikes,
+                user_id,
+                peak,
+            )
+            continue
+        user = db.get(UserRow, user_id)
+        if user is None:
+            SUBSCRIPTION_SHARING_STRIKES.pop(user_id, None)
+            continue
+        try:
+            revoke_subscription_credentials(db, user)
+            reset_subscription_token(db, user)
+            db.add(
+                SubscriptionAuditLogRow(
+                    id=str(uuid4()),
+                    user_id=user_id,
+                    action="auto_revoke_share",
+                    masked_token=f"ips={peak}"[:32],
+                )
+            )
+            db.commit()
+            security_logger.warning(
+                "subscription auto-revoked for sharing user_id=%s distinct_source_ips=%s",
+                user_id,
+                peak,
+            )
+        except Exception:
+            db.rollback()
+            security_logger.error("subscription auto-revoke failed user_id=%s", user_id)
+        finally:
+            SUBSCRIPTION_SHARING_STRIKES.pop(user_id, None)
+
+
+async def subscription_usage_audit_loop() -> None:
+    while True:
+        await asyncio.sleep(SUBSCRIPTION_AUDIT_SWEEP_SECONDS)
+        try:
+            await asyncio.to_thread(audit_subscription_usage)
+        except Exception:
+            security_logger.error("Subscription usage audit failed")
+
+
 def user_is_vip(user: UserRow) -> bool:
     return effective_vip_status(user.vip_status, user.vip_expired_at) == "active"
 
@@ -1607,8 +1857,13 @@ def require_node(db: Session, node_id: str) -> VpnNodeRow:
     return node
 
 
-def select_pool_node(db: Session, vip: bool, protocol: str) -> VpnNodeRow | None:
-    """从节点池中选出当前最优的在线节点；池为空或全部离线时返回 None。"""
+def select_pool_node(
+    db: Session, vip: bool, protocol: str, exclude_node_id: str | None = None
+) -> VpnNodeRow | None:
+    """从节点池中选出当前最优的在线节点；池为空或全部离线时返回 None。
+
+    exclude_node_id 用于客户端换节点重连（跳过刚失败的节点）；若排除后无可用节点则忽略排除。
+    """
     nodes = db.scalars(
         select(VpnNodeRow)
         .where(VpnNodeRow.enabled.is_(True))
@@ -1620,7 +1875,7 @@ def select_pool_node(db: Session, vip: bool, protocol: str) -> VpnNodeRow | None
     health = node_health_map(db)
     candidates = [(node, health.get(node.id)) for node in nodes]
     ranked = node_service.select_best_nodes(candidates, vip=vip, now=datetime.now(UTC))
-    return ranked[0] if ranked else None
+    return node_service.pick_pool_node(ranked, exclude_node_id)
 
 
 def allocate_node_client_address(db: Session, node: VpnNodeRow) -> str:
@@ -1993,6 +2248,7 @@ def to_admin_user(
     *,
     invited_count: int = 0,
     paid_invite_count: int = 0,
+    subscription_source_ips_today: int = 0,
 ) -> AdminUserSummary:
     return AdminUserSummary(
         id=row.id,
@@ -2005,6 +2261,7 @@ def to_admin_user(
         online=is_online(row.last_seen_at, now),
         invited_count=invited_count,
         paid_invite_count=paid_invite_count,
+        subscription_source_ips_today=subscription_source_ips_today,
     )
 
 
@@ -2580,6 +2837,9 @@ def reset_user_subscription_link(
         SUBSCRIPTION_RESET_LIMIT_COUNT,
         SUBSCRIPTION_RESET_LIMIT_SECONDS,
     )
+    # Revoke the per-user UUIDs currently on the nodes so the previous config (and any
+    # copies leaked from it) stops working immediately; the next /sub pull re-provisions.
+    revoke_subscription_credentials(db, user)
     token = reset_subscription_token(db, user)
     record_subscription_audit(db, user, "reset", token, request)
     response = build_subscription_response(db, user, token, request)
@@ -2615,10 +2875,13 @@ def subscription_feed(
     try:
         content, _node_count = render_subscription_content(db, user)
     except SubscriptionApiException as exc:
+        db.rollback()
         return JSONResponse(
             status_code=exc.status_code,
             content={"success": False, "code": exc.code, "message": exc.message},
         )
+    # Persist any subscription credentials issued/refreshed during rendering.
+    db.commit()
     return PlainTextResponse(
         content,
         media_type="text/yaml; charset=utf-8",
@@ -2629,6 +2892,7 @@ def subscription_feed(
 @app.get("/vpn/config", response_model=VpnNodeConfig)
 def get_vpn_config(
     rotate: bool = Query(default=False),
+    exclude_node: str | None = Query(default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._-]+$"),
     authorization: str | None = Header(default=None),
     x_xingsui_platform: str | None = Header(default=None),
     db: Session = Depends(get_db),
@@ -2637,7 +2901,7 @@ def get_vpn_config(
     entitlement = build_vpn_entitlement(principal.user)
     if not entitlement.allowed:
         raise HTTPException(status_code=403, detail=entitlement.reason)
-    pool_node = select_pool_node(db, True, principal.protocol)
+    pool_node = select_pool_node(db, True, principal.protocol, exclude_node_id=exclude_node)
     if pool_node is None:
         raise HTTPException(status_code=503, detail="No eligible VPN node is available")
     if rotate:
@@ -2993,7 +3257,20 @@ def list_admin_users(
     user_ids = [row.id for row in rows]
     invited_counts = dict.fromkeys(user_ids, 0)
     paid_invite_counts = dict.fromkeys(user_ids, 0)
+    today = now.date().isoformat()
+    subscription_usage = dict.fromkeys(user_ids, 0)
     if user_ids:
+        subscription_usage.update(
+            db.execute(
+                select(
+                    SubscriptionCredentialRow.user_id,
+                    func.max(SubscriptionCredentialRow.daily_peak_source_ips),
+                )
+                .where(SubscriptionCredentialRow.user_id.in_(user_ids))
+                .where(SubscriptionCredentialRow.daily_peak_day == today)
+                .group_by(SubscriptionCredentialRow.user_id)
+            ).all()
+        )
         invited_counts.update(
             db.execute(
                 select(UserRow.invited_by_user_id, func.count())
@@ -3015,6 +3292,7 @@ def list_admin_users(
             now,
             invited_count=int(invited_counts.get(row.id, 0) or 0),
             paid_invite_count=int(paid_invite_counts.get(row.id, 0) or 0),
+            subscription_source_ips_today=int(subscription_usage.get(row.id, 0) or 0),
         )
         for row in rows
     ]
@@ -3248,6 +3526,10 @@ def admin_revoke_vip(
     user.vip_status = "inactive"
     user.vip_expired_at = None
     revoke_vpn_devices(db, user)
+    # Revoking VIP must also pull the user's subscription UUIDs from every node so an
+    # already-exported subscription config stops working immediately (not at expiry).
+    with suppress(Exception):
+        revoke_subscription_credentials(db, user)
     db.commit()
     db.refresh(user)
     return to_admin_user(user)
@@ -3265,6 +3547,10 @@ def admin_delete_user(
     # 先撤销该用户的活跃/待撤销设备，清理节点上的 peer；失败不阻断删除。
     with suppress(Exception):
         revoke_vpn_devices(db, user, fail_on_error=False)
+    # 撤销并删除该用户的订阅凭证（移除各节点上的专属 UUID + 删表行，满足外键约束）。
+    with suppress(Exception):
+        revoke_subscription_credentials(db, user)
+    db.execute(delete(SubscriptionCredentialRow).where(SubscriptionCredentialRow.user_id == user_id))
     # 断开自引用邀请关系：把「由该用户邀请」的其他用户的 invited_by 置空，避免外键约束。
     db.execute(
         update(UserRow)

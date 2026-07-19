@@ -205,7 +205,7 @@ ADMIN_HTML = """<!doctype html>
         <span class="muted small">最近 500 位用户</span>
       </div>
       <div class="panel"><table>
-        <thead><tr><th>邮箱</th><th>注册</th><th>VIP</th><th>到期</th><th>最近登录</th><th>邀请</th><th>操作</th></tr></thead>
+        <thead><tr><th>邮箱</th><th>注册</th><th>VIP</th><th>到期</th><th>最近登录</th><th>邀请</th><th>订阅用量<br><span class="muted small">今日源IP数</span></th><th>操作</th></tr></thead>
         <tbody id="users"></tbody>
       </table></div>
     </div>
@@ -401,12 +401,13 @@ ADMIN_HTML = """<!doctype html>
           <td class="small">${fmtDate(u.vip_expired_at)}</td>
           <td class="small">${fmtDate(u.last_login_at)}</td>
           <td><strong>${u.invited_count||0}</strong><br><span class="muted small">有效 ${u.paid_invite_count||0}</span></td>
+          <td>${(u.subscription_source_ips_today||0)>=5?`<span class="tag tag-danger">${u.subscription_source_ips_today} ⚠</span><br><span class="muted small">疑似共享</span>`:((u.subscription_source_ips_today||0)>0?`<strong>${u.subscription_source_ips_today}</strong>`:`<span class="muted small">—</span>`)}</td>
           <td><div class="actions">
             <button class="btn-sm btn-primary" onclick="grantVip('${u.id}','${u.email.replace(/'/g,"\\'")}')">授 VIP</button>
             ${u.vip_status==='active'?`<button class="btn-sm btn-danger" onclick="revokeVip('${u.id}')">撤销</button>`:''}
             <button class="btn-sm btn-danger" onclick="deleteUser('${u.id}','${u.email.replace(/'/g,"\\'")}')">删除</button>
           </div></td>
-        </tr>`).join('')||`<tr><td colspan="7" class="empty">暂无用户</td></tr>`;
+        </tr>`).join('')||`<tr><td colspan="8" class="empty">暂无用户</td></tr>`;
     }
 
     async function grantVip(id, email) {
