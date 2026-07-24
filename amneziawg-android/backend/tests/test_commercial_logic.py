@@ -227,6 +227,28 @@ def test_create_session_keeps_only_two_active_sessions() -> None:
     )
 
 
+def test_create_session_accepts_bounded_native_app_ttl() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine, tables=[UserRow.__table__, AuthSessionRow.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    db = Session()
+    user = UserRow(
+        id="u-native-session",
+        email="native-session@example.org",
+        password_salt="salt",
+        password_hash="hash",
+        nickname="native-session",
+        invite_code="XSNATIVE",
+    )
+    db.add(user)
+    db.commit()
+
+    token = create_session(db, user.id, ttl_seconds=30 * 24 * 60 * 60)
+    row = db.get(AuthSessionRow, hash_token(token))
+    expiry = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=UTC)
+    assert expiry > datetime.now(UTC) + timedelta(days=29)
+
+
 def test_site_routes_selected_plan_to_mobile_payment_page() -> None:
     assert "location.href = `/payment?${params.toString()}`" in SITE_HTML
 

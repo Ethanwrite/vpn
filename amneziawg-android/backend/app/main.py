@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from app import node_service
 from app.admin_page import ADMIN_HTML
-from app.database import SessionLocal, init_database
+from app.database import DATABASE_SCHEMA_LOCK_ID, SessionLocal, init_database
 from app.db_models import (
     AuthSessionRow,
     InvitationRow,
@@ -595,7 +595,7 @@ class AdminNodeRequest(StrictRequest):
     dns: str = "1.1.1.1"
     allowed_ips: str = "0.0.0.0/0, ::/0"
     persistent_keepalive: int = Field(default=25, ge=0, le=65535)
-    mtu: int = Field(default=1420, ge=576, le=9000)
+    mtu: int = Field(default=1280, ge=576, le=9000)
     params: dict[str, str] = Field(default_factory=dict)
     weight: int = Field(default=100, ge=0, le=1_000_000)
     vip_only: bool = False
@@ -697,7 +697,22 @@ FREE_TRAFFIC_QUOTA_BYTES = 60 * 1024 * 1024
 # even if a client reports nothing. Set to 0 to disable (not recommended).
 FREE_TRAFFIC_MIN_BYTES_PER_SEC = max(0, int(os.getenv("FREE_TRAFFIC_MIN_BYTES_PER_SEC", str(50 * 1024))))
 ACCESS_TOKEN_TTL_SECONDS = max(300, int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "86400")))
+# Native Android sessions need to survive ordinary app/process lifecycles. The website
+# keeps the shorter default; Android remains bounded and is still subject to the active
+# session limit and explicit logout/revocation.
+ANDROID_ACCESS_TOKEN_TTL_SECONDS = min(
+    365 * 24 * 60 * 60,
+    max(ACCESS_TOKEN_TTL_SECONDS, int(os.getenv("ANDROID_ACCESS_TOKEN_TTL_SECONDS", str(30 * 24 * 60 * 60)))),
+)
 VPN_LEASE_TTL_SECONDS = min(3600, max(60, int(os.getenv("VPN_LEASE_TTL_SECONDS", "300"))))
+ANDROID_VPN_LEASE_TTL_SECONDS = min(
+    3600,
+    max(60, int(os.getenv("ANDROID_VPN_LEASE_TTL_SECONDS", "3600"))),
+)
+VPN_LEASE_RENEWAL_WINDOW_SECONDS = min(
+    1800,
+    max(60, int(os.getenv("VPN_LEASE_RENEWAL_WINDOW_SECONDS", "600"))),
+)
 VPN_LEASE_SWEEP_SECONDS = max(10, int(os.getenv("VPN_LEASE_SWEEP_SECONDS", "30")))
 # How often the backend pulls authoritative per-peer usage from awg nodes to charge
 # free traffic by ACTUAL bytes forwarded (not client self-report). Shorter = tighter cutoff.
@@ -733,6 +748,18 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def acquire_database_schema_read_lock(db: Session) -> None:
+    """Keep a request transaction out of another worker's startup migration.
+
+    Uvicorn workers initialize independently. One worker can already serve a node
+    heartbeat while another still owns table-level DDL locks. The matching shared
+    advisory lock is acquired before heartbeat touches any table, preventing the
+    opposite table-lock ordering that can otherwise deadlock PostgreSQL.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text(f"select pg_advisory_xact_lock_shared({DATABASE_SCHEMA_LOCK_ID})"))
 
 
 def normalize_email(email: str) -> str:
@@ -1256,15 +1283,16 @@ def fmt_subscription_datetime(value: datetime | None) -> str:
     return coerced.isoformat().replace("+00:00", "Z")
 
 
-def create_session(db: Session, user_id: str) -> str:
+def create_session(db: Session, user_id: str, *, ttl_seconds: int | None = None) -> str:
     token = secrets.token_urlsafe(32)
     token_hash = hash_token(token)
+    effective_ttl = ACCESS_TOKEN_TTL_SECONDS if ttl_seconds is None else max(300, int(ttl_seconds))
     db.add(
         AuthSessionRow(
             token_hash=token_hash,
             user_id=user_id,
             status="active",
-            expires_at=datetime.now(UTC) + timedelta(seconds=ACCESS_TOKEN_TTL_SECONDS),
+            expires_at=datetime.now(UTC) + timedelta(seconds=effective_ttl),
         )
     )
     db.flush()
@@ -1392,6 +1420,7 @@ def require_vpn_principal(
     authorization: str | None,
     x_xingsui_platform: str | None,
 ) -> VpnPrincipal:
+    extend_legacy_android_session(db, authorization, x_xingsui_platform)
     session, user = get_current_auth(db, authorization)
     # Android 2.0.14 predates the explicit platform header.  Keep the
     # authenticated legacy client usable while newer clients remain explicit.
@@ -1400,6 +1429,38 @@ def require_vpn_principal(
     if protocol is None:
         raise HTTPException(status_code=400, detail="Unsupported or missing client platform")
     return VpnPrincipal(session=session, user=user, platform=platform, protocol=protocol)
+
+
+def extend_legacy_android_session(
+    db: Session,
+    authorization: str | None,
+    x_xingsui_platform: str | None,
+) -> None:
+    """One-time compatibility upgrade for pre-2.0.28 Android sessions.
+
+    Auth sessions predate the platform header and have no stored platform. An active
+    token presented to the Android-only VPN API is therefore extended to the fixed
+    ``created_at + Android TTL`` boundary. The boundary never moves, so this is not a
+    sliding session and tokens older than that boundary stay expired.
+    """
+    platform = (x_xingsui_platform or "android").strip().lower()
+    if platform != "android" or not authorization or not authorization.lower().startswith("bearer "):
+        return
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        return
+    session = db.get(AuthSessionRow, hash_token(token))
+    if session is None or session.status != "active":
+        return
+    created_at = coerce_utc(session.created_at)
+    expires_at = coerce_utc(session.expires_at)
+    if created_at is None:
+        return
+    fixed_expiry = created_at + timedelta(seconds=ANDROID_ACCESS_TOKEN_TTL_SECONDS)
+    if fixed_expiry <= datetime.now(UTC) or (expires_at is not None and expires_at >= fixed_expiry):
+        return
+    session.expires_at = fixed_expiry
+    db.commit()
 
 
 def to_user(row: UserRow) -> User:
@@ -1587,7 +1648,7 @@ def revoke_vpn_devices(
 
 
 def restore_active_vpn_peers() -> None:
-    """Restore only finite leases whose account and VIP state are still valid."""
+    """Restore finite leases whose session and current VPN entitlement remain valid."""
     now = datetime.now(UTC)
     actions: list[tuple[VpnNodeRow, VpnDeviceRow]] = []
     with SessionLocal() as db:
@@ -1601,7 +1662,7 @@ def restore_active_vpn_peers() -> None:
             if (
                 user is None
                 or user.status != "active"
-                or effective_vip_status(user.vip_status, user.vip_expired_at, now) != "active"
+                or not build_vpn_entitlement(user).allowed
                 or session is None
                 or session.user_id != row.user_id
                 or session.status != "active"
@@ -1642,12 +1703,23 @@ def restore_active_vpn_peers() -> None:
 def sweep_expired_vpn_leases() -> None:
     now = datetime.now(UTC)
     with SessionLocal() as db:
-        rows = db.scalars(
+        is_postgresql = db.get_bind().dialect.name == "postgresql"
+        if is_postgresql:
+            acquired = db.scalar(
+                text("select pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "sweep-expired-vpn-leases"},
+            )
+            if not acquired:
+                return
+        statement = (
             select(VpnDeviceRow)
             .where(VpnDeviceRow.status.in_(("active", "pending_revoke")))
             .where(VpnDeviceRow.lease_expires_at.is_not(None))
             .where(VpnDeviceRow.lease_expires_at <= now)
-        ).all()
+        )
+        if is_postgresql:
+            statement = statement.with_for_update(skip_locked=True)
+        rows = db.scalars(statement).all()
         for row in rows:
             revoke_vpn_device(db, row)
         if rows:
@@ -1672,6 +1744,13 @@ def reconcile_node_usage() -> None:
     that under-reports (or reports 0) is still cut off at the real 60MB.
     """
     with SessionLocal() as db:
+        if db.get_bind().dialect.name == "postgresql":
+            acquired = db.scalar(
+                text("select pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "reconcile-node-usage"},
+            )
+            if not acquired:
+                return
         devices = db.scalars(
             select(VpnDeviceRow)
             .where(VpnDeviceRow.status == "active")
@@ -1870,6 +1949,10 @@ def select_pool_node(
         .where(VpnNodeRow.protocol.in_((protocol, "dual")))
     ).all()
     nodes = [node for node in nodes if node_service.node_config_is_complete(node, protocol)]
+    if protocol == "awg":
+        # High UDP ports may remain available for explicit/manual selection, but never
+        # become an automatic default on carrier networks.
+        nodes = [node for node in nodes if node_service.awg_endpoint_is_carrier_safe(node)]
     if not nodes:
         return None
     health = node_health_map(db)
@@ -1898,15 +1981,19 @@ def allocate_node_client_address(db: Session, node: VpnNodeRow) -> str:
     raise HTTPException(status_code=503, detail="Node address pool is full")
 
 
+def vpn_lease_ttl_seconds(principal: VpnPrincipal) -> int:
+    return ANDROID_VPN_LEASE_TTL_SECONDS if principal.platform == "android" else VPN_LEASE_TTL_SECONDS
+
+
 def lease_window(principal: VpnPrincipal) -> tuple[str, datetime, datetime]:
     issued_at = datetime.now(UTC)
-    requested_expiry = issued_at + timedelta(seconds=VPN_LEASE_TTL_SECONDS)
+    requested_expiry = issued_at + timedelta(seconds=vpn_lease_ttl_seconds(principal))
     session_expiry = coerce_utc(principal.session.expires_at)
     if session_expiry is None:
         raise HTTPException(status_code=403, detail="VPN lease cannot be issued")
     candidates = [requested_expiry, session_expiry]
     vip_expiry = coerce_utc(principal.user.vip_expired_at)
-    if vip_expiry is not None:
+    if vip_expiry is not None and vip_expiry > issued_at and user_is_vip(principal.user):
         candidates.append(vip_expiry)
     return str(uuid4()), issued_at, min(candidates)
 
@@ -1951,16 +2038,21 @@ def provision_node_device(
         .where(VpnDeviceRow.session_token_hash == principal.session.token_hash)
         .where(VpnDeviceRow.status == "active")
         .order_by(VpnDeviceRow.created_at.desc())
+        .with_for_update()
     )
     if existing is not None:
         client_ip = str(ipaddress.ip_interface(existing.client_address).ip)
         old_lease_id = existing.lease_id
         old_expiry = coerce_utc(existing.lease_expires_at)
         public_key = existing.client_public_key
-        agent_add_node_peer(node, existing.client_public_key, client_ip, lease_id, expires_at)
+        # Re-fetching a config is a refresh of the same live AWG lease, not a new
+        # identity. Rotating lease_id here invalidated the old tunnel's next report and
+        # caused an immediate 403/disconnect during network-change races.
+        effective_lease_id = old_lease_id or lease_id
+        agent_add_node_peer(node, existing.client_public_key, client_ip, effective_lease_id, expires_at)
         latest = node_service.render_node_client_config(node, existing.client_private_key, existing.client_address)
         existing.config_text = latest
-        existing.lease_id = lease_id
+        existing.lease_id = effective_lease_id
         existing.lease_expires_at = expires_at
         try:
             db.commit()
@@ -2713,7 +2805,12 @@ def register_by_email(payload: AuthRequest, request: Request, db: Session = Depe
         )
     db.commit()
     db.refresh(user)
-    return AuthResponse(access_token=create_session(db, user.id), user=to_user(user))
+    session_ttl = (
+        ANDROID_ACCESS_TOKEN_TTL_SECONDS
+        if request.headers.get("x-xingsui-platform", "").strip().lower() == "android"
+        else ACCESS_TOKEN_TTL_SECONDS
+    )
+    return AuthResponse(access_token=create_session(db, user.id, ttl_seconds=session_ttl), user=to_user(user))
 
 
 @app.post("/auth/email/login", response_model=AuthResponse)
@@ -2730,7 +2827,12 @@ def login_by_email(payload: AuthRequest, request: Request, db: Session = Depends
         db.commit()
         db.refresh(user)
     touch_user_seen(db, user, login=True, force=True)
-    return AuthResponse(access_token=create_session(db, user.id), user=to_user(user))
+    session_ttl = (
+        ANDROID_ACCESS_TOKEN_TTL_SECONDS
+        if request.headers.get("x-xingsui-platform", "").strip().lower() == "android"
+        else ACCESS_TOKEN_TTL_SECONDS
+    )
+    return AuthResponse(access_token=create_session(db, user.id, ttl_seconds=session_ttl), user=to_user(user))
 
 
 @app.post("/auth/logout", status_code=204, response_class=Response)
@@ -2901,7 +3003,7 @@ def get_vpn_config(
     entitlement = build_vpn_entitlement(principal.user)
     if not entitlement.allowed:
         raise HTTPException(status_code=403, detail=entitlement.reason)
-    pool_node = select_pool_node(db, True, principal.protocol, exclude_node_id=exclude_node)
+    pool_node = select_pool_node(db, user_is_vip(principal.user), principal.protocol, exclude_node_id=exclude_node)
     if pool_node is None:
         raise HTTPException(status_code=503, detail="No eligible VPN node is available")
     if rotate:
@@ -2967,8 +3069,9 @@ def report_usage(
             rx_delta = max(0, int(payload.rx_bytes_delta))
             tx_delta = max(0, int(payload.tx_bytes_delta))
             reported_delta = rx_delta + tx_delta
-            previous_report_at = current_expiry - timedelta(seconds=VPN_LEASE_TTL_SECONDS)
-            elapsed_seconds = max(0.0, min((now - previous_report_at).total_seconds(), float(VPN_LEASE_TTL_SECONDS)))
+            lease_ttl_seconds = vpn_lease_ttl_seconds(principal)
+            previous_report_at = current_expiry - timedelta(seconds=lease_ttl_seconds)
+            elapsed_seconds = max(0.0, min((now - previous_report_at).total_seconds(), float(lease_ttl_seconds)))
             floor_delta = int(elapsed_seconds * FREE_TRAFFIC_MIN_BYTES_PER_SEC)
             principal.user.free_traffic_used_bytes = (
                 int(principal.user.free_traffic_used_bytes or 0) + max(reported_delta, floor_delta)
@@ -2978,12 +3081,21 @@ def report_usage(
         revoke_vpn_device(db, device)
         db.commit()
         raise HTTPException(status_code=403, detail=entitlement.reason)
+    # Android reports frequently, but rewriting the Agent lease and its JSON registry on
+    # every report is unnecessary. Keep the existing authoritative expiry until it enters
+    # the renewal window, then extend it in one fenced Agent+DB operation.
+    if (
+        principal.protocol == "awg"
+        and current_expiry > now + timedelta(seconds=VPN_LEASE_RENEWAL_WINDOW_SECONDS)
+    ):
+        db.commit()
+        return build_vpn_entitlement(principal.user, current_expiry)
     session_expiry = coerce_utc(principal.session.expires_at)
     if session_expiry is None:
         raise HTTPException(status_code=403, detail="vpn_lease_cannot_be_renewed")
-    renewal_candidates = [now + timedelta(seconds=VPN_LEASE_TTL_SECONDS), session_expiry]
+    renewal_candidates = [now + timedelta(seconds=vpn_lease_ttl_seconds(principal)), session_expiry]
     vip_expiry = coerce_utc(principal.user.vip_expired_at)
-    if vip_expiry is not None:
+    if vip_expiry is not None and vip_expiry > now and user_is_vip(principal.user):
         renewal_candidates.append(vip_expiry)
     renewed_expiry = min(renewal_candidates)
     if renewed_expiry <= now:
@@ -3658,7 +3770,14 @@ def list_vpn_nodes(
         .order_by(VpnNodeRow.weight.desc())
     ).all()
     return [
-        to_vpn_node_summary(node, health.get(node.id), True, now, principal.protocol, entitlement.allowed)
+        to_vpn_node_summary(
+            node,
+            health.get(node.id),
+            user_is_vip(principal.user),
+            now,
+            principal.protocol,
+            entitlement.allowed,
+        )
         for node in nodes
         if node_service.node_config_is_complete(node, principal.protocol)
     ]
@@ -3678,6 +3797,8 @@ def get_vpn_node_config(
     node = require_node(db, node_id)
     if not node.enabled:
         raise HTTPException(status_code=403, detail="node_disabled")
+    if node.vip_only and not user_is_vip(principal.user):
+        raise HTTPException(status_code=403, detail="vip_required")
     if not node_service.node_supports_protocol(node, principal.protocol):
         raise HTTPException(status_code=403, detail="platform_protocol_mismatch")
     if not node_service.node_config_is_complete(node, principal.protocol):
@@ -3739,6 +3860,7 @@ def node_heartbeat(
     ):
         security_audit("node_heartbeat_denied", request, node_id=payload.node_id)
         raise HTTPException(status_code=401, detail="Invalid node signature")
+    acquire_database_schema_read_lock(db)
     node = db.get(VpnNodeRow, payload.node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Node not found")

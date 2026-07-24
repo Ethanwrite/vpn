@@ -18,7 +18,7 @@ def make_node(**overrides) -> SimpleNamespace:
         dns="1.1.1.1",
         allowed_ips="0.0.0.0/0, ::/0",
         persistent_keepalive=25,
-        mtu=1420,
+        mtu=1280,
         protocol="awg",
         params_json='{"Jc":"4","Jmin":"40","Jmax":"70","S1":"86","S2":"574","H1":"1111","H2":"2222","H3":"3333","H4":"4444"}',
         weight=100,
@@ -172,6 +172,14 @@ def test_awg_completeness_requires_dns_keepalive_and_dual_stack_routes() -> None
     assert not node_service.node_config_is_complete(make_node(dns=""))
     assert not node_service.node_config_is_complete(make_node(persistent_keepalive=0))
     assert not node_service.node_config_is_complete(make_node(allowed_ips="0.0.0.0/0"))
+    assert not node_service.node_config_is_complete(make_node(mtu=1420))
+    assert not node_service.node_config_is_complete(make_node(persistent_keepalive=20))
+
+
+def test_carrier_safe_awg_endpoints() -> None:
+    assert node_service.awg_endpoint_is_carrier_safe(make_node(endpoint="1.2.3.4:443"))
+    assert node_service.awg_endpoint_is_carrier_safe(make_node(endpoint="1.2.3.4:4500"))
+    assert not node_service.awg_endpoint_is_carrier_safe(make_node(endpoint="1.2.3.4:51823"))
 
 
 def test_vless_completeness_rejects_invalid_reality_identity_fields() -> None:

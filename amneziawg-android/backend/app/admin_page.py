@@ -261,7 +261,7 @@ ADMIN_HTML = """<!doctype html>
           <div class="form-group"><label>DNS</label><input id="node_dns" value="1.1.1.1"/></div>
           <div class="form-group"><label>AllowedIPs</label><input id="node_allowed_ips" value="0.0.0.0/0, ::/0"/></div>
           <div class="form-group"><label>Keepalive (秒)</label><input id="node_keepalive" type="number" value="25"/></div>
-          <div class="form-group"><label>MTU</label><input id="node_mtu" type="number" value="1420"/></div>
+          <div class="form-group"><label>MTU</label><input id="node_mtu" type="number" value="1280"/></div>
           <div class="form-group"><label>权重</label><input id="node_weight" type="number" value="100"/></div>
           <div class="form-group"><label>最大客户端 (0=不限)</label><input id="node_max_clients" type="number" value="0"/></div>
           <div class="form-group"><label>仅 VIP</label><select id="node_vip_only"><option value="false">否</option><option value="true">是</option></select></div>
@@ -489,7 +489,7 @@ ADMIN_HTML = """<!doctype html>
       document.getElementById('node_dns').value=n?.dns||'1.1.1.1';
       document.getElementById('node_allowed_ips').value=n?.allowed_ips||'0.0.0.0/0, ::/0';
       document.getElementById('node_keepalive').value=n?.persistent_keepalive??25;
-      document.getElementById('node_mtu').value=n?.mtu??1420;
+      document.getElementById('node_mtu').value=n?.mtu??1280;
       document.getElementById('node_weight').value=n?.weight??100;
       document.getElementById('node_max_clients').value=n?.max_clients??0;
       document.getElementById('node_vip_only').value=n?.vip_only?'true':'false';
@@ -509,7 +509,7 @@ ADMIN_HTML = """<!doctype html>
         agent_host:g('node_agent_host'),agent_port:Number(g('node_agent_port')||51821),
         server_public_key:g('node_server_public_key'),client_network:g('node_client_network'),
         dns:g('node_dns'),allowed_ips:g('node_allowed_ips'),
-        persistent_keepalive:Number(g('node_keepalive')||25),mtu:Number(g('node_mtu')||1420),
+        persistent_keepalive:Number(g('node_keepalive')||25),mtu:Number(g('node_mtu')||1280),
         params,weight:Number(g('node_weight')||100),
         vip_only:document.getElementById('node_vip_only').value==='true',
         max_clients:Number(g('node_max_clients')||0),

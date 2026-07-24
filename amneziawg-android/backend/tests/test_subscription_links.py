@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 
+from app import database
 from app.database import Base
 from app.db_models import AuthSessionRow, UserRow, VpnDeviceRow, VpnNodeRow
 from app.main import (
@@ -26,6 +27,8 @@ from app.main import (
     subscription_feed,
     SubscriptionApiException,
     UsageReportRequest,
+    acquire_database_schema_read_lock,
+    coerce_utc,
 )
 from app import node_service
 from fastapi.responses import Response
@@ -154,7 +157,7 @@ def test_access_token_expiry_and_status_are_enforced(Session) -> None:
     session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db.commit()
     with pytest.raises(HTTPException) as exc:
-        require_vpn_principal(db, bearer(token), "android")
+        require_vpn_principal(db, bearer(token), "windows")
     assert exc.value.status_code == 401
 
     session.expires_at = datetime.now(UTC) + timedelta(hours=1)
@@ -163,6 +166,97 @@ def test_access_token_expiry_and_status_are_enforced(Session) -> None:
     with pytest.raises(HTTPException) as exc:
         require_vpn_principal(db, bearer(token), "android")
     assert exc.value.status_code == 401
+
+
+def test_legacy_android_session_is_extended_to_fixed_creation_boundary(Session, monkeypatch) -> None:
+    token = make_user(Session)
+    db = Session()
+    session = db.get(AuthSessionRow, hash_token(token))
+    created_at = datetime.now(UTC) - timedelta(hours=2)
+    session.created_at = created_at
+    session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.commit()
+    monkeypatch.setattr("app.main.ANDROID_ACCESS_TOKEN_TTL_SECONDS", 30 * 24 * 60 * 60)
+
+    principal = require_vpn_principal(db, bearer(token), "android")
+
+    assert principal.session.token_hash == hash_token(token)
+    assert abs((coerce_utc(principal.session.expires_at) - (created_at + timedelta(days=30))).total_seconds()) < 1
+
+    first_expiry = coerce_utc(principal.session.expires_at)
+    require_vpn_principal(db, bearer(token), "android")
+    assert coerce_utc(principal.session.expires_at) == first_expiry
+
+
+def test_legacy_android_session_upgrade_does_not_revive_old_or_revoked_tokens(Session, monkeypatch) -> None:
+    monkeypatch.setattr("app.main.ANDROID_ACCESS_TOKEN_TTL_SECONDS", 30 * 24 * 60 * 60)
+    for status in ("active", "revoked"):
+        token = make_user(Session, user_id=f"u-{status}")
+        db = Session()
+        session = db.get(AuthSessionRow, hash_token(token))
+        session.created_at = datetime.now(UTC) - timedelta(days=31)
+        session.expires_at = datetime.now(UTC) - timedelta(days=30)
+        session.status = status
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            require_vpn_principal(db, bearer(token), "android")
+        assert exc.value.status_code == 401
+        db.close()
+
+
+def test_schema_read_lock_matches_startup_lock_on_postgresql() -> None:
+    calls = []
+
+    class FakeBind:
+        class dialect:
+            name = "postgresql"
+
+    class FakeSession:
+        def get_bind(self):
+            return FakeBind()
+
+        def execute(self, statement):
+            calls.append(str(statement))
+
+    acquire_database_schema_read_lock(FakeSession())
+    assert calls == ["select pg_advisory_xact_lock_shared(912050232111)"]
+
+
+def test_startup_schema_lock_is_held_through_transaction_commit(monkeypatch) -> None:
+    events = []
+
+    class FakeConnection:
+        def execute(self, statement):
+            events.append(str(statement))
+
+    class FakeBegin:
+        def __enter__(self):
+            events.append("begin")
+            return FakeConnection()
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("commit")
+
+    class FakeEngine:
+        class dialect:
+            name = "postgresql"
+
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(database, "engine", FakeEngine())
+    monkeypatch.setattr(database.Base.metadata, "create_all", lambda bind: events.append("create_all"))
+    monkeypatch.setattr(database, "run_lightweight_migrations", lambda connection: events.append("migrate"))
+
+    database.init_database()
+
+    assert events == [
+        "begin",
+        "select pg_advisory_xact_lock(912050232111)",
+        "create_all",
+        "migrate",
+        "commit",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -294,10 +388,58 @@ def test_android_awg_lease_is_bound_to_session(Session, monkeypatch) -> None:
     assert config.protocol == "amneziawg"
     assert config.vless_config is None
     assert config.expires_at > config.issued_at
-    assert config.expires_at - config.issued_at <= timedelta(minutes=5)
+    assert timedelta(minutes=59) <= config.expires_at - config.issued_at <= timedelta(hours=1)
     assert row.session_token_hash == hash_token(token)
     assert row.lease_id == config.lease_id
     assert calls and calls[0][3] == config.lease_id
+
+
+def test_android_config_refresh_preserves_live_lease_identity(Session, monkeypatch) -> None:
+    token = make_user(Session)
+    db = Session()
+    db.add(awg_node())
+    db.commit()
+    calls = []
+    monkeypatch.setattr("app.main.generate_wireguard_keypair", lambda: ("client-private", "client-public"))
+    monkeypatch.setattr(
+        "app.node_service.agent_add_peer",
+        lambda node, public_key, client_ip, lease_id, expires_at, **kwargs: calls.append(lease_id)
+        or {"status": "added"},
+    )
+
+    first = get_vpn_node_config(
+        "awg-1", authorization=bearer(token), x_xingsui_platform="android", db=db
+    )
+    second = get_vpn_node_config(
+        "awg-1", authorization=bearer(token), x_xingsui_platform="android", db=db
+    )
+
+    assert first.lease_id == second.lease_id
+    assert calls == [first.lease_id, first.lease_id]
+    assert len(list(db.scalars(select(VpnDeviceRow)).all())) == 1
+
+
+def test_expired_vip_with_free_quota_gets_full_android_lease(Session, monkeypatch) -> None:
+    token = make_user(
+        Session,
+        vip_status="active",
+        expires_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    db = Session()
+    db.add(awg_node())
+    db.commit()
+    monkeypatch.setattr("app.main.generate_wireguard_keypair", lambda: ("client-private", "client-public"))
+    monkeypatch.setattr(
+        "app.node_service.agent_add_peer",
+        lambda *args, **kwargs: {"status": "added"},
+    )
+
+    config = get_vpn_node_config(
+        "awg-1", authorization=bearer(token), x_xingsui_platform="android", db=db
+    )
+    assert config.entitlement.allowed
+    assert config.entitlement.reason == "free_trial"
+    assert config.expires_at > datetime.now(UTC) + timedelta(minutes=59)
 
 
 def test_usage_renewal_is_bound_to_token_platform_and_lease(Session, monkeypatch) -> None:

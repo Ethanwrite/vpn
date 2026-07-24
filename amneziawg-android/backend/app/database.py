@@ -8,6 +8,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://localhost/xingsui_dev")
+DATABASE_SCHEMA_LOCK_ID = 912050232111
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -21,15 +22,13 @@ def init_database() -> None:
     from app import db_models  # noqa: F401
 
     with engine.begin() as connection:
-        locked = engine.dialect.name == "postgresql"
-        if locked:
-            connection.execute(text("select pg_advisory_lock(912050232111)"))
-        try:
-            Base.metadata.create_all(bind=connection)
-            run_lightweight_migrations(connection)
-        finally:
-            if locked:
-                connection.execute(text("select pg_advisory_unlock(912050232111)"))
+        if engine.dialect.name == "postgresql":
+            # Transaction-scoped is important: a session lock manually released in a
+            # ``finally`` block becomes visible just before ``engine.begin()`` commits,
+            # while PostgreSQL still holds the DDL table locks from this transaction.
+            connection.execute(text(f"select pg_advisory_xact_lock({DATABASE_SCHEMA_LOCK_ID})"))
+        Base.metadata.create_all(bind=connection)
+        run_lightweight_migrations(connection)
 
 
 def run_lightweight_migrations(connection=None) -> None:
@@ -166,7 +165,7 @@ def run_lightweight_migrations(connection=None) -> None:
                 dns varchar(128) not null default '1.1.1.1',
                 allowed_ips text not null default '0.0.0.0/0, ::/0',
                 persistent_keepalive integer not null default 25,
-                mtu integer not null default 1420,
+                mtu integer not null default 1280,
                 params_json text not null default '{}',
                 weight integer not null default 100,
                 vip_only boolean not null default false,

@@ -315,9 +315,9 @@ def node_config_is_complete(node: Any, protocol: str | None = None) -> bool:
         ipaddress.ip_network(str(getattr(node, "client_network", "") or ""), strict=False)
         if not 1 <= int(port_text) <= 65535:
             return False
-        if not 576 <= int(getattr(node, "mtu", 0) or 0) <= 9000:
+        if int(getattr(node, "mtu", 0) or 0) != 1280:
             return False
-        if not 1 <= int(getattr(node, "persistent_keepalive", 0) or 0) <= 65535:
+        if int(getattr(node, "persistent_keepalive", 0) or 0) != 25:
             return False
     except (TypeError, ValueError):
         return False
@@ -345,6 +345,18 @@ def node_config_is_complete(node: Any, protocol: str | None = None) -> bool:
         and len(set(headers)) == 4
         and all(value > 4 for value in headers)
     )
+
+
+def awg_endpoint_is_carrier_safe(node: Any) -> bool:
+    """Default Android pool endpoints must use carrier-friendly UDP ports."""
+    endpoint = str(getattr(node, "endpoint", "") or "").strip()
+    _host, separator, port_text = endpoint.rpartition(":")
+    if not separator:
+        return False
+    try:
+        return int(port_text) in {443, 4500}
+    except ValueError:
+        return False
 
 
 def node_status_label(health: Any, now: datetime | None = None, offline_after_seconds: int | None = None) -> str:

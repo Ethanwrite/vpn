@@ -222,7 +222,7 @@ class VpnNodeRow(Base):
     dns: Mapped[str] = mapped_column(String(128), default="1.1.1.1")
     allowed_ips: Mapped[str] = mapped_column(Text, default="0.0.0.0/0, ::/0")
     persistent_keepalive: Mapped[int] = mapped_column(Integer, default=25)
-    mtu: Mapped[int] = mapped_column(Integer, default=1420)
+    mtu: Mapped[int] = mapped_column(Integer, default=1280)
     # AmneziaWG 混淆参数（Jc/Jmin/Jmax/S1/S2/H1-H4 等）JSON 序列化存储。
     params_json: Mapped[str] = mapped_column(Text, default="{}")
     # 调度权重越大越优先；0 表示禁止参与普通调度。
