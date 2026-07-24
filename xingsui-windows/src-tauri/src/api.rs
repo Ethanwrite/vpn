@@ -8,8 +8,13 @@ use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-const VERSION_CODE: &str = "6";
-const VERSION_NAME: &str = "1.0.22";
+const VERSION_CODE: &str = "7";
+const VERSION_NAME: &str = "1.0.23";
+
+/// 供崩溃日志等处引用当前版本名。
+pub fn version_name() -> &'static str {
+    VERSION_NAME
+}
 
 /// 生产 API 基址（含 /api 前缀，后端中间件会剥离）。按序回退：
 /// 主域名优先，xingsuico.com 为等价备用镜像（同一后端）。大陆部分 Wi-Fi 对主域名
@@ -28,12 +33,13 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn new() -> Self {
+        // 构建失败（TLS 后端初始化异常，极罕见）回退默认客户端，绝不因此在启动阶段 panic。
         let http = Client::builder()
             .connect_timeout(Duration::from_secs(6))
             .timeout(Duration::from_secs(12))
             .user_agent("XingsuiWindows/1.0")
             .build()
-            .expect("构建 HTTP 客户端失败");
+            .unwrap_or_else(|_| Client::new());
         Self {
             http,
             preferred_base: AtomicUsize::new(0),
