@@ -101,7 +101,7 @@ class XingsuiApiClient(
             excludeNodeId?.takeIf { NODE_ID_QUERY_PATTERN.matches(it) }?.let { add("exclude_node=$it") }
         }
         val path = if (params.isEmpty()) "/vpn/config" else "/vpn/config?${params.joinToString("&")}"
-        JSONObject(request("GET", path, allowFailover = false)).toVpnNodeConfig()
+        JSONObject(request("GET", path)).toVpnNodeConfig()
     }
 
     suspend fun listNodes(): List<VpnNodeSummary> = withContext(Dispatchers.IO) {
@@ -114,7 +114,7 @@ class XingsuiApiClient(
     }
 
     suspend fun getNodeConfig(nodeId: String): VpnNodeConfig = withContext(Dispatchers.IO) {
-        JSONObject(request("GET", "/vpn/nodes/$nodeId/config", allowFailover = false)).toVpnNodeConfig()
+        JSONObject(request("GET", "/vpn/nodes/$nodeId/config")).toVpnNodeConfig()
     }
 
     suspend fun reportUsage(

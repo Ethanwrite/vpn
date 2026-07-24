@@ -62,7 +62,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private var pulseAnimator: AnimatorSet? = null
     private var spinAnimator: ObjectAnimator? = null
     private var statusMonitorJob: Job? = null
-    private var connectStartedAtMs = 0L
     private var connectAttemptId = 0L
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (!pendingConnectAfterPermission) {
@@ -138,10 +137,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
                         Snackbar.make(binding.root, R.string.xingsui_link_dead_disconnected, Snackbar.LENGTH_LONG).show()
                         renderTunnelState(null)
                     }
-                    is TunnelManager.ManagedTunnelEvent.ReportFailureDisconnected -> {
-                        Snackbar.make(binding.root, R.string.xingsui_link_report_failed, Snackbar.LENGTH_LONG).show()
-                        renderTunnelState(null)
-                    }
                     is TunnelManager.ManagedTunnelEvent.EntitlementDenied -> {
                         renderTunnelState(null)
                         showEntitlementRequired(event.reason)
@@ -183,19 +178,18 @@ class XingsuiHomeActivity : AppCompatActivity() {
         runCatching {
             val me = requireNotNull(apiClient).getMe()
             account = me
-            managedTunnel = findManagedTunnel()?.let { tunnel ->
-                if (tunnel.state == Tunnel.State.UP) tunnel else {
-                    runCatching { tunnel.deleteAsync() }
-                        .onFailure { XingsuiCrashReporter.recordException("home-remove-stale-config", it) }
-                    null
-                }
-            }
+            // START_STICKY can briefly leave a DOWN placeholder while TunnelManager is
+            // fetching a fresh lease. Never delete it from an observational UI refresh;
+            // restoreState owns recovery and explicit disconnect owns removal.
+            Application.getTunnelManager().restoreState(true)
+            managedTunnel = findManagedTunnel()
             me
         }.onSuccess { me ->
             setBusy(false)
             renderAccount(me)
             renderTunnelState(managedTunnel)
         }.onFailure {
+            if (it is CancellationException) throw it
             setBusy(false)
             XingsuiCrashReporter.recordException("home-refresh", it)
             if (it.isUnauthorized()) {
@@ -203,7 +197,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
                 return
             }
             account = null
-            stopAndDeleteManagedTunnel()
+            managedTunnel = findManagedTunnel()
             Snackbar.make(binding.root, R.string.xingsui_account_sync_failed, Snackbar.LENGTH_LONG).show()
             renderSessionOffline(session.email)
         }
@@ -295,7 +289,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
         } else if (isUp) {
             startConnectingAnimation()
         } else if (!isBusy) {
-            connectStartedAtMs = 0L
             stopPulse()
         }
     }
@@ -371,13 +364,11 @@ class XingsuiHomeActivity : AppCompatActivity() {
                 return@onSuccess
             }
             managedTunnel = it
-            connectStartedAtMs = System.currentTimeMillis()
             setBusy(false)
             renderTunnelState(it)
         }.onFailure { error ->
             if (error is CancellationException && error !is TimeoutCancellationException) throw error
             if (attemptId != connectAttemptId) return@onFailure
-            connectStartedAtMs = 0L
             setBusy(false)
             XingsuiCrashReporter.recordException("home-start-prepared", error)
             stopAndDeleteManagedTunnel()
@@ -406,22 +397,18 @@ class XingsuiHomeActivity : AppCompatActivity() {
                                 statistics.peer(peer)?.latestHandshakeEpochMillis() ?: 0L
                             } ?: 0L
                             if (latestHandshakeAt > 0L) {
-                                connectStartedAtMs = 0L
                                 tunnel.onConnectionStatusChanged(ObservableTunnel.ConnectionStatus.CONNECTED)
-                            } else if (connectStartedAtMs > 0L) {
+                            } else {
                                 tunnel.onConnectionStatusChanged(ObservableTunnel.ConnectionStatus.CONNECTING)
                             }
-                            maybeStopHandshakeTimeout(tunnel)
                         }
                     }
                     renderTunnelState(tunnel)
                 }.onFailure {
                     XingsuiCrashReporter.recordException("home-status-monitor", it)
-                    if (managedTunnel != null) {
-                        stopAndDeleteManagedTunnel(managedTunnel)
-                        renderTunnelState(null)
-                        showConnectionSyncFailure()
-                    }
+                    // A status/statistics read can fail while Android is changing networks
+                    // or waking from Doze. It is observational, never authority to disconnect.
+                    renderTunnelState(managedTunnel)
                 }
                 delay(STATUS_POLL_INTERVAL_MS)
             }
@@ -431,24 +418,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private fun stopStatusMonitor() {
         statusMonitorJob?.cancel()
         statusMonitorJob = null
-    }
-
-    private suspend fun maybeStopHandshakeTimeout(tunnel: ObservableTunnel) {
-        if (tunnel.state != Tunnel.State.UP) return
-        val startedAt = connectStartedAtMs
-        if (startedAt <= 0L) return
-        if (System.currentTimeMillis() - startedAt < HANDSHAKE_TIMEOUT_MS) return
-        connectStartedAtMs = 0L
-        XingsuiCrashReporter.recordEvent("home-handshake-timeout", "Stopping tunnel and rotating config after handshake timeout")
-        runCatching {
-            tunnel.setStateAsync(Tunnel.State.DOWN)
-        }.onFailure {
-            XingsuiCrashReporter.recordException("home-handshake-timeout-stop", it)
-        }
-
-        stopAndDeleteManagedTunnel(tunnel)
-        showConnectionSyncFailure()
-        renderTunnelState(null)
     }
 
     private suspend fun clearExpiredSession() {
@@ -980,7 +949,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
         private const val REASON_FREE_TRAFFIC_EXHAUSTED = "free_traffic_exhausted"
         private const val REASON_VIP_EXPIRED = "vip_expired"
         private const val CONNECTION_OPERATION_TIMEOUT_MS = 30_000L
-        private const val HANDSHAKE_TIMEOUT_MS = 25_000L
         private const val STATUS_POLL_INTERVAL_MS = 5_000L
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     }

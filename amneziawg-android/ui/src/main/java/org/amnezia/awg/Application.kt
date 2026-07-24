@@ -34,6 +34,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
@@ -45,7 +46,9 @@ import java.util.Locale
 
 class Application : android.app.Application() {
     private val futureBackend = CompletableDeferred<Backend>()
-    private val coroutineScope = CoroutineScope(Job() + Dispatchers.Main.immediate)
+    // Reporters, lease timers and network recovery are independent long-lived tasks. One
+    // unexpected child failure must not cancel the entire application recovery plane.
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var backend: Backend? = null
     private lateinit var rootShell: RootShell
     private lateinit var preferencesDataStore: DataStore<Preferences>
@@ -53,6 +56,8 @@ class Application : android.app.Application() {
     private lateinit var tunnelManager: TunnelManager
     private lateinit var networkState: NetworkState
     private var reconnectJob: Job? = null
+    private var reconnectInProgress = false
+    private var pendingNetworkChange: Pair<NetworkType, NetworkType>? = null
 
     override fun attachBaseContext(context: Context) {
         super.attachBaseContext(context)
@@ -157,17 +162,24 @@ class Application : android.app.Application() {
             return
         }
 
+        if (reconnectInProgress) {
+            pendingNetworkChange = oldType to newType
+            Log.d(TAG, "Managed reconnect already in progress; queued latest network event")
+            return
+        }
         reconnectJob?.cancel()
         reconnectJob = coroutineScope.launch {
             try {
                 kotlinx.coroutines.delay(RECONNECT_DEBOUNCE_MS)
+                reconnectInProgress = true
                 val activeTunnels = tunnelManager.getTunnels().filter { 
                     it.name == XINGSUI_MANAGED_TUNNEL_NAME &&
                         it.state == org.amnezia.awg.backend.Tunnel.State.UP
                 }
 
                 if (activeTunnels.isEmpty()) {
-                    Log.d(TAG, "No active Xingsui tunnel, skipping reconnection")
+                    Log.d(TAG, "No active Xingsui tunnel; checking requested-state recovery")
+                    tunnelManager.restoreState(true)
                     return@launch
                 }
 
@@ -188,6 +200,13 @@ class Application : android.app.Application() {
                 if (e is CancellationException) throw e
                 Log.e(TAG, "Error during network change handling", e)
                 XingsuiCrashReporter.recordException("network-change", e)
+            } finally {
+                reconnectInProgress = false
+                val pending = pendingNetworkChange
+                pendingNetworkChange = null
+                if (pending != null) {
+                    onNetworkChange(pending.first, pending.second)
+                }
             }
         }
     }

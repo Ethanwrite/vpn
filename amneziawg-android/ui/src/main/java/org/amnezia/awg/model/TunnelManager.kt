@@ -33,6 +33,7 @@ import org.amnezia.awg.xingsui.XingsuiEntitlementException
 import org.amnezia.awg.xingsui.XingsuiCrashReporter
 import org.amnezia.awg.xingsui.XingsuiVipGate
 import org.amnezia.awg.xingsui.api.XingsuiApiClient
+import org.amnezia.awg.xingsui.api.XingsuiHttpException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +46,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 import java.time.Instant
 
 /**
@@ -61,13 +65,13 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     private var managedLeaseId: String? = null
     private var autoSwitchAttempts = 0
     private var haveLoaded = false
+    private val managedConnectionMutex = Mutex()
 
     /** UI-facing notifications for managed-tunnel teardowns that the user didn't initiate. */
     sealed class ManagedTunnelEvent {
         object DeadLinkSwitching : ManagedTunnelEvent()
         object DeadLinkSwitched : ManagedTunnelEvent()
         object DeadLinkDisconnected : ManagedTunnelEvent()
-        object ReportFailureDisconnected : ManagedTunnelEvent()
         data class EntitlementDenied(val reason: String) : ManagedTunnelEvent()
     }
 
@@ -92,69 +96,103 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
 
     suspend fun connectManagedTunnel(nodeId: String? = null): ObservableTunnel {
         autoSwitchAttempts = 0
-        return connectManagedTunnelInternal(nodeId = nodeId, stopExistingFirst = false)
+        return connectManagedTunnelInternal(nodeId = nodeId)
     }
 
     suspend fun reconnectManagedTunnel(tunnel: ObservableTunnel): ObservableTunnel {
         require(tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME)
         autoSwitchAttempts = 0
-        return connectManagedTunnelInternal(nodeId = managedNodeId, stopExistingFirst = true)
+        return connectManagedTunnelInternal(nodeId = managedNodeId)
     }
 
     private suspend fun connectManagedTunnelInternal(
         nodeId: String?,
-        stopExistingFirst: Boolean,
         excludeNodeId: String? = null,
-    ): ObservableTunnel = withContext(Dispatchers.Main.immediate) {
-        var target = tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME]
-        try {
-            val backend = getBackend()
-            if (backend is GoBackend && GoBackend.VpnService.prepare(context) != null) {
-                throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
-            }
+        requireRestoreIntent: Boolean = false,
+    ): ObservableTunnel = managedConnectionMutex.withLock {
+        withContext(Dispatchers.Main.immediate) {
+            var target = tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME]
+            val targetWasUp = target?.state == Tunnel.State.UP
+            try {
+                if (
+                    requireRestoreIntent &&
+                    XINGSUI_MANAGED_TUNNEL_NAME !in UserKnobs.runningTunnels.first()
+                ) {
+                    throw ManagedRestoreCancelledException()
+                }
+                val backend = getBackend()
+                if (backend is GoBackend && GoBackend.VpnService.prepare(context) != null) {
+                    throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
+                }
 
-            if (stopExistingFirst && target != null) {
-                stopManagedTunnelBackend(target)
-            }
+                // Fetch and validate first. GoBackend switches configs transactionally and
+                // restores the old config if activation fails, so a transient control-plane
+                // or network error must never tear down a working tunnel first.
+                val fresh = XingsuiVipGate.requireFreshManagedConfig(context, nodeId, excludeNodeId)
+                val managedTunnel = target ?: addToList(
+                    XINGSUI_MANAGED_TUNNEL_NAME,
+                    withContext(Dispatchers.IO) {
+                        configStore.create(XINGSUI_MANAGED_TUNNEL_NAME, fresh.config)
+                    },
+                    Tunnel.State.DOWN,
+                ).also { target = it }
 
-            val fresh = XingsuiVipGate.requireFreshManagedConfig(context, nodeId, excludeNodeId)
-            val managedTunnel = target?.also { existing ->
-                existing.onConfigChanged(withContext(Dispatchers.IO) {
-                    configStore.save(XINGSUI_MANAGED_TUNNEL_NAME, fresh.config)
-                })
-            } ?: addToList(
-                XINGSUI_MANAGED_TUNNEL_NAME,
-                withContext(Dispatchers.IO) {
-                    configStore.create(XINGSUI_MANAGED_TUNNEL_NAME, fresh.config)
-                },
-                Tunnel.State.DOWN,
-            )
-            target = managedTunnel
+                withContext(NonCancellable) {
+                    val newState = withContext(Dispatchers.IO) {
+                        backend.setState(managedTunnel, Tunnel.State.UP, fresh.config)
+                    }
+                    managedTunnel.onStateChanged(newState)
+                    check(newState == Tunnel.State.UP) { "managed_tunnel_not_started" }
 
-            val newState = withContext(Dispatchers.IO) {
-                backend.setState(managedTunnel, Tunnel.State.UP, fresh.config)
-            }
-            managedTunnel.onStateChanged(newState)
-            check(newState == Tunnel.State.UP) { "managed_tunnel_not_started" }
-            lastUsedTunnel = managedTunnel
-            saveState()
-            managedNodeId = nodeId
-            managedServedNodeId = fresh.response.id
-            managedLeaseId = fresh.response.leaseId
-            scheduleManagedLeaseExpiry(managedTunnel, fresh.response.expiresAt)
-            startUsageReporter(managedTunnel)
-            managedTunnel
-        } catch (error: Throwable) {
-            securelyRemoveManagedTunnel(target)
-            if (error is CancellationException) throw error
-            XingsuiCrashReporter.recordEvent(
-                "managed-tunnel-start-failed",
-                error.javaClass.simpleName.ifBlank { "unknown" },
-            )
-            throw when (error) {
-                is XingsuiEntitlementException -> error
-                is XingsuiConnectionSyncException -> error
-                else -> XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
+                    // Commit the in-memory config and lease identity in the same
+                    // non-cancellable section as backend activation. Otherwise a network
+                    // callback cancellation can leave a new data plane reporting an old ID.
+                    managedTunnel.onConfigChanged(fresh.config)
+                    managedNodeId = nodeId
+                    managedServedNodeId = fresh.response.id
+                    managedLeaseId = fresh.response.leaseId
+                    lastUsedTunnel = managedTunnel
+                    scheduleManagedLeaseExpiry(managedTunnel, fresh.response.expiresAt)
+                    startUsageReporter(managedTunnel)
+                    runCatching { saveState() }
+                        .onFailure { XingsuiCrashReporter.recordException("managed-state-save", it) }
+
+                    // Persist only after the backend accepted the config. A persistence
+                    // error is non-fatal because managed configs are refreshed before reuse.
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            configStore.save(XINGSUI_MANAGED_TUNNEL_NAME, fresh.config)
+                        }
+                    }.onFailure {
+                        XingsuiCrashReporter.recordException("managed-config-save", it)
+                    }
+                }
+                managedTunnel
+            } catch (error: Throwable) {
+                // Preserve an already-running tunnel on refresh/reconnect failures. Explicit
+                // entitlement denial is authoritative and still tears it down immediately.
+                if (!targetWasUp || error is XingsuiEntitlementException) {
+                    withContext(NonCancellable) {
+                        securelyRemoveManagedTunnelLocked(target)
+                        if (
+                            requireRestoreIntent &&
+                            error !is XingsuiEntitlementException &&
+                            error !is ManagedRestoreCancelledException
+                        ) {
+                            UserKnobs.setRunningTunnels(setOf(XINGSUI_MANAGED_TUNNEL_NAME))
+                        }
+                    }
+                }
+                if (error is CancellationException) throw error
+                XingsuiCrashReporter.recordEvent(
+                    "managed-tunnel-start-failed",
+                    error.javaClass.simpleName.ifBlank { "unknown" },
+                )
+                throw when (error) {
+                    is XingsuiEntitlementException -> error
+                    is XingsuiConnectionSyncException -> error
+                    else -> XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
+                }
             }
         }
     }
@@ -172,6 +210,10 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     }
 
     private suspend fun securelyRemoveManagedTunnel(tunnel: ObservableTunnel?) =
+        managedConnectionMutex.withLock { securelyRemoveManagedTunnelLocked(tunnel) }
+
+    /** Caller must hold [managedConnectionMutex]. */
+    private suspend fun securelyRemoveManagedTunnelLocked(tunnel: ObservableTunnel?) =
         withContext(NonCancellable + Dispatchers.Main.immediate) {
         if (tunnel == null) {
             managedNodeId = null
@@ -202,7 +244,10 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
             withContext(Dispatchers.Main.immediate) {
                 if (tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME] == tunnel) {
                     managedLeaseExpiryJob = null
-                    securelyRemoveManagedTunnel(tunnel)
+                    // Doze can suspend both this timer and the reporter. Do not convert that
+                    // expected suspension into a user-visible disconnect; the reporter will
+                    // transparently reacquire an expired lease as soon as the app wakes.
+                    XingsuiCrashReporter.recordEvent("managed-lease-expired", "awaiting-transparent-recovery")
                 }
             }
         }
@@ -293,6 +338,8 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     }
 
     private suspend fun onTunnelsLoaded(present: Iterable<String>, running: Collection<String>) {
+        val previouslyRunning = UserKnobs.runningTunnels.first()
+        val restoreManaged = XINGSUI_MANAGED_TUNNEL_NAME in previouslyRunning
         for (name in present.filterNot { it == XINGSUI_MANAGED_TUNNEL_NAME })
             addToList(name, null, if (running.contains(name)) Tunnel.State.UP else Tunnel.State.DOWN)
         if (running.contains(XINGSUI_MANAGED_TUNNEL_NAME)) {
@@ -307,16 +354,32 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         if (lastUsedName != null)
             lastUsedTunnel = tunnelMap[lastUsedName]
         haveLoaded = true
-        restoreState(true)
         tunnels.complete(tunnelMap)
+        if (restoreManaged) {
+            // Removing a stale process-owned backend above saves the observed DOWN state;
+            // restore the user's prior intent before requesting a fresh short-lived lease.
+            UserKnobs.setRunningTunnels(previouslyRunning)
+        }
+        restoreState(true)
     }
 
     private fun refreshTunnelStates() {
         applicationScope.launch {
             try {
-                val running = withContext(Dispatchers.IO) { getBackend().runningTunnelNames }
-                for (tunnel in tunnelMap)
+                val backend = getBackend()
+                val running = withContext(Dispatchers.IO) { backend.runningTunnelNames }
+                for (tunnel in tunnelMap.filterNot { it.name == XINGSUI_MANAGED_TUNNEL_NAME }) {
                     tunnel.onStateChanged(if (running.contains(tunnel.name)) Tunnel.State.UP else Tunnel.State.DOWN)
+                }
+                managedConnectionMutex.withLock {
+                    val managedTunnel = tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME]
+                    if (managedTunnel != null) {
+                        val managedState = withContext(Dispatchers.IO) { backend.getState(managedTunnel) }
+                        // Read and apply under the same lock: never carry a stale DOWN
+                        // observation across a completed reconnect that replaced the state.
+                        managedTunnel.onStateChanged(managedState)
+                    }
+                }
             } catch (e: Throwable) {
                 Log.e(TAG, Log.getStackTraceString(e))
             }
@@ -328,7 +391,27 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
             return
         val previouslyRunning = UserKnobs.runningTunnels.first()
         if (previouslyRunning.isEmpty()) return
-        UserKnobs.setRunningTunnels(emptySet())
+        if (XINGSUI_MANAGED_TUNNEL_NAME !in previouslyRunning) {
+            UserKnobs.setRunningTunnels(emptySet())
+            return
+        }
+        if (tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME]?.state == Tunnel.State.UP) return
+        if (XingsuiSessionStore(context).load() == null) {
+            UserKnobs.setRunningTunnels(emptySet())
+            return
+        }
+        try {
+            connectManagedTunnelInternal(nodeId = null, requireRestoreIntent = true)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: XingsuiEntitlementException) {
+            UserKnobs.setRunningTunnels(emptySet())
+            managedTunnelEventsFlow.tryEmit(ManagedTunnelEvent.EntitlementDenied(error.reason))
+        } catch (error: Throwable) {
+            // Preserve intent. A later validated-network callback retries recovery.
+            UserKnobs.setRunningTunnels(setOf(XINGSUI_MANAGED_TUNNEL_NAME))
+            XingsuiCrashReporter.recordException("managed-restore", error)
+        }
     }
 
     suspend fun saveState() {
@@ -383,7 +466,7 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         if (willBringTunnelUp(tunnel, state)) {
             if (tunnel.name != XINGSUI_MANAGED_TUNNEL_NAME)
                 throw XingsuiConnectionSyncException(context.getString(R.string.xingsui_account_sync_failed))
-            return@withContext connectManagedTunnelInternal(nodeId = null, stopExistingFirst = false).state
+            return@withContext connectManagedTunnelInternal(nodeId = null).state
         }
         if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
             securelyRemoveManagedTunnel(tunnel)
@@ -447,12 +530,30 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         }
     }
 
-    suspend fun getTunnelState(tunnel: ObservableTunnel): Tunnel.State = withContext(Dispatchers.Main.immediate) {
-        tunnel.onStateChanged(withContext(Dispatchers.IO) { getBackend().getState(tunnel) })
+    suspend fun getTunnelState(tunnel: ObservableTunnel): Tunnel.State {
+        if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+            return managedConnectionMutex.withLock {
+                withContext(Dispatchers.Main.immediate) {
+                    tunnel.onStateChanged(withContext(Dispatchers.IO) { getBackend().getState(tunnel) })
+                }
+            }
+        }
+        return withContext(Dispatchers.Main.immediate) {
+            tunnel.onStateChanged(withContext(Dispatchers.IO) { getBackend().getState(tunnel) })
+        }
     }
 
-    suspend fun getTunnelStatistics(tunnel: ObservableTunnel): Statistics = withContext(Dispatchers.Main.immediate) {
-        tunnel.onStatisticsChanged(withContext(Dispatchers.IO) { getBackend().getStatistics(tunnel) })!!
+    suspend fun getTunnelStatistics(tunnel: ObservableTunnel): Statistics {
+        if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME) {
+            return managedConnectionMutex.withLock {
+                withContext(Dispatchers.Main.immediate) {
+                    tunnel.onStatisticsChanged(withContext(Dispatchers.IO) { getBackend().getStatistics(tunnel) })!!
+                }
+            }
+        }
+        return withContext(Dispatchers.Main.immediate) {
+            tunnel.onStatisticsChanged(withContext(Dispatchers.IO) { getBackend().getStatistics(tunnel) })!!
+        }
     }
 
     private fun startUsageReporter(tunnel: ObservableTunnel) {
@@ -460,27 +561,32 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         usageReporterJobs[tunnel.name] = applicationScope.launch {
             var lastRx = 0L
             var lastTx = 0L
-            var consecutiveReportFailures = 0
-            val connectedAtMs = System.currentTimeMillis()
+            var validatedNoHandshakeSamples = 0
             while (true) {
                 delay(USAGE_REPORT_INTERVAL_MS)
                 try {
                     val statistics = withContext(Dispatchers.IO) { getBackend().getStatistics(tunnel) }
 
-                    // Dead-link watchdog: the app is excluded from the tunnel, so API calls
-                    // keep succeeding even when the data path is dead (e.g. carrier kills the
-                    // UDP flow). A healthy AWG link re-handshakes at least every ~2-3 min with
-                    // keepalive 25s; a stale handshake means the tunnel passes no data.
+                    // An empty statistics snapshot is UNKNOWN (the native backend can return
+                    // it transiently), not proof of a dead link. Only rotate when a real peer
+                    // exists and the initial handshake never arrives. A stale historical
+                    // handshake alone is not safe evidence: idle healthy AWG peers can exceed
+                    // 180 seconds without a new handshake.
                     if (tunnel.name == XINGSUI_MANAGED_TUNNEL_NAME && tunnel.state == Tunnel.State.UP) {
-                        val latestHandshakeAt = statistics.peers().maxOfOrNull { peer ->
+                        val handshakes = statistics.peers().map { peer ->
                             statistics.peer(peer)?.latestHandshakeEpochMillis() ?: 0L
-                        } ?: 0L
-                        val nowMs = System.currentTimeMillis()
-                        val linkDead = if (latestHandshakeAt > 0L)
-                            nowMs - latestHandshakeAt > DEAD_LINK_STALE_HANDSHAKE_MS
-                        else
-                            nowMs - connectedAtMs > DEAD_LINK_NO_HANDSHAKE_MS
-                        if (linkDead) {
+                        }
+                        val physicalNetworkValidated = org.amnezia.awg.Application.getNetworkState().isConnected()
+                        validatedNoHandshakeSamples = if (
+                            physicalNetworkValidated && handshakes.isNotEmpty() && handshakes.all { it <= 0L }
+                        ) {
+                            validatedNoHandshakeSamples + 1
+                        } else {
+                            0
+                        }
+                        val initialHandshakeMissing =
+                            validatedNoHandshakeSamples >= DEAD_LINK_NO_HANDSHAKE_SAMPLES
+                        if (initialHandshakeMissing) {
                             handleDeadManagedLink()
                             return@launch
                         }
@@ -510,7 +616,6 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
                         stopTunnelAfterEntitlementFailure(tunnel)
                         return@launch
                     }
-                    consecutiveReportFailures = 0
                     withContext(Dispatchers.Main.immediate) {
                         if (tunnelMap[XINGSUI_MANAGED_TUNNEL_NAME] == tunnel) {
                             scheduleManagedLeaseExpiry(tunnel, renewedExpiry)
@@ -518,25 +623,75 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
                     }
                 } catch (e: Throwable) {
                     if (e is CancellationException) throw e
-                    // The session/lease being gone is not transient — stop immediately.
-                    // Network hiccups on the report call get a few retry cycles before we
-                    // give up: the lease is renewed for minutes, one lost report is harmless.
                     if (e is XingsuiUsageSessionGoneException) {
                         Log.e(TAG, "Xingsui session/lease gone while reporting usage", e)
                         stopTunnelAfterEntitlementFailure(tunnel)
                         return@launch
                     }
-                    consecutiveReportFailures++
-                    Log.e(TAG, "Failed to report Xingsui traffic usage ($consecutiveReportFailures/$MAX_REPORT_FAILURES)", e)
-                    if (consecutiveReportFailures >= MAX_REPORT_FAILURES) {
-                        managedTunnelEventsFlow.tryEmit(ManagedTunnelEvent.ReportFailureDisconnected)
+                    val httpError = e.findXingsuiHttpException()
+                    val detail = httpError?.detail()
+                    if (httpError?.isUnauthorized == true) {
+                        XingsuiSessionStore(context).clear()
                         stopTunnelAfterEntitlementFailure(tunnel)
                         return@launch
                     }
+                    if (httpError?.statusCode == 403 && detail == "Account disabled") {
+                        XingsuiSessionStore(context).clear()
+                        stopTunnelAfterEntitlementFailure(tunnel)
+                        return@launch
+                    }
+                    if (detail in ENTITLEMENT_DENIAL_REASONS) {
+                        managedTunnelEventsFlow.tryEmit(ManagedTunnelEvent.EntitlementDenied(detail.orEmpty()))
+                        stopTunnelAfterEntitlementFailure(tunnel)
+                        return@launch
+                    }
+                    if (detail in RECOVERABLE_LEASE_ERRORS) {
+                        try {
+                            connectManagedTunnelInternal(
+                                nodeId = managedNodeId,
+                                excludeNodeId = if (managedNodeId == null && detail == "vpn_node_unavailable") {
+                                    managedServedNodeId
+                                } else {
+                                    null
+                                },
+                            )
+                            return@launch
+                        } catch (recoveryError: CancellationException) {
+                            throw recoveryError
+                        } catch (recoveryError: Throwable) {
+                            Log.w(TAG, "Managed lease recovery will be retried", recoveryError)
+                        }
+                    }
+                    if (httpError?.statusCode == 403) {
+                        // Any remaining 403 is an explicit server-side denial, not a
+                        // transport blip. Keeping a UI-UP tunnel until peer expiry would be
+                        // a silent black hole.
+                        stopTunnelAfterEntitlementFailure(tunnel)
+                        return@launch
+                    }
+                    // I/O, timeout and 5xx failures are not entitlement decisions. Keep the
+                    // data plane up and retry; an expired lease will take the recovery path.
+                    Log.w(TAG, "Failed to report Xingsui traffic usage; keeping tunnel up", e)
                 }
             }
         }
     }
+
+    private fun Throwable.findXingsuiHttpException(): XingsuiHttpException? {
+        var current: Throwable? = this
+        val seen = mutableSetOf<Throwable>()
+        while (current != null && seen.add(current)) {
+            if (current is XingsuiHttpException) return current
+            current = current.cause
+        }
+        return null
+    }
+
+    private fun XingsuiHttpException.detail(): String = runCatching {
+        JSONObject(responseBody).optString("detail").trim()
+    }.getOrDefault("")
+
+    private class ManagedRestoreCancelledException : CancellationException("managed_restore_no_longer_requested")
 
     private class XingsuiUsageSessionGoneException : IllegalStateException("xingsui_session_or_lease_gone")
 
@@ -557,7 +712,6 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
             try {
                 connectManagedTunnelInternal(
                     nodeId = null,
-                    stopExistingFirst = true,
                     excludeNodeId = servedNode,
                 )
                 managedTunnelEventsFlow.tryEmit(ManagedTunnelEvent.DeadLinkSwitched)
@@ -598,12 +752,18 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     companion object {
         private const val TAG = "AmneziaWG/TunnelManager"
         private const val XINGSUI_MANAGED_TUNNEL_NAME = "xingsui"
-        private const val USAGE_REPORT_INTERVAL_MS = 10_000L
-        private const val MAX_RENEWED_LEASE_SECONDS = 15 * 60L
-        private const val MAX_REPORT_FAILURES = 3
+        private const val USAGE_REPORT_INTERVAL_MS = 30_000L
+        private const val MAX_RENEWED_LEASE_SECONDS = 60 * 60L + 90L
         private const val MAX_AUTO_SWITCH_ATTEMPTS = 1
-        // Keepalive is 25s; a live AWG link re-handshakes at least every ~2-3 min.
-        private const val DEAD_LINK_STALE_HANDSHAKE_MS = 180_000L
-        private const val DEAD_LINK_NO_HANDSHAKE_MS = 60_000L
+        private const val DEAD_LINK_NO_HANDSHAKE_SAMPLES = 2
+        private val RECOVERABLE_LEASE_ERRORS = setOf(
+            "invalid_vpn_lease",
+            "vpn_lease_expired",
+            "vpn_lease_cannot_be_renewed",
+            "vpn_node_unavailable",
+            "vpn_lease_renewal_failed",
+        )
+        private val ENTITLEMENT_DENIAL_REASONS =
+            setOf("free_traffic_exhausted", "vip_expired", "vip_required")
     }
 }

@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
@@ -50,7 +51,10 @@ type TunnelHandle struct {
 	uapi   net.Listener
 }
 
-var tunnelHandles map[int32]TunnelHandle
+var (
+	tunnelHandles     map[int32]TunnelHandle
+	tunnelHandlesLock sync.RWMutex
+)
 
 func init() {
 	tunnelHandles = make(map[int32]TunnelHandle)
@@ -131,28 +135,34 @@ func awgTurnOn(interfaceName string, tunFd int32, settings string) int32 {
 	logger.Verbosef("Device started")
 
 	var i int32
+	tunnelHandlesLock.Lock()
 	for i = 0; i < math.MaxInt32; i++ {
 		if _, exists := tunnelHandles[i]; !exists {
 			break
 		}
 	}
 	if i == math.MaxInt32 {
+		tunnelHandlesLock.Unlock()
 		logger.Errorf("Unable to find empty handle")
 		uapiFile.Close()
 		device.Close()
 		return -1
 	}
 	tunnelHandles[i] = TunnelHandle{device: device, uapi: uapi}
+	tunnelHandlesLock.Unlock()
 	return i
 }
 
 //export awgTurnOff
 func awgTurnOff(tunnelHandle int32) {
+	tunnelHandlesLock.Lock()
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
+		tunnelHandlesLock.Unlock()
 		return
 	}
 	delete(tunnelHandles, tunnelHandle)
+	tunnelHandlesLock.Unlock()
 	if handle.uapi != nil {
 		handle.uapi.Close()
 	}
@@ -161,6 +171,8 @@ func awgTurnOff(tunnelHandle int32) {
 
 //export awgGetSocketV4
 func awgGetSocketV4(tunnelHandle int32) int32 {
+	tunnelHandlesLock.RLock()
+	defer tunnelHandlesLock.RUnlock()
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return -1
@@ -178,6 +190,8 @@ func awgGetSocketV4(tunnelHandle int32) int32 {
 
 //export awgGetSocketV6
 func awgGetSocketV6(tunnelHandle int32) int32 {
+	tunnelHandlesLock.RLock()
+	defer tunnelHandlesLock.RUnlock()
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return -1
@@ -195,6 +209,8 @@ func awgGetSocketV6(tunnelHandle int32) int32 {
 
 //export awgGetConfig
 func awgGetConfig(tunnelHandle int32) *C.char {
+	tunnelHandlesLock.RLock()
+	defer tunnelHandlesLock.RUnlock()
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return nil

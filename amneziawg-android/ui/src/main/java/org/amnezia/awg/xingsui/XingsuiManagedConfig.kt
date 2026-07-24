@@ -76,17 +76,45 @@ object XingsuiManagedConfigProvider {
     }
 
     /**
-     * Inserts `ExcludedApplications = <own package>` into the [Interface] section so the
-     * client's own traffic bypasses the tunnel. Runs after server-config validation; skipped
-     * if the server ever starts sending its own exclusion list (avoids duplicate keys).
+     * Ensures the app's package is part of the [Interface] exclusion list so control-plane
+     * traffic always bypasses the tunnel. Existing server-provided exclusions are preserved;
+     * comments merely mentioning the key cannot suppress the mandatory own-app exclusion.
      */
-    private fun withOwnAppExcluded(configText: String, packageName: String): String {
-        if (configText.contains("excludedapplications", ignoreCase = true)) return configText
+    internal fun withOwnAppExcluded(configText: String, packageName: String): String {
         val lines = configText.lines().toMutableList()
         val interfaceIndex = lines.indexOfFirst { it.trim().equals("[Interface]", ignoreCase = true) }
         if (interfaceIndex < 0) return configText
-        lines.add(interfaceIndex + 1, "ExcludedApplications = $packageName")
+
+        val nextSectionIndex = lines.indexOfFirstFrom(interfaceIndex + 1) {
+            val line = it.trim()
+            line.startsWith("[") && line.endsWith("]")
+        }.let { if (it < 0) lines.size else it }
+        val exclusionIndex = (interfaceIndex + 1 until nextSectionIndex).firstOrNull { index ->
+            lines[index]
+                .substringBefore('=', missingDelimiterValue = "")
+                .trim()
+                .equals("ExcludedApplications", ignoreCase = true)
+        }
+        if (exclusionIndex == null) {
+            lines.add(interfaceIndex + 1, "ExcludedApplications = $packageName")
+        } else {
+            val applications = lines[exclusionIndex]
+                .substringAfter('=', missingDelimiterValue = "")
+                .split(',')
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .toMutableSet()
+            applications.add(packageName)
+            lines[exclusionIndex] = "ExcludedApplications = ${applications.joinToString(", ")}"
+        }
         return lines.joinToString("\n")
+    }
+
+    private inline fun List<String>.indexOfFirstFrom(startIndex: Int, predicate: (String) -> Boolean): Int {
+        for (index in startIndex until size) {
+            if (predicate(this[index])) return index
+        }
+        return -1
     }
 
     /**
@@ -194,6 +222,8 @@ object XingsuiManagedConfigValidator {
         require(interfaceSections == 1 && peerSections == 1) { "managed_config_section_count_rejected" }
         require(interfaceValues.keys.containsAll(requiredInterfaceKeys)) { "managed_config_interface_incomplete" }
         require(peerValues.keys.containsAll(requiredPeerKeys)) { "managed_config_peer_incomplete" }
+        require(interfaceValues["MTU"] == "1280") { "managed_config_mtu_rejected" }
+        require(peerValues["PersistentKeepalive"] == "25") { "managed_config_keepalive_rejected" }
 
         val allowedIps = peerValues.getValue("AllowedIPs")
             .split(',')
@@ -211,7 +241,7 @@ object XingsuiManagedConfigValidator {
     private const val IPV4_DEFAULT_ROUTE = "0.0.0.0/0"
     private const val IPV6_DEFAULT_ROUTE = "::/0"
     private const val MAX_CONFIG_TEXT_LENGTH = 32 * 1024
-    private val MAX_LEASE_DURATION: Duration = Duration.ofMinutes(15)
+    private val MAX_LEASE_DURATION: Duration = Duration.ofHours(1)
     private val MAX_CLOCK_SKEW: Duration = Duration.ofMinutes(1)
     private val MAX_ISSUE_AGE: Duration = Duration.ofMinutes(5)
     private val LEASE_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,64}")

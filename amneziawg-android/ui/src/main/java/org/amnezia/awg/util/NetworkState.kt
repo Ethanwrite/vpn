@@ -12,11 +12,9 @@ import android.net.ConnectivityManager
 import android.net.ConnectivityManager.NetworkCallback
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET
 import android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
 import android.net.NetworkCapabilities.TRANSPORT_CELLULAR
 import android.net.NetworkCapabilities.TRANSPORT_WIFI
-import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -40,6 +38,9 @@ class NetworkState(
     private var currentNetworkType: NetworkType = NetworkType.NONE
     private var validated: Boolean = false
     private var isListenerBound = false
+    private val candidates = linkedMapOf<Network, Candidate>()
+
+    private data class Candidate(val type: NetworkType, val validated: Boolean)
 
     private val handler: Handler by lazy {
         Handler(Looper.getMainLooper())
@@ -49,14 +50,6 @@ class NetworkState(
         context.getSystemService<ConnectivityManager>()!!
     }
 
-    private val networkRequest: NetworkRequest by lazy {
-        NetworkRequest.Builder()
-            .addCapability(NET_CAPABILITY_INTERNET)
-            .addTransportType(TRANSPORT_WIFI)
-            .addTransportType(TRANSPORT_CELLULAR)
-            .build()
-    }
-
     private val networkCallback: NetworkCallback by lazy {
         object : NetworkCallback() {
             override fun onAvailable(network: Network) {
@@ -64,46 +57,13 @@ class NetworkState(
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                val networkType = getNetworkType(networkCapabilities)
-                val isValidated = networkCapabilities.hasCapability(NET_CAPABILITY_VALIDATED)
-                Log.d(TAG, "onCapabilitiesChanged: network=$network, type=$networkType, validated=$isValidated")
-                checkNetworkState(network, networkCapabilities)
-            }
-
-            private fun checkNetworkState(network: Network, networkCapabilities: NetworkCapabilities) {
                 val newNetworkType = getNetworkType(networkCapabilities)
                 val isValidated = networkCapabilities.hasCapability(NET_CAPABILITY_VALIDATED)
-
-                if (currentNetwork == null) {
-                    // First network connection
-                    currentNetwork = network
-                    currentNetworkType = newNetworkType
-                    validated = isValidated
-                    Log.d(TAG, "Initial network: $newNetworkType, validated: $validated")
-                } else {
-                    if (currentNetwork != network || currentNetworkType != newNetworkType) {
-                        // Network changed (e.g., WiFi to Cellular or vice versa)
-                        val oldNetworkType = currentNetworkType
-                        currentNetwork = network
-                        currentNetworkType = newNetworkType
-                        validated = false
-
-                        Log.d(TAG, "Network changed: $oldNetworkType -> $newNetworkType")
-
-                        if (isValidated) {
-                            validated = true
-                            handler.post {
-                                onNetworkChange(oldNetworkType, newNetworkType)
-                            }
-                        }
-                    } else if (!validated && isValidated) {
-                        // Same network became validated
-                        validated = true
-                        Log.d(TAG, "Network validated: $newNetworkType")
-                        handler.post {
-                            onNetworkChange(currentNetworkType, newNetworkType)
-                        }
-                    }
+                Log.d(TAG, "onCapabilitiesChanged: network=$network, type=$newNetworkType, validated=$isValidated")
+                handler.post {
+                    if (!isListenerBound) return@post
+                    candidates[network] = Candidate(newNetworkType, isValidated)
+                    updateSelectedNetwork()
                 }
             }
 
@@ -117,18 +77,54 @@ class NetworkState(
 
             override fun onLost(network: Network) {
                 Log.d(TAG, "onLost: $network, currentNetwork: $currentNetwork")
-                if (currentNetwork == network) {
-                    val oldType = currentNetworkType
-                    currentNetwork = null
-                    currentNetworkType = NetworkType.NONE
-                    validated = false
-                    Log.d(TAG, "Network lost: $oldType -> NONE")
-                    handler.post {
-                        onNetworkChange(oldType, NetworkType.NONE)
-                    }
+                handler.post {
+                    if (!isListenerBound) return@post
+                    candidates.remove(network)
+                    updateSelectedNetwork()
                 }
             }
         }
+    }
+
+    /**
+     * API 26-30 can report every matching Wi-Fi and cellular network. Keep one stable,
+     * validated physical network so callback order cannot flap the VPN between candidates.
+     */
+    private fun updateSelectedNetwork() {
+        val oldNetwork = currentNetwork
+        val oldType = currentNetworkType
+        val oldValidated = validated
+        val best = candidates
+            .filterValues { it.validated }
+            .maxByOrNull { (_, candidate) -> networkPriority(candidate.type) }
+        val currentCandidate = oldNetwork?.let(candidates::get)?.takeIf { it.validated }
+        val selected = if (
+            currentCandidate != null && best != null &&
+            networkPriority(currentCandidate.type) >= networkPriority(best.value.type)
+        ) {
+            oldNetwork to currentCandidate
+        } else {
+            best?.let { it.key to it.value }
+        }
+
+        currentNetwork = selected?.first
+        currentNetworkType = selected?.second?.type ?: NetworkType.NONE
+        validated = selected?.second?.validated == true
+
+        val changed = oldNetwork != currentNetwork
+        val recovered = !oldValidated && validated && oldNetwork == currentNetwork
+        if (changed || recovered) {
+            val selectedType = currentNetworkType
+            Log.d(TAG, "Selected network changed: $oldType -> $selectedType, validated=$validated")
+            handler.post { onNetworkChange(oldType, selectedType) }
+        }
+    }
+
+    private fun networkPriority(type: NetworkType): Int = when (type) {
+        NetworkType.WIFI -> 3
+        NetworkType.OTHER -> 2
+        NetworkType.CELLULAR -> 1
+        NetworkType.NONE -> 0
     }
 
     suspend fun bindNetworkListener() {
@@ -148,21 +144,21 @@ class NetworkState(
         var attemptCount = 0
         while (true) {
             try {
+                // Set before registration so an immediately-posted initial callback is not
+                // discarded on the main handler. Reset on every failed registration attempt.
+                isListenerBound = true
                 when {
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                        connectivityManager.registerBestMatchingNetworkCallback(networkRequest, networkCallback, handler)
-                    }
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> {
-                        connectivityManager.registerNetworkCallback(networkRequest, networkCallback, handler)
+                        connectivityManager.registerDefaultNetworkCallback(networkCallback, handler)
                     }
                     else -> {
-                        connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+                        connectivityManager.registerDefaultNetworkCallback(networkCallback)
                     }
                 }
-                isListenerBound = true
                 Log.i(TAG, "Network listener bound successfully")
                 break
             } catch (e: SecurityException) {
+                isListenerBound = false
                 Log.e(TAG, "Failed to bind network listener: $e")
                 // Android 11 bug: https://issuetracker.google.com/issues/175055271
                 if (e.message?.startsWith("Package android does not belong to") == true) {
@@ -175,6 +171,7 @@ class NetworkState(
                     throw e
                 }
             } catch (e: Exception) {
+                isListenerBound = false
                 Log.e(TAG, "Failed to bind network listener", e)
                 throw e
             }
@@ -204,10 +201,10 @@ class NetworkState(
         currentNetwork = null
         currentNetworkType = NetworkType.NONE
         validated = false
+        candidates.clear()
     }
 
     fun getCurrentNetworkType(): NetworkType = currentNetworkType
 
     fun isConnected(): Boolean = validated && currentNetworkType != NetworkType.NONE
 }
-

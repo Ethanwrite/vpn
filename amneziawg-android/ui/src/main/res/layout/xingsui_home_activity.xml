@@ -12,7 +12,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:paddingStart="20dp"
-        android:paddingTop="22dp"
+        android:paddingTop="40dp"
         android:paddingEnd="20dp"
         android:paddingBottom="22dp">
 
@@ -94,45 +94,11 @@
                 app:cornerRadius="12dp" />
         </LinearLayout>
 
+        <!-- 标题贴头像下方、智能模式开关贴充值下方，中部只留连接按钮，视觉更简约。 -->
         <LinearLayout
-            android:id="@+id/auth_actions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:baselineAligned="false"
-            android:orientation="horizontal">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/login_button"
-                android:layout_width="0dp"
-                android:layout_height="46dp"
-                android:layout_marginEnd="6dp"
-                android:layout_weight="1"
-                android:text="@string/xingsui_login"
-                android:textColor="#FFFFFFFF"
-                android:textStyle="bold"
-                android:background="@drawable/xingsui_primary_button_bg"
-                app:backgroundTint="@null"
-                app:cornerRadius="12dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/register_button"
-                android:layout_width="0dp"
-                android:layout_height="46dp"
-                android:layout_marginStart="6dp"
-                android:layout_weight="1"
-                android:text="@string/xingsui_register"
-                android:textColor="#D9DEFFFF"
-                android:textStyle="bold"
-                android:background="@drawable/xingsui_outline_button_bg"
-                app:backgroundTint="@null"
-                app:cornerRadius="12dp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="14dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -186,6 +152,48 @@
             </LinearLayout>
         </LinearLayout>
 
+        <LinearLayout
+            android:id="@+id/auth_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/login_button"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:text="@string/xingsui_login"
+                android:textColor="#FFFFFFFF"
+                android:textStyle="bold"
+                android:background="@drawable/xingsui_primary_button_bg"
+                app:backgroundTint="@null"
+                app:cornerRadius="12dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/register_button"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="@string/xingsui_register"
+                android:textColor="#D9DEFFFF"
+                android:textStyle="bold"
+                android:background="@drawable/xingsui_outline_button_bg"
+                app:backgroundTint="@null"
+                app:cornerRadius="12dp" />
+        </LinearLayout>
+
+        <!-- 长屏适配：与连接按钮下方的等权 Space 对称分布多余高度，
+             使连接区块在头部与底部卡片之间居中；小屏上收缩为 0，照常滚动。 -->
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="296dp"
@@ -219,6 +227,12 @@
                 app:cornerRadius="79dp"
                 app:elevation="14dp" />
         </FrameLayout>
+
+        <!-- 与连接按钮上方的 Space 等权，保证连接区块上下留白对称。 -->
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -274,12 +288,16 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/node_manage_button"
-                android:layout_width="66dp"
+                android:layout_width="48dp"
                 android:layout_height="40dp"
+                android:contentDescription="@string/xingsui_node_picker_title"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
                 android:text="@string/xingsui_home_node_manage"
                 android:textColor="#D9DEFFFF"
-                android:textSize="12sp"
-                android:textStyle="bold"
+                android:textSize="16sp"
                 android:background="@drawable/xingsui_outline_button_bg"
                 app:backgroundTint="@null"
                 app:cornerRadius="12dp" />

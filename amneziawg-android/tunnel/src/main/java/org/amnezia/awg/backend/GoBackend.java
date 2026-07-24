@@ -12,6 +12,8 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.system.OsConstants;
 import android.util.Log;
@@ -31,6 +33,7 @@ import java.net.InetAddress;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -51,12 +54,13 @@ public final class GoBackend implements Backend {
     private static final String NOTIFICATION_CHANNEL_ID = "xingsui_vpn";
     private static final int NOTIFICATION_ID = 7301;
     private static final String TAG = "AmneziaWG/GoBackend";
+    private static final Object VPN_SERVICE_LOCK = new Object();
     @Nullable private static AlwaysOnCallback alwaysOnCallback;
-    private static GhettoCompletableFuture<VpnService> vpnService = new GhettoCompletableFuture<>();
+    private static volatile GhettoCompletableFuture<VpnService> vpnService = new GhettoCompletableFuture<>();
     private final Context context;
-    @Nullable private Config currentConfig;
-    @Nullable private Tunnel currentTunnel;
-    private int currentTunnelHandle = -1;
+    @Nullable private volatile Config currentConfig;
+    @Nullable private volatile Tunnel currentTunnel;
+    private volatile int currentTunnelHandle = -1;
     @Nullable private Thread statusThread;
     @Nullable private StatusCallback statusCallback;
 
@@ -222,7 +226,7 @@ public final class GoBackend implements Backend {
      * Launch a background thread to poll handshake status and determine connection state.
      * This is called after tunnel creation to wait for the first successful handshake.
      */
-    private void launchStatusJob() {
+    private synchronized void launchStatusJob() {
         stopStatusJob();
         Log.d(TAG, "Launch status job");
         statusThread = new Thread(() -> {
@@ -264,7 +268,10 @@ public final class GoBackend implements Backend {
                     break;
                 }
             }
-            statusThread = null;
+            synchronized (GoBackend.this) {
+                if (statusThread == Thread.currentThread())
+                    statusThread = null;
+            }
         }, "StatusJob");
         statusThread.start();
     }
@@ -272,7 +279,7 @@ public final class GoBackend implements Backend {
     /**
      * Stop the status polling thread if running.
      */
-    private void stopStatusJob() {
+    private synchronized void stopStatusJob() {
         if (statusThread != null) {
             statusThread.interrupt();
             statusThread = null;
@@ -311,21 +318,28 @@ public final class GoBackend implements Backend {
             final Config originalConfig = currentConfig;
             final Tunnel originalTunnel = currentTunnel;
             if (currentTunnel != null)
-                setStateInternal(currentTunnel, null, State.DOWN);
+                // A config/network hot switch must keep the foreground VpnService alive.
+                // stopSelf() queues onDestroy(), which can otherwise race with the new
+                // awgTurnOn() and immediately close its freshly-created handle.
+                setStateInternal(currentTunnel, null, State.DOWN, false);
             try {
-                setStateInternal(tunnel, config, state);
+                setStateInternal(tunnel, config, state, false);
             } catch (final Exception e) {
                 if (originalTunnel != null)
-                    setStateInternal(originalTunnel, originalConfig, State.UP);
+                    setStateInternal(originalTunnel, originalConfig, State.UP, false);
+                else
+                    scheduleVpnServiceStopIfIdle();
                 throw e;
             }
         } else if (state == State.DOWN && tunnel == currentTunnel) {
-            setStateInternal(tunnel, null, State.DOWN);
+            // Only a real, user/product-authorized final DOWN stops the service.
+            setStateInternal(tunnel, null, State.DOWN, true);
         }
         return getState(tunnel);
     }
 
-    private void setStateInternal(final Tunnel tunnel, @Nullable final Config config, final State state)
+    private void setStateInternal(final Tunnel tunnel, @Nullable final Config config, final State state,
+                                  final boolean stopServiceWhenDown)
             throws Exception {
         Log.i(TAG, "Bringing tunnel " + tunnel.getName() + ' ' + state);
 
@@ -336,21 +350,46 @@ public final class GoBackend implements Backend {
             if (VpnService.prepare(context) != null)
                 throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
 
-            final VpnService service;
-            if (!vpnService.isDone()) {
-                Log.d(TAG, "Requesting to start VpnService");
-                context.startService(new Intent(context, VpnService.class));
+            final GhettoCompletableFuture<VpnService> serviceFuture;
+            synchronized (VPN_SERVICE_LOCK) {
+                serviceFuture = vpnService;
+                if (!serviceFuture.isDone()) {
+                    Log.d(TAG, "Requesting to start VpnService");
+                    context.startService(new Intent(context, VpnService.class));
+                }
             }
 
+            VpnService service;
             try {
-                service = vpnService.get(2, TimeUnit.SECONDS);
+                service = serviceFuture.get(2, TimeUnit.SECONDS);
             } catch (final TimeoutException e) {
                 final Exception be = new BackendException(Reason.UNABLE_TO_START_VPN);
                 be.initCause(e);
                 throw be;
             }
-            service.setOwner(this);
-            service.startForegroundNotification();
+            if (service.cancelScheduledStop()) {
+                // A delayed stop already committed. Never establish on that dying Service:
+                // wait until stopSelfResult either resolves false (newer start exists) or
+                // onDestroy publishes a fresh future, then acquire the live generation.
+                if (!service.awaitStopResolution(2, TimeUnit.SECONDS))
+                    throw new BackendException(Reason.UNABLE_TO_START_VPN);
+                if (service.isDestroyed()) {
+                    final GhettoCompletableFuture<VpnService> replacementFuture;
+                    synchronized (VPN_SERVICE_LOCK) {
+                        replacementFuture = vpnService;
+                        if (!replacementFuture.isDone())
+                            context.startService(new Intent(context, VpnService.class));
+                    }
+                    try {
+                        service = replacementFuture.get(2, TimeUnit.SECONDS);
+                    } catch (final TimeoutException e) {
+                        final Exception be = new BackendException(Reason.UNABLE_TO_START_VPN);
+                        be.initCause(e);
+                        throw be;
+                    }
+                    service.cancelScheduledStop();
+                }
+            }
 
             if (currentTunnelHandle != -1) {
                 Log.w(TAG, "Tunnel already up");
@@ -376,65 +415,84 @@ public final class GoBackend implements Backend {
                 break;
             }
 
-            // Build config
-            final String goConfig = config.toAwgUserspaceString();
-
-            // Create the vpn tunnel with android API
-            final VpnService.Builder builder = service.getBuilder();
-            builder.setSession(tunnel.getName());
-
-            for (final String excludedApplication : config.getInterface().getExcludedApplications())
-                builder.addDisallowedApplication(excludedApplication);
-
-            for (final String includedApplication : config.getInterface().getIncludedApplications())
-                builder.addAllowedApplication(includedApplication);
-
-            for (final InetNetwork addr : config.getInterface().getAddresses())
-                builder.addAddress(addr.getAddress(), addr.getMask());
-
-            for (final InetAddress addr : config.getInterface().getDnsServers())
-                builder.addDnsServer(addr.getHostAddress());
-
-            for (final String dnsSearchDomain : config.getInterface().getDnsSearchDomains())
-                builder.addSearchDomain(dnsSearchDomain);
-
-            boolean sawDefaultRoute = false;
-            for (final Peer peer : config.getPeers()) {
-                for (final InetNetwork addr : peer.getAllowedIps()) {
-                    if (addr.getMask() == 0)
-                        sawDefaultRoute = true;
-                    builder.addRoute(addr.getAddress(), addr.getMask());
+            synchronized (service.lifecycleLock) {
+                // Validate the exact published generation while holding the same lock as
+                // onDestroy(). This closes the get()/isDestroyed() TOCTOU window and ensures
+                // no Builder/native call can run on an already-destroyed Service instance.
+                synchronized (VPN_SERVICE_LOCK) {
+                    if (!vpnService.isCompletedWith(service) || service.isDestroyed())
+                        throw new BackendException(Reason.UNABLE_TO_START_VPN);
                 }
+                if (service.cancelScheduledStop())
+                    throw new BackendException(Reason.UNABLE_TO_START_VPN);
+                service.setOwner(this);
+                service.startForegroundNotification();
+
+                // Build config
+                final String goConfig = config.toAwgUserspaceString();
+
+                // Create the vpn tunnel with android API
+                final VpnService.Builder builder = service.getBuilder();
+                builder.setSession(tunnel.getName());
+
+                for (final String excludedApplication : config.getInterface().getExcludedApplications())
+                    builder.addDisallowedApplication(excludedApplication);
+
+                for (final String includedApplication : config.getInterface().getIncludedApplications())
+                    builder.addAllowedApplication(includedApplication);
+
+                for (final InetNetwork addr : config.getInterface().getAddresses())
+                    builder.addAddress(addr.getAddress(), addr.getMask());
+
+                for (final InetAddress addr : config.getInterface().getDnsServers())
+                    builder.addDnsServer(addr.getHostAddress());
+
+                for (final String dnsSearchDomain : config.getInterface().getDnsSearchDomains())
+                    builder.addSearchDomain(dnsSearchDomain);
+
+                boolean sawDefaultRoute = false;
+                for (final Peer peer : config.getPeers()) {
+                    for (final InetNetwork addr : peer.getAllowedIps()) {
+                        if (addr.getMask() == 0)
+                            sawDefaultRoute = true;
+                        builder.addRoute(addr.getAddress(), addr.getMask());
+                    }
+                }
+
+                // "Kill-switch" semantics
+                if (!(sawDefaultRoute && config.getPeers().size() == 1)) {
+                    builder.allowFamily(OsConstants.AF_INET);
+                    builder.allowFamily(OsConstants.AF_INET6);
+                }
+
+                builder.setMtu(config.getInterface().getMtu().orElse(1280));
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    builder.setMetered(false);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                    service.setUnderlyingNetworks(null);
+
+                builder.setBlocking(true);
+                try (final ParcelFileDescriptor tun = builder.establish()) {
+                    if (tun == null)
+                        throw new BackendException(Reason.TUN_CREATION_ERROR);
+                    Log.d(TAG, "Go backend " + awgVersion());
+                    currentTunnelHandle = awgTurnOn(tunnel.getName(), tun.detachFd(), goConfig);
+                }
+                if (currentTunnelHandle < 0) {
+                    final int activationError = currentTunnelHandle;
+                    // -1 is the sole DOWN sentinel. Keeping a native error such as -2 here
+                    // makes rollback think a tunnel is already up and silently skip restore.
+                    currentTunnelHandle = -1;
+                    throw new BackendException(Reason.GO_ACTIVATION_ERROR_CODE, activationError);
+                }
+
+                currentTunnel = tunnel;
+                currentConfig = config;
+
+                service.protect(awgGetSocketV4(currentTunnelHandle));
+                service.protect(awgGetSocketV6(currentTunnelHandle));
             }
-
-            // "Kill-switch" semantics
-            if (!(sawDefaultRoute && config.getPeers().size() == 1)) {
-                builder.allowFamily(OsConstants.AF_INET);
-                builder.allowFamily(OsConstants.AF_INET6);
-            }
-
-            builder.setMtu(config.getInterface().getMtu().orElse(1280));
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                builder.setMetered(false);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                service.setUnderlyingNetworks(null);
-
-            builder.setBlocking(true);
-            try (final ParcelFileDescriptor tun = builder.establish()) {
-                if (tun == null)
-                    throw new BackendException(Reason.TUN_CREATION_ERROR);
-                Log.d(TAG, "Go backend " + awgVersion());
-                currentTunnelHandle = awgTurnOn(tunnel.getName(), tun.detachFd(), goConfig);
-            }
-            if (currentTunnelHandle < 0)
-                throw new BackendException(Reason.GO_ACTIVATION_ERROR_CODE, currentTunnelHandle);
-
-            currentTunnel = tunnel;
-            currentConfig = config;
-
-            service.protect(awgGetSocketV4(currentTunnelHandle));
-            service.protect(awgGetSocketV6(currentTunnelHandle));
 
             launchStatusJob();
         } else {
@@ -448,14 +506,27 @@ public final class GoBackend implements Backend {
             currentTunnelHandle = -1;
             currentConfig = null;
             awgTurnOff(handleToClose);
-            try {
-                final VpnService service = vpnService.get(0, TimeUnit.NANOSECONDS);
-                service.stopForeground(true);
-                service.stopSelf();
-            } catch (final TimeoutException ignored) { }
+            if (stopServiceWhenDown) {
+                scheduleVpnServiceStopIfIdle();
+            }
         }
 
         tunnel.onStateChange(state);
+    }
+
+    private void scheduleVpnServiceStopIfIdle() {
+        try {
+            final GhettoCompletableFuture<VpnService> serviceFuture;
+            synchronized (VPN_SERVICE_LOCK) {
+                serviceFuture = vpnService;
+            }
+            final VpnService service = serviceFuture.get(0, TimeUnit.NANOSECONDS);
+            service.scheduleStopIfIdle(this);
+        } catch (final TimeoutException ignored) { }
+        catch (final ExecutionException | InterruptedException ignored) {
+            if (ignored instanceof InterruptedException)
+                Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -490,6 +561,10 @@ public final class GoBackend implements Backend {
             return !completion.isEmpty();
         }
 
+        public boolean isCompletedWith(final V value) {
+            return completion.peek() == value;
+        }
+
         public GhettoCompletableFuture<V> newIncompleteFuture() {
             return new GhettoCompletableFuture<>();
         }
@@ -499,7 +574,14 @@ public final class GoBackend implements Backend {
      * {@link android.net.VpnService} implementation for {@link GoBackend}
      */
     public static class VpnService extends android.net.VpnService {
-        @Nullable private GoBackend owner;
+        @Nullable private volatile GoBackend owner;
+        private final Handler lifecycleHandler = new Handler(Looper.getMainLooper());
+        private final Object lifecycleLock = new Object();
+        private final Object stopLock = new Object();
+        private int stopGeneration;
+        private final CountDownLatch destroyed = new CountDownLatch(1);
+        private volatile boolean stopCommitted;
+        private volatile int lastStartId;
 
         public Builder getBuilder() {
             return new Builder();
@@ -508,30 +590,51 @@ public final class GoBackend implements Backend {
         @Override
         public void onCreate() {
             super.onCreate();
-            vpnService.complete(this);
+            synchronized (VPN_SERVICE_LOCK) {
+                vpnService.complete(this);
+            }
         }
 
         @Override
         public void onDestroy() {
-            stopForeground(true);
-            if (owner != null) {
-                final Tunnel tunnel = owner.currentTunnel;
-                if (tunnel != null) {
-                    if (owner.currentTunnelHandle != -1)
-                        awgTurnOff(owner.currentTunnelHandle);
-                    owner.currentTunnel = null;
-                    owner.currentTunnelHandle = -1;
-                    owner.currentConfig = null;
-                    tunnel.onStateChange(State.DOWN);
+            synchronized (lifecycleLock) {
+                stopForeground(true);
+                if (owner != null) {
+                    final Tunnel tunnel = owner.currentTunnel;
+                    if (tunnel != null) {
+                        if (owner.currentTunnelHandle != -1)
+                            awgTurnOff(owner.currentTunnelHandle);
+                        owner.currentTunnel = null;
+                        owner.currentTunnelHandle = -1;
+                        owner.currentConfig = null;
+                        tunnel.onStateChange(State.DOWN);
+                    }
                 }
+                synchronized (VPN_SERVICE_LOCK) {
+                    if (vpnService.isCompletedWith(this))
+                        vpnService = vpnService.newIncompleteFuture();
+                }
+                destroyed.countDown();
             }
-            vpnService = vpnService.newIncompleteFuture();
+            synchronized (stopLock) {
+                ++stopGeneration;
+                stopCommitted = false;
+                stopLock.notifyAll();
+            }
             super.onDestroy();
         }
 
         @Override
         public int onStartCommand(@Nullable final Intent intent, final int flags, final int startId) {
-            vpnService.complete(this);
+            lastStartId = startId;
+            synchronized (stopLock) {
+                ++stopGeneration;
+                stopCommitted = false;
+                stopLock.notifyAll();
+            }
+            synchronized (VPN_SERVICE_LOCK) {
+                vpnService.complete(this);
+            }
             startForegroundNotification();
             if (intent == null || intent.getComponent() == null || !intent.getComponent().getPackageName().equals(getPackageName())) {
                 Log.d(TAG, "Service started by Always-on VPN feature");
@@ -539,6 +642,67 @@ public final class GoBackend implements Backend {
                     alwaysOnCallback.alwaysOnTriggered();
             }
             return START_STICKY;
+        }
+
+        /** @return true when stopSelfResult already committed and must resolve first. */
+        public boolean cancelScheduledStop() {
+            synchronized (stopLock) {
+                if (stopCommitted)
+                    return true;
+                ++stopGeneration;
+                return false;
+            }
+        }
+
+        public void scheduleStopIfIdle(final GoBackend expectedOwner) {
+            final int generation;
+            synchronized (stopLock) {
+                // A committed stop belongs exclusively to onDestroy/onStartCommand or
+                // its own stopSelfResult(false) resolution; never overwrite that state.
+                if (stopCommitted)
+                    return;
+                stopCommitted = false;
+                generation = ++stopGeneration;
+            }
+            lifecycleHandler.postDelayed(() -> {
+                synchronized (lifecycleLock) {
+                    final int startId;
+                    synchronized (stopLock) {
+                        // Check and commit atomically with cancelScheduledStop(). Holding
+                        // lifecycleLock also prevents this stop from committing mid-activation.
+                        if (generation != stopGeneration || owner != expectedOwner || expectedOwner.currentTunnel != null)
+                            return;
+                        stopCommitted = true;
+                        startId = lastStartId;
+                    }
+                    if (stopSelfResult(startId)) {
+                        stopForeground(true);
+                    } else {
+                        synchronized (stopLock) {
+                            if (generation == stopGeneration)
+                                stopCommitted = false;
+                            stopLock.notifyAll();
+                        }
+                    }
+                }
+            }, SERVICE_IDLE_STOP_DELAY_MS);
+        }
+
+        public boolean awaitStopResolution(final long timeout, final TimeUnit unit) throws InterruptedException {
+            final long deadline = System.nanoTime() + unit.toNanos(timeout);
+            synchronized (stopLock) {
+                while (stopCommitted && destroyed.getCount() != 0) {
+                    final long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0)
+                        return false;
+                    TimeUnit.NANOSECONDS.timedWait(stopLock, remaining);
+                }
+                return true;
+            }
+        }
+
+        public boolean isDestroyed() {
+            return destroyed.getCount() == 0;
         }
 
         @Override
@@ -593,4 +757,6 @@ public final class GoBackend implements Backend {
             startForeground(NOTIFICATION_ID, builder.build());
         }
     }
+
+    private static final long SERVICE_IDLE_STOP_DELAY_MS = 1_000L;
 }

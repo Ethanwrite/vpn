@@ -2,7 +2,9 @@ package org.amnezia.awg.xingsui
 
 import org.amnezia.awg.xingsui.model.EntitlementStatus
 import org.amnezia.awg.xingsui.model.VpnNodeConfig
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -44,12 +46,25 @@ class XingsuiManagedConfigValidatorTest {
     }
 
     @Test
-    fun rejectsExpiredOrLongLivedLease() {
+    fun acceptsOneHourLeaseAndRejectsLongerLease() {
         assertThrows(IllegalArgumentException::class.java) {
             XingsuiManagedConfigValidator.validate(validResponse().copy(expiresAt = now.minusSeconds(1)), now)
         }
+        XingsuiManagedConfigValidator.validate(
+            validResponse().copy(
+                expiresAt = now.plus(1, ChronoUnit.HOURS),
+                entitlement = validEntitlement().copy(leaseExpiresAt = now.plus(1, ChronoUnit.HOURS)),
+            ),
+            now,
+        )
         assertThrows(IllegalArgumentException::class.java) {
-            XingsuiManagedConfigValidator.validate(validResponse().copy(expiresAt = now.plus(16, ChronoUnit.MINUTES)), now)
+            XingsuiManagedConfigValidator.validate(
+                validResponse().copy(
+                    expiresAt = now.plus(61, ChronoUnit.MINUTES),
+                    entitlement = validEntitlement().copy(leaseExpiresAt = now.plus(61, ChronoUnit.MINUTES)),
+                ),
+                now,
+            )
         }
     }
 
@@ -82,6 +97,43 @@ class XingsuiManagedConfigValidatorTest {
                 validConfigText().replace("0.0.0.0/0, ::/0", "0.0.0.0/0")
             )
         }
+    }
+
+    @Test
+    fun rejectsUnsafeMtuOrKeepaliveRegression() {
+        assertThrows(IllegalArgumentException::class.java) {
+            XingsuiManagedConfigValidator.validateConfigText(validConfigText().replace("MTU = 1280", "MTU = 1420"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            XingsuiManagedConfigValidator.validateConfigText(
+                validConfigText().replace("PersistentKeepalive = 25", "PersistentKeepalive = 0")
+            )
+        }
+    }
+
+    @Test
+    fun ownAppExclusionIsInsertedDespiteCommentMention() {
+        val config = validConfigText().replace(
+            "[Interface]",
+            "[Interface]\n# ExcludedApplications is intentionally managed by the client",
+        )
+
+        val updated = XingsuiManagedConfigProvider.withOwnAppExcluded(config, "org.amnezia.awg")
+
+        assertTrue(updated.contains("ExcludedApplications = org.amnezia.awg"))
+    }
+
+    @Test
+    fun ownAppExclusionMergesWithServerProvidedApplicationsWithoutDuplicates() {
+        val config = validConfigText().replace(
+            "[Interface]",
+            "[Interface]\nExcludedApplications = example.one, org.amnezia.awg",
+        )
+
+        val updated = XingsuiManagedConfigProvider.withOwnAppExcluded(config, "org.amnezia.awg")
+        val exclusionLine = updated.lineSequence().single { it.startsWith("ExcludedApplications") }
+
+        assertEquals("ExcludedApplications = example.one, org.amnezia.awg", exclusionLine)
     }
 
     private fun validResponse() = VpnNodeConfig(
