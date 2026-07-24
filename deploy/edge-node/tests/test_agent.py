@@ -57,8 +57,30 @@ def test_public_key_ip_and_expiry_validation() -> None:
     assert agent.validate_ip("10.0.0.2/32") == "10.0.0.2"
     now = datetime.now(UTC)
     assert agent.parse_expiry((now + timedelta(minutes=5)).isoformat(), now) > now
+    assert agent.parse_expiry((now + timedelta(hours=1)).isoformat(), now) > now
+    assert agent.parse_expiry(
+        (now + timedelta(seconds=agent.MAX_LEASE_SECONDS + agent.LEASE_CLOCK_SKEW_SECONDS)).isoformat(),
+        now,
+    ) > now
     with pytest.raises(ValueError):
-        agent.parse_expiry((now + timedelta(hours=2)).isoformat(), now)
+        agent.parse_expiry(
+            (
+                now
+                + timedelta(
+                    seconds=agent.MAX_LEASE_SECONDS + agent.LEASE_CLOCK_SKEW_SECONDS + 1,
+                )
+            ).isoformat(),
+            now,
+        )
+
+
+def test_awg_status_and_usage_fail_closed_when_interface_read_fails(monkeypatch) -> None:
+    monkeypatch.setenv("XS_MANAGED_PROTOCOLS", "awg")
+    monkeypatch.setattr(agent, "run", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("awg down")))
+    with pytest.raises(RuntimeError):
+        agent.collect_status()
+    with pytest.raises(RuntimeError):
+        agent.peer_usage()
 
 
 def test_expired_awg_lease_is_removed(monkeypatch) -> None:

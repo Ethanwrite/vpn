@@ -22,10 +22,14 @@ import time
 import urllib.request
 from uuid import UUID
 
-AGENT_VERSION = "2.1.0"
+AGENT_VERSION = "2.1.2"
 MAX_REQUEST_BYTES = 64 * 1024
 SIGNATURE_WINDOW_SECONDS = 90
 MAX_LEASE_SECONDS = 60 * 60
+# Control-plane and Agent clocks are independently synchronized. The control
+# plane still signs at most MAX_LEASE_SECONDS, while the Agent accepts the same
+# bounded skew already permitted for request signatures.
+LEASE_CLOCK_SKEW_SECONDS = SIGNATURE_WINDOW_SECONDS
 # Subscription VLESS users are long-lived (bound to the user's VIP expiry) rather
 # than short leases: Clash-style clients import a static config and never renew a
 # lease. Cap keeps a compromised control plane from minting effectively-permanent
@@ -181,7 +185,7 @@ def validate_lease_id(value: object) -> str:
 
 
 def parse_expiry(value: object, now: datetime | None = None) -> datetime:
-    return _parse_expiry_bounded(value, MAX_LEASE_SECONDS, now)
+    return _parse_expiry_bounded(value, MAX_LEASE_SECONDS + LEASE_CLOCK_SKEW_SECONDS, now)
 
 
 def parse_subscription_expiry(value: object, now: datetime | None = None) -> datetime:
@@ -578,7 +582,8 @@ def reconcile_managed_credentials() -> None:
 
 def collect_status() -> dict[str, float]:
     peer_count = rx = tx = 0
-    try:
+    protocols = {item.strip().lower() for item in env("XS_MANAGED_PROTOCOLS", "awg").split(",") if item.strip()}
+    if "awg" in protocols:
         dump = run([wg_tool(), "show", iface(), "dump"])
         lines = [line for line in dump.splitlines() if line.strip()]
         for line in lines[1:]:
@@ -587,8 +592,6 @@ def collect_status() -> dict[str, float]:
             if len(columns) >= 7:
                 rx += int(columns[5] or 0)
                 tx += int(columns[6] or 0)
-    except Exception:
-        pass
     cpu_load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
     return {
         "peer_count": peer_count,
@@ -606,21 +609,18 @@ def peer_usage() -> dict[str, int]:
     forwarded for each peer, independent of any client self-report.
     """
     usage: dict[str, int] = {}
-    try:
-        dump = run([wg_tool(), "show", iface(), "dump"])
-        for line in dump.splitlines()[1:]:  # first line describes the interface, not a peer
-            columns = line.split("\t")
-            if len(columns) < 7:
-                continue
-            public_key = columns[0].strip()
-            if not public_key:
-                continue
-            try:
-                usage[public_key] = int(columns[5] or 0) + int(columns[6] or 0)
-            except ValueError:
-                continue
-    except Exception:
-        pass
+    dump = run([wg_tool(), "show", iface(), "dump"])
+    for line in dump.splitlines()[1:]:  # first line describes the interface, not a peer
+        columns = line.split("\t")
+        if len(columns) < 7:
+            continue
+        public_key = columns[0].strip()
+        if not public_key:
+            continue
+        try:
+            usage[public_key] = int(columns[5] or 0) + int(columns[6] or 0)
+        except ValueError:
+            continue
     return usage
 
 
