@@ -1,48 +1,61 @@
-# 星隧网络加速器
+# Xingsui VPN Platform
 
- 商业化客户端与控制面项目，包含 Android 客户端、Windows 客户端原型、FastAPI 控制面、官网页面、管理后台和部署脚本。
+Xingsui is a production VPN service with managed Android and Windows clients, a FastAPI control plane, short-lived device credentials, subscription delivery, billing, and automated edge-node operations.
 
-## 目录
+## Production topology
 
-- `amneziawg-android/`：Android 客户端与后端控制面源码。
-- `amneziawg-android/backend/`：FastAPI API、官网、Admin 后台、订单/VIP/节点管理。
-- `deploy/`：控制面与边缘节点部署配置。
-- `xingsui-windows/`：Tauri + React Windows 客户端。
-- `scripts/`：发布辅助脚本。
+| Role | Location | Public address | Service endpoints |
+| --- | --- | --- | --- |
+| Control plane and relay | Hong Kong | `64.90.24.84` | HTTPS control plane; Singapore relay on UDP `4500` and TCP `10444` |
+| Edge node | Utah, US | `144.172.97.191` | AmneziaWG UDP `443`; VLESS Reality TCP `8443` |
+| Edge node | Sydney, AU | `144.172.65.152` | AmneziaWG UDP `443`; VLESS Reality TCP `8443` |
+| Edge node | Singapore | `61.13.236.31` | AmneziaWG UDP `51820`; VLESS Reality TCP `10443`; published through the Hong Kong relay |
 
-## 本地敏感文件
+The control plane is mirrored at `xingsui.org` and `xingsuico.com`. Legacy Japan, Dallas, and previous Singapore nodes are disabled and are not included in scheduling or subscription output.
 
-以下文件不会提交到仓库，需要在本地或服务器单独配置：
+## Components
 
-- `.env` / `*.env`
-- Android release keystore 与密码文件
-- 服务器密码、节点初始化输出
-- APK/Windows 安装包等构建产物
-- 微信/支付宝收款码图片
+- `amneziawg-android/`: Android client and the FastAPI control-plane source.
+- `amneziawg-android/backend/`: API, website, administration console, membership, orders, subscriptions, and node management.
+- `xingsui-windows/`: Tauri and React Windows client using managed VLESS Reality leases.
+- `deploy/`: control-plane, edge-agent, and Hong Kong relay deployment assets.
+- `docs/`: production architecture and operational invariants.
+- `scripts/`: build and release automation.
 
-## Android 构建
+## Security model
+
+- VPN access is authorized by server-side account and membership state.
+- Device credentials are short-lived and bounded by membership expiry.
+- Edge agents authenticate control-plane requests and reconcile managed peers or UUIDs.
+- Subscription tokens are stored as hashes and can be revoked without changing account credentials.
+- Secrets, private keys, payment assets, databases, and release artifacts are intentionally excluded from Git.
+
+## Android build
 
 ```bash
 cd amneziawg-android
-./gradlew :ui:assembleRelease -PxingsuiReleaseApiBaseUrl=https://xingsui.org/api
+./gradlew :ui:assembleRelease \
+  -PxingsuiReleaseApiBaseUrl=https://xingsui.org
 ```
 
-## 后端部署
-
-控制面部署配置位于 `deploy/control-plane/`。复制 `.env.example` 为 `.env` 后填写真实数据库密码、Admin 密码、内部通信 token、节点参数等。
+## Backend development
 
 ```bash
-cd deploy/control-plane
-docker compose up -d --build
+cd amneziawg-android/backend
+python -m venv .venv
+. .venv/bin/activate
+pip install -e .
+uvicorn app.main:app --reload
 ```
 
-## Windows 构建
+Production deployment assets are under `deploy/control-plane/`. Copy `.env.example` to `.env`, provide deployment-specific secrets, and start the stack with `docker compose up -d --build`.
 
-Windows 客户端需要在 Windows/MSVC 环境构建，并提前放置：
+## Windows build
 
-- `xingsui-windows/src-tauri/binaries/sing-box-x86_64-pc-windows-msvc.exe`
-- `xingsui-windows/src-tauri/resources/wintun.dll`
+Windows releases require an MSVC build environment, the pinned sing-box executable, and `wintun.dll` in the paths documented by the build script.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 ```
+
+See [the production architecture](docs/ARCHITECTURE.md) for the complete design and operating model.

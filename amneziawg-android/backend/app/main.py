@@ -436,6 +436,12 @@ class Order(BaseModel):
     review_note: str | None = None
 
 
+class ClientAnnouncement(BaseModel):
+    id: str
+    title: str
+    message: str
+
+
 class User(BaseModel):
     id: str
     email: str
@@ -448,6 +454,7 @@ class User(BaseModel):
     free_traffic_quota_bytes: int = 0
     free_traffic_used_bytes: int = 0
     free_traffic_remaining_bytes: int = 0
+    announcement: ClientAnnouncement | None = None
 
 
 class AdminOrderAction(StrictRequest):
@@ -1149,6 +1156,12 @@ def subscription_user_name(user: UserRow) -> str:
 
 
 def eligible_subscription_nodes(db: Session) -> list[VpnNodeRow]:
+    """Return enabled subscription nodes, preferring nodes with fresh heartbeats.
+
+    Subscription output must exclude offline nodes just as app-side scheduling does.
+    If every heartbeat is stale, fall back to enabled nodes so a recovering service
+    does not emit an empty feed before its first heartbeat arrives.
+    """
     nodes = list(
         db.scalars(
             select(VpnNodeRow)
@@ -1157,7 +1170,17 @@ def eligible_subscription_nodes(db: Session) -> list[VpnNodeRow]:
             .order_by(VpnNodeRow.weight.desc(), VpnNodeRow.id)
         ).all()
     )
-    return [node for node in nodes if node_service.build_vless_config(node, str(uuid4())) is not None]
+    nodes = [node for node in nodes if node_service.build_vless_config(node, str(uuid4())) is not None]
+    health = node_health_map(db)
+    now = datetime.now(UTC)
+    online = [
+        node
+        for node in nodes
+        if node_service.node_is_online(
+            getattr(health.get(node.id), "last_heartbeat_at", None), now
+        )
+    ]
+    return online or nodes
 
 
 def subscription_proxy_dict(node: VpnNodeRow, vless_uuid: str, used_names: set[str]) -> dict[str, object] | None:
@@ -1466,18 +1489,33 @@ def extend_legacy_android_session(
 def to_user(row: UserRow) -> User:
     quota = int(row.free_traffic_quota_bytes or 0)
     used = int(row.free_traffic_used_bytes or 0)
+    vip_status = effective_vip_status(row.vip_status, row.vip_expired_at)
+    announcement = None
+    if vip_status == "active":
+        announcement = ClientAnnouncement(
+            id="vip-compensation-20260814",
+            title="服务恢复及会员补偿通知",
+            message=(
+                "亲爱的星隧会员：\n\n"
+                "受不可抗力因素影响，服务此前曾短暂停运，给您带来的不便，我们深表歉意。\n\n"
+                "为表达歉意，现已为所有仍在有效期内的 VIP 会员统一赠送 30 天会员时长，"
+                "新的到期时间已自动更新，无需手动领取。\n\n"
+                "感谢您的理解与支持。"
+            ),
+        )
     return User(
         id=row.id,
         email=row.email,
         phone=row.phone,
         nickname=row.nickname,
         invite_code=row.invite_code,
-        vip_status=effective_vip_status(row.vip_status, row.vip_expired_at),
+        vip_status=vip_status,
         vip_expired_at=row.vip_expired_at,
         cash_balance_cents=row.cash_balance_cents,
         free_traffic_quota_bytes=quota,
         free_traffic_used_bytes=used,
         free_traffic_remaining_bytes=free_traffic_remaining(row),
+        announcement=announcement,
     )
 
 

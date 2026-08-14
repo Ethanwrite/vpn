@@ -24,6 +24,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -62,6 +63,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private var pulseAnimator: AnimatorSet? = null
     private var spinAnimator: ObjectAnimator? = null
     private var statusMonitorJob: Job? = null
+    private var shownAnnouncementId: String? = null
     private var connectAttemptId = 0L
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (!pendingConnectAfterPermission) {
@@ -188,6 +190,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
             setBusy(false)
             renderAccount(me)
             renderTunnelState(managedTunnel)
+            showAnnouncementOnce(me)
         }.onFailure {
             if (it is CancellationException) throw it
             setBusy(false)
@@ -201,6 +204,23 @@ class XingsuiHomeActivity : AppCompatActivity() {
             Snackbar.make(binding.root, R.string.xingsui_account_sync_failed, Snackbar.LENGTH_LONG).show()
             renderSessionOffline(session.email)
         }
+    }
+
+    private fun showAnnouncementOnce(user: UserAccount) {
+        val announcement = user.announcement ?: return
+        val preferences = getSharedPreferences(ANNOUNCEMENT_PREFERENCES, MODE_PRIVATE)
+        if (shownAnnouncementId == announcement.id ||
+            preferences.getString(LAST_ANNOUNCEMENT_ID, null) == announcement.id
+        ) return
+        shownAnnouncementId = announcement.id
+        MaterialAlertDialogBuilder(this)
+            .setTitle(announcement.title)
+            .setMessage(announcement.message)
+            .setPositiveButton(R.string.xingsui_announcement_confirm) { _, _ ->
+                preferences.edit().putString(LAST_ANNOUNCEMENT_ID, announcement.id).apply()
+            }
+            .setCancelable(false)
+            .show()
     }
 
     private fun renderSignedOut() {
@@ -950,6 +970,8 @@ class XingsuiHomeActivity : AppCompatActivity() {
         private const val REASON_VIP_EXPIRED = "vip_expired"
         private const val CONNECTION_OPERATION_TIMEOUT_MS = 30_000L
         private const val STATUS_POLL_INTERVAL_MS = 5_000L
+        private const val ANNOUNCEMENT_PREFERENCES = "xingsui_announcements"
+        private const val LAST_ANNOUNCEMENT_ID = "last_announcement_id"
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     }
 }

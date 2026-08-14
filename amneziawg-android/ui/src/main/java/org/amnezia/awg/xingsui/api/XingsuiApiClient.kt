@@ -8,6 +8,7 @@ import org.amnezia.awg.xingsui.AuthSession
 import org.amnezia.awg.xingsui.XingsuiCrashReporter
 import org.amnezia.awg.xingsui.model.EntitlementStatus
 import org.amnezia.awg.xingsui.model.AppVersionInfo
+import org.amnezia.awg.xingsui.model.ClientAnnouncement
 import org.amnezia.awg.xingsui.model.InvitationSummary
 import org.amnezia.awg.xingsui.model.OrderStatus
 import org.amnezia.awg.xingsui.model.OrderSummary
@@ -280,6 +281,13 @@ class XingsuiApiClient(
         freeTrafficQuotaBytes = getLong("free_traffic_quota_bytes"),
         freeTrafficUsedBytes = getLong("free_traffic_used_bytes"),
         freeTrafficRemainingBytes = getLong("free_traffic_remaining_bytes"),
+        announcement = optJSONObject("announcement")?.let {
+            ClientAnnouncement(
+                id = it.getString("id"),
+                title = it.getString("title"),
+                message = it.getString("message"),
+            )
+        },
     )
 
     private fun JSONObject.toAppVersionInfo() = AppVersionInfo(

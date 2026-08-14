@@ -211,6 +211,7 @@
     <string name="xingsui_paywall_vip_required_body">该线路为会员专属。前往官网开通会员，即可使用全部高速线路。</string>
     <string name="xingsui_paywall_open_website">前往官网开通</string>
     <string name="xingsui_paywall_dismiss">知道了</string>
+    <string name="xingsui_announcement_confirm">知道了</string>
     <string name="xingsui_vip_verify_failed">无法校验 VIP 状态，请检查网络和后端服务</string>
     <string name="xingsui_copy_invite">复制邀请码</string>
     <string name="xingsui_invite_copied">邀请码已复制</string>

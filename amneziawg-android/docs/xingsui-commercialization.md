@@ -1,26 +1,35 @@
-# 星隧商业化二开落地说明
+# Xingsui Commercial Product Model
 
-## MVP 范围
+## Product scope
 
-- Android 端保留现有隧道能力，先完成品牌、登录、套餐、二维码支付、人工确认、邀请码返现。
-- 后端使用 NestJS、PostgreSQL、Redis，所有价格、优惠、订单状态以后端为准。
-- Admin 后台优先完成待确认订单、用户 VIP、优惠活动配置和邀请返现审核。
-- 官网优先移动端 landing page，突出 18 元/月限时优惠、邀请码入口和 APK 下载。
+Xingsui combines native Android and Windows clients with a FastAPI control plane, PostgreSQL persistence, an administration console, a public website, membership billing, invitations, and managed VPN edge nodes.
 
-## 价格与优惠
+The clients retain protocol-specific tunnel engines while delegating identity, entitlement, node selection, and credential lifecycle to the control plane. Product pages are isolated under the `org.amnezia.awg.xingsui` package so upstream AmneziaWG code remains maintainable.
 
-- 月卡：原价 28.8 元，限时价 18 元。
-- 季卡：建议 58 元，弱化月卡低价导致的短期薅羊毛。
-- 年卡：建议 198 元，配合“赠 30 天”或“邀请抵扣”做长期转化。
-- 邀请奖励：被邀请人首次付费完成后，邀请人获得 10 元返现，可提现或抵扣续费。
+## Membership and payments
 
-## Android 改造策略
+| Plan | Term | Price |
+| --- | --- | --- |
+| Monthly | 30 days | CNY 18 |
+| Quarterly | 90 days | CNY 48 |
+| Annual | 365 days | CNY 158 |
 
-- `applicationId` 使用 `com.xingsui.vpn`。
-- 源码包名暂保留 `org.amnezia.awg`，避免一次性改动 JNI 方法名和 native 构建链路。
-- 对外广播 action 改为 `com.xingsui.vpn.action.*`。
-- 后续新商业页面建议独立在 `ui/src/main/java/org/amnezia/awg/xingsui` 包下，逐步接入 Compose 或继续 XML。
+WeChat and Alipay orders use operator-managed QR codes and manual confirmation. A confirmed first purchase can award the inviter CNY 10 in cashback. Withdrawals are reviewed manually through Alipay account details or customer support.
 
-## 合规提示
+All prices, promotions, order transitions, and membership expiry dates are authoritative on the server. Clients display this state but do not calculate or grant entitlement locally.
 
-VPN/网络加速类产品商业化前需要确认经营资质、支付通道、用户协议、隐私政策、服务器用途与日志策略。产品文案应聚焦隐私保护、跨境办公、稳定网络通道，避免使用可能引发平台审核风险的描述。
+## Access policy
+
+- New accounts receive a server-measured 60 MB free allowance.
+- Active members receive unlimited service within the product's acceptable-use policy.
+- Tunnel credentials are user- or device-specific, short-lived, revocable, and capped at one hour.
+- Third-party subscriptions are available only to active members and expire with membership.
+- Disabled or unhealthy nodes are excluded from normal scheduling.
+
+## Client strategy
+
+The Android application uses `com.xingsui.vpn` as its application ID while retaining upstream native package names to avoid destabilizing JNI and the native build chain. The Windows application uses Tauri, React, sing-box, and Wintun. Both clients consume the same account, membership, and node-health state.
+
+## Operational and compliance requirements
+
+Before commercial operation, verify all required business licenses, payment-channel terms, privacy disclosures, user agreements, server-use policies, retention limits, and incident-response procedures for every jurisdiction in which the service is offered. Marketing claims must remain accurate and should emphasize privacy, secure remote work, and reliable connectivity.
