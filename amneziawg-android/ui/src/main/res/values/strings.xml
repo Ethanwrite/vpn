@@ -224,6 +224,7 @@
     <string name="xingsui_paywall_vip_required_body">This line is for members only. Open VIP on our website to use every high-speed line.</string>
     <string name="xingsui_paywall_open_website">Open website</string>
     <string name="xingsui_paywall_dismiss">Got it</string>
+    <string name="xingsui_announcement_confirm">知道了</string>
     <string name="xingsui_vip_verify_failed">Unable to verify VIP status. Check network and backend status</string>
     <string name="xingsui_copy_invite">Copy invite code</string>
     <string name="xingsui_invite_copied">Invite code copied</string>

@@ -131,20 +131,20 @@ def test_subscription_link_requires_vip_and_verifies_token(Session) -> None:
         get_user_subscription_link(request(), authorization=None, db=Session())
     assert exc.value.status_code == 401 and exc.value.code == "UNAUTHORIZED"
 
-    # 非 VIP → VIP_REQUIRED（前端提示“开通 VIP 后即可导出订阅链接”）
+    # Non-members receive the explicit VIP_REQUIRED response used by the client.
     guest_token = make_user(Session, user_id="guest", vip_status="inactive")
     with pytest.raises(SubscriptionApiException) as exc:
         get_user_subscription_link(request(), authorization=bearer(guest_token), db=Session())
     assert exc.value.status_code == 403 and exc.value.code == "VIP_REQUIRED"
 
-    # VIP → 返回 HTTPS 订阅链接 + 脱敏 token
+    # Active members receive an HTTPS subscription URL and a masked token.
     vip_token = make_user(Session, user_id="vip", vip_status="active")
     resp = get_user_subscription_link(request(), authorization=bearer(vip_token), db=Session())
     assert resp.subscription_url.startswith("https://")
     assert "/api/sub?token=" in resp.subscription_url
     assert resp.masked_token and "****" in resp.masked_token
 
-    # 无效订阅 token → 401（不再是 410 停用；no-store 由中间件统一注入）
+    # Invalid subscription tokens return 401; middleware adds no-store headers.
     response = subscription_feed(token="bogus-token", db=Session())
     assert response.status_code == 401
     assert json.loads(bytes(response.body))["code"] == "UNAUTHORIZED"
@@ -257,6 +257,20 @@ def test_startup_schema_lock_is_held_through_transaction_commit(monkeypatch) -> 
         "migrate",
         "commit",
     ]
+
+
+def test_startup_migrations_preserve_exported_subscription_tokens(monkeypatch) -> None:
+    statements = []
+
+    class FakeConnection:
+        def execute(self, statement):
+            statements.append(str(statement))
+
+    database.run_lightweight_migrations(FakeConnection())
+
+    combined = "\n".join(statements).lower()
+    assert "subscription_token_hash = null" not in combined
+    assert "subscription_token_masked = null" not in combined
 
 
 @pytest.mark.parametrize(
@@ -667,3 +681,31 @@ def test_heartbeat_signature_is_persistently_replay_protected(Session, monkeypat
             db=db,
         )
     assert exc.value.status_code == 401
+
+
+def test_eligible_subscription_nodes_skips_offline(Session) -> None:
+    """Subscriptions omit offline nodes and retain an all-stale recovery fallback."""
+    from app.db_models import VpnNodeHealthRow
+    from app.main import eligible_subscription_nodes
+
+    db = Session()
+    live, dead = vless_node("live"), vless_node("dead")
+    db.add_all([live, dead])
+    now = datetime.now(UTC)
+    db.add(VpnNodeHealthRow(node_id="live", last_heartbeat_at=now, peer_count=0, cpu_load=0.0))
+    db.add(
+        VpnNodeHealthRow(
+            node_id="dead", last_heartbeat_at=now - timedelta(days=2), peer_count=0, cpu_load=0.0
+        )
+    )
+    db.commit()
+
+    assert [n.id for n in eligible_subscription_nodes(db)] == ["live"]
+
+    # When all nodes are stale, retain enabled nodes to avoid an empty feed.
+    db.query(VpnNodeHealthRow).filter(VpnNodeHealthRow.node_id == "live").update(
+        {"last_heartbeat_at": now - timedelta(days=2)}
+    )
+    db.commit()
+    assert sorted(n.id for n in eligible_subscription_nodes(db)) == ["dead", "live"]
+    db.close()

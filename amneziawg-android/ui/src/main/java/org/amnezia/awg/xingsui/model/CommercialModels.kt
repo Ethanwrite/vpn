@@ -55,6 +55,13 @@ data class UserAccount(
     val freeTrafficQuotaBytes: Long,
     val freeTrafficUsedBytes: Long,
     val freeTrafficRemainingBytes: Long,
+    val announcement: ClientAnnouncement?,
+)
+
+data class ClientAnnouncement(
+    val id: String,
+    val title: String,
+    val message: String,
 )
 
 data class AppVersionInfo(

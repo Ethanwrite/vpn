@@ -58,12 +58,6 @@ def run_lightweight_migrations(connection=None) -> None:
     connection.execute(text("create index if not exists ix_users_subscription_token_hash on users(subscription_token_hash)"))
     connection.execute(
         text(
-            "update users set subscription_token_hash = null, subscription_token_masked = null "
-            "where subscription_token_hash is not null or subscription_token_masked is not null"
-        )
-    )
-    connection.execute(
-        text(
             """
             create table if not exists node_request_nonces (
                 id varchar(128) primary key,
