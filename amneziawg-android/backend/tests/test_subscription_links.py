@@ -21,7 +21,6 @@ from app.main import (
     list_vpn_nodes,
     node_heartbeat,
     report_usage,
-    render_clash_yaml,
     require_vpn_principal,
     revoke_vpn_devices,
     sensitive_response_path,
@@ -709,28 +708,4 @@ def test_eligible_subscription_nodes_skips_offline(Session) -> None:
     )
     db.commit()
     assert sorted(n.id for n in eligible_subscription_nodes(db)) == ["dead", "live"]
-    db.close()
-
-
-def test_subscription_direct_ip_rule_precedes_proxy_fallback(Session) -> None:
-    db = Session()
-    token = make_user(Session, user_id="direct-rule")
-    del token
-    user = db.get(UserRow, "direct-rule")
-    yaml = render_clash_yaml(
-        user,
-        [
-            {
-                "name": "星隧-新加坡",
-                "type": "vless",
-                "server": "64.90.24.84",
-                "port": 10444,
-            }
-        ],
-    )
-
-    direct_rule = "  - IP-CIDR,153.75.95.10/32,DIRECT,no-resolve"
-    fallback_rule = "  - MATCH,星隧"
-    assert direct_rule in yaml
-    assert yaml.index(direct_rule) < yaml.index(fallback_rule)
     db.close()

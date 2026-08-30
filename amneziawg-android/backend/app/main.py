@@ -1145,14 +1145,7 @@ def render_clash_yaml(user: UserRow, proxies: list[dict[str, object]]) -> str:
         ]
     )
     lines.extend(f"      - {yaml_scalar(name)}" for name in names)
-    lines.extend(
-        [
-            "rules:",
-            "  - IP-CIDR,153.75.95.10/32,DIRECT,no-resolve",
-            "  - MATCH,星隧",
-            "",
-        ]
-    )
+    lines.extend(["rules:", "  - MATCH,星隧", ""])
     return "\n".join(lines)
 
 
