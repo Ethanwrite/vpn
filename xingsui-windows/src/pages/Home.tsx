@@ -109,14 +109,14 @@ export default function Home({ onProfile }: Props) {
       <div className="flex items-center justify-between py-2">
         <button
           onClick={onProfile}
-          className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 transition hover:border-brand-glow/50 hover:bg-white/10"
+          className="grid h-10 w-10 place-items-center rounded-brand border border-ink-900/20 bg-paper-raised transition hover:border-ink-900 hover:shadow-block"
           aria-label="打开我的页面"
         >
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-gradient text-sm font-bold shadow-glow">
+          <span className="grid h-8 w-8 place-items-center rounded-brand bg-ink-900 text-sm font-bold text-gold-light">
             {(user?.nickname || user?.email || "?").slice(0, 1).toUpperCase()}
           </span>
         </button>
-        <div className="flex rounded-lg bg-white/5 p-0.5 text-xs">
+        <div className="flex rounded-brand border border-ink-900/15 bg-paper-raised p-0.5 text-xs">
           {([
             ["global", "全局"],
             ["rule", "规则"],
@@ -125,8 +125,8 @@ export default function Home({ onProfile }: Props) {
             <button
               key={m}
               onClick={() => switchMode(m)}
-              className={`rounded-md px-3 py-1 transition ${
-                mode === m ? "bg-brand-gradient font-semibold" : "text-white/55"
+              className={`rounded-[2px] px-3 py-1 font-semibold transition ${
+                mode === m ? "bg-ink-900 text-paper-raised" : "text-ink-500"
               }`}
             >
               {label}
@@ -135,36 +135,38 @@ export default function Home({ onProfile }: Props) {
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4">
         <ConnectButton conn={conn} onClick={onConnectToggle} />
-        <div className="text-center text-sm text-white/60">
+        <div className="text-center text-[13px] text-ink-500">
           {conn === "connected" && connNodeName
-            ? `已连接 · ${connNodeName}`
-            : "未连接"}
+            ? `世界已经接通 · ${connNodeName}`
+            : conn === "connecting"
+            ? "锤子与镰刀正在扣合"
+            : "锤子与镰刀分离 · 等待连接"}
         </div>
       </div>
 
       <div className="space-y-3">
         <button
           onClick={() => setPickerOpen(true)}
-          className="glass flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition hover:bg-white/10"
+          className="card flex w-full items-center justify-between px-4 py-3 text-left transition hover:shadow-block"
         >
           <div className="flex items-center gap-3">
             <span
               className={`h-2.5 w-2.5 rounded-full ${
-                selected?.status === "online" ? "bg-emerald-400" : "bg-white/30"
+                selected?.status === "online" ? "bg-gold" : "bg-ink-300"
               }`}
             />
             <div>
-              <div className="text-sm font-medium">
+              <div className="text-sm font-bold text-ink-900">
                 {selected ? selected.name : "选择线路"}
               </div>
-              <div className="text-[11px] text-white/40">
+              <div className="mt-0.5 text-[11px] text-ink-500">
                 {selected ? formatNodeDetail(selected) : "点击选择节点"}
               </div>
             </div>
           </div>
-          <span className="text-white/40">›</span>
+          <span className="text-ink-300">›</span>
         </button>
         <StatsBar />
       </div>

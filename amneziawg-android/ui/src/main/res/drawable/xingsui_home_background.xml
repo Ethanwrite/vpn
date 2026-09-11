@@ -1,32 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 奶油白纸面：底色 + 顶部一层极淡的暖金光晕，避免纯平。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape>
-            <solid android:color="#0B0B14" />
+            <solid android:color="@color/xingsui_paper" />
         </shape>
     </item>
-    <item android:top="-160dp" android:left="-80dp" android:right="-80dp">
+    <item android:top="-180dp" android:left="-90dp" android:right="-90dp">
         <shape>
             <gradient
                 android:type="radial"
                 android:centerX="0.5"
                 android:centerY="0.0"
                 android:gradientRadius="420dp"
-                android:startColor="#423636B5"
-                android:centerColor="#24202B66"
-                android:endColor="#000B0B14" />
-        </shape>
-    </item>
-    <item android:top="180dp" android:left="-120dp" android:right="-120dp">
-        <shape>
-            <gradient
-                android:type="radial"
-                android:centerX="0.15"
-                android:centerY="0.2"
-                android:gradientRadius="300dp"
-                android:startColor="#2237D5F2"
-                android:centerColor="#11181826"
-                android:endColor="#000B0B14" />
+                android:startColor="#26A8801F"
+                android:centerColor="#0FA8801F"
+                android:endColor="#00F2EDE3" />
         </shape>
     </item>
 </layer-list>

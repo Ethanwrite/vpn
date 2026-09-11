@@ -4,36 +4,59 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 品牌蓝紫渐变主题色
-        brand: {
-          from: "#4F46E5",
-          to: "#7C3AED",
-          glow: "#6366F1",
+        // 星火 VPN：奶油白纸面 / 黑色墨色 / 黑金 / 极少量暗红做状态强调
+        paper: {
+          DEFAULT: "#F2EDE3",
+          raised: "#FAF7F0",
+          sunken: "#E8E1D3",
         },
         ink: {
-          900: "#0B0B14",
-          800: "#11111d",
-          700: "#181826",
-          600: "#22223a",
+          900: "#0D0D0C",
+          700: "#1E1C19",
+          500: "#6B6459",
+          300: "#9A9184",
+          100: "#DCD4C4",
         },
+        gold: {
+          DEFAULT: "#A8801F",
+          light: "#D6B15C",
+          deep: "#6E5210",
+        },
+        signal: "#8E1B13",
       },
       backgroundImage: {
-        "brand-gradient": "linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)",
-        "brand-radial":
-          "radial-gradient(1200px 600px at 50% -10%, rgba(124,58,237,0.25), transparent 60%)",
+        "gold-gradient": "linear-gradient(135deg, #D6B15C 0%, #A8801F 100%)",
+        "ink-gradient": "linear-gradient(135deg, #1E1C19 0%, #0D0D0C 100%)",
+        // 纸面底纹：顶部一层极淡的暖金光晕 + 构成主义网格（合成一条，避免多个
+        // background-image 工具类互相覆盖）
+        "paper-field": `radial-gradient(900px 420px at 50% -12%, rgba(168,128,31,0.16), transparent 62%),
+               linear-gradient(to right, rgba(13,13,12,0.05) 1px, transparent 1px),
+               linear-gradient(to bottom, rgba(13,13,12,0.035) 1px, transparent 1px)`,
+      },
+      backgroundSize: {
+        "paper-field": "100% 100%, 72px 72px, 72px 72px",
+      },
+      // 发丝边与半透明叠色用到的非默认档位；@apply 只认 theme 里声明过的值
+      opacity: {
+        8: "0.08",
+        12: "0.12",
+        15: "0.15",
+        35: "0.35",
+        45: "0.45",
       },
       boxShadow: {
-        glass: "0 8px 32px 0 rgba(31, 38, 135, 0.25)",
-        glow: "0 0 40px 0 rgba(99, 102, 241, 0.45)",
+        // 构成主义：不用柔光，用硬边位移投影
+        block: "6px 6px 0 rgba(13,13,12,0.12)",
+        "block-gold": "6px 6px 0 rgba(168,128,31,0.28)",
+        hair: "0 1px 0 rgba(13,13,12,0.10)",
       },
-      backdropBlur: {
-        glass: "14px",
+      borderRadius: {
+        brand: "3px",
       },
       keyframes: {
         "pulse-ring": {
-          "0%": { transform: "scale(0.95)", opacity: "0.7" },
-          "70%": { transform: "scale(1.25)", opacity: "0" },
-          "100%": { opacity: "0" },
+          "0%": { transform: "scale(0.62)", opacity: "0.85" },
+          "100%": { transform: "scale(1.55)", opacity: "0" },
         },
         "fade-in": {
           "0%": { opacity: "0", transform: "translateY(8px)" },
@@ -42,11 +65,16 @@ export default {
         "spin-slow": {
           to: { transform: "rotate(360deg)" },
         },
+        "ring-close": {
+          from: { strokeDashoffset: "566" },
+          to: { strokeDashoffset: "0" },
+        },
       },
       animation: {
-        "pulse-ring": "pulse-ring 2s cubic-bezier(0.215,0.61,0.355,1) infinite",
+        "pulse-ring": "pulse-ring 1.15s cubic-bezier(0.2,0.7,0.3,1) 1 both",
         "fade-in": "fade-in 0.3s ease-out",
         "spin-slow": "spin-slow 1.2s linear infinite",
+        "ring-close": "ring-close 1.25s cubic-bezier(0.5,0,0.2,1) forwards",
       },
     },
   },

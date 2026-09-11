@@ -68,16 +68,16 @@ export default function Profile({ onBack }: Props) {
   return (
     <div className="flex h-full flex-col overflow-y-auto px-6 pb-6">
       <div className="flex items-center gap-3 py-2">
-        <button onClick={onBack} className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/65 transition hover:bg-white/10 hover:text-white" aria-label="返回连接页面">‹</button>
-        <div><h2 className="text-base font-semibold">我的</h2><p className="text-[11px] text-white/40">账户与服务</p></div>
+        <button onClick={onBack} className="grid h-9 w-9 place-items-center rounded-brand border border-ink-900/20 bg-paper-raised text-ink-700 transition hover:border-ink-900 hover:shadow-block" aria-label="返回连接页面">‹</button>
+        <div><h2 className="text-base font-extrabold tracking-tight">我的</h2><p className="kicker mt-0.5">ACCOUNT</p></div>
       </div>
-      <section className="glass mt-3 rounded-3xl border border-white/10 p-5 shadow-glass">
+      <section className="card mt-3 p-5 shadow-block">
         <div className="flex items-center gap-4">
-          <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-brand-gradient text-2xl font-bold shadow-glow">{(user.nickname || user.email).slice(0, 1).toUpperCase()}</span>
+          <span className="grid h-16 w-16 shrink-0 place-items-center rounded-brand bg-ink-900 text-2xl font-bold text-gold-light">{(user.nickname || user.email).slice(0, 1).toUpperCase()}</span>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-base font-semibold">{user.nickname || user.email}</div>
-            <div className="mt-1 truncate text-xs text-white/45">{user.email}</div>
-            <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${vip.isVip ? "bg-amber-400/15 text-amber-300" : "bg-white/8 text-white/55"}`}><span>{vip.isVip ? "♛" : "●"}</span>{vip.label}</span>
+            <div className="truncate text-base font-extrabold text-ink-900">{user.nickname || user.email}</div>
+            <div className="mt-1 truncate text-xs text-ink-500">{user.email}</div>
+            <span className={`mt-2 inline-flex items-center gap-1.5 rounded-[2px] px-2.5 py-1 text-[11px] font-bold ${vip.isVip ? "bg-gold-light text-ink-900" : "border border-ink-900/20 text-ink-500"}`}><span>{vip.isVip ? "♛" : "●"}</span>{vip.label}</span>
           </div>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-2">
@@ -86,20 +86,20 @@ export default function Profile({ onBack }: Props) {
         </div>
       </section>
       <section className="mt-4 space-y-2">
-        <ActionRow icon="⌂" label="官网" detail="访问星隧官网" onClick={() => openWebsite("https://xingsui.org")} />
+        <ActionRow icon="⌂" label="官网" detail="访问星火官网" onClick={() => openWebsite("https://xingsui.org")} />
         <ActionRow icon="✦" label="我的邀请码" detail={user.invite_code} onClick={copyInvite} />
         <ActionRow icon="↻" label="检查更新" detail={version ? `当前版本 ${version}` : "获取最新版本"} onClick={checkUpdate} />
       </section>
       <div className="flex-1" />
-      <button onClick={logout} className="mt-5 rounded-2xl border border-rose-400/25 bg-rose-500/8 px-4 py-3 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/15">退出登录</button>
+      <button onClick={logout} className="mt-5 rounded-brand border border-signal/40 px-4 py-3 text-sm font-bold text-signal transition hover:bg-signal hover:text-paper-raised">退出登录</button>
     </div>
   );
 }
 
 function SummaryCard({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return <div className="rounded-2xl border border-white/8 bg-white/5 p-3.5"><div className="text-[11px] text-white/40">{label}</div><div className="mt-1.5 truncate text-sm font-semibold text-white/90">{value}</div><div className="mt-1 truncate text-[10px] text-white/35">{hint}</div></div>;
+  return <div className="rounded-brand border border-ink-900/12 bg-paper p-3.5"><div className="text-[11px] tracking-[0.12em] text-ink-500">{label}</div><div className="mt-1.5 truncate text-sm font-bold text-ink-900">{value}</div><div className="mt-1 truncate text-[10px] text-ink-300">{hint}</div></div>;
 }
 
 function ActionRow({ icon, label, detail, onClick }: { icon: string; label: string; detail: string; onClick: () => void }) {
-  return <button onClick={onClick} className="glass flex w-full items-center gap-3 rounded-2xl border border-white/8 px-4 py-3.5 text-left transition hover:border-brand-glow/30 hover:bg-white/10"><span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-glow/15 text-base text-violet-200">{icon}</span><span className="min-w-0 flex-1"><span className="block text-sm font-medium text-white/90">{label}</span><span className="mt-0.5 block truncate text-[11px] text-white/40">{detail}</span></span><span className="text-lg text-white/25">›</span></button>;
+  return <button onClick={onClick} className="card flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:shadow-block"><span className="grid h-9 w-9 place-items-center rounded-brand border border-ink-900/15 bg-paper text-base text-gold-deep">{icon}</span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-ink-900">{label}</span><span className="mt-0.5 block truncate text-[11px] text-ink-500">{detail}</span></span><span className="text-lg text-ink-300">›</span></button>;
 }

@@ -8,56 +8,91 @@ PAYMENT_HTML_TEMPLATE = """<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f5fffc" />
-  <title>星隧支付</title>
+  <meta name="theme-color" content="#F2EDE3" />
+  <title>星火 VPN · 支付</title>
   <style>
-    :root { color-scheme: light; --ink: #102033; --muted: #69798b; --line: #d9eeeb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    :root {
+      color-scheme: light;
+      --paper: #F2EDE3; --paper-2: #FAF7F0;
+      --ink: #0D0D0C; --muted: #6B6459; --faint: #9A9184;
+      --gold: #A8801F; --gold-2: #D6B15C; --gold-3: #6E5210;
+      --red: #8E1B13;
+      --line: rgba(13,13,12,.14); --line-2: rgba(13,13,12,.30);
+      font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; color: var(--ink); background: radial-gradient(circle at 88% 4%, rgba(45,215,239,.22), transparent 28%), radial-gradient(circle at 8% 20%, rgba(25,197,162,.15), transparent 25%), linear-gradient(180deg, #f8fffd, #eefaff 55%, #fff); }
+    body {
+      margin: 0; min-height: 100vh; color: var(--ink); background: var(--paper);
+      background-image: linear-gradient(to right, rgba(13,13,12,.05) 1px, transparent 1px),
+                        linear-gradient(to bottom, rgba(13,13,12,.03) 1px, transparent 1px);
+      background-size: 96px 96px, 96px 96px;
+      -webkit-font-smoothing: antialiased;
+    }
     button, a { font: inherit; }
-    .shell { width: min(100% - 28px, 560px); margin: 0 auto; padding: 18px 0 calc(30px + env(safe-area-inset-bottom)); }
-    .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-    .brand { display: flex; align-items: center; gap: 9px; color: #132b68; font-size: 20px; font-weight: 900; text-decoration: none; }
-    .mark { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #112764, #2459e7 45%, #23d4ee 75%, #b4fff1); box-shadow: 0 9px 24px rgba(25,197,162,.25); }
-    .back { color: #426071; font-size: 14px; font-weight: 800; text-decoration: none; }
-    .card { padding: 22px; border: 1px solid rgba(217,238,235,.95); border-radius: 20px; background: rgba(255,255,255,.94); box-shadow: 0 22px 60px rgba(38,89,110,.12); backdrop-filter: blur(16px); }
-    .eyebrow { margin: 0 0 7px; color: #0c9d84; font-size: 13px; font-weight: 900; }
-    h1 { margin: 0; color: #132b68; font-size: 25px; }
-    .summary { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin: 20px 0; padding: 16px; border-radius: 14px; background: linear-gradient(135deg, #edf9f6, #edf7ff); }
-    .planName { margin: 0 0 5px; font-size: 18px; font-weight: 900; }
+    .shell { width: min(100% - 28px, 560px); margin: 0 auto; padding: 22px 0 calc(34px + env(safe-area-inset-bottom)); }
+    .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .brand { display: flex; align-items: center; gap: 11px; color: var(--ink); font-size: 16px; font-weight: 800; letter-spacing: .14em; text-decoration: none; }
+    .mark { width: 34px; height: 34px; flex: 0 0 auto; }
+    .back { color: var(--muted); font-size: 13.5px; font-weight: 700; text-decoration: none; border-bottom: 1px solid var(--gold); }
+    .card { padding: 26px 24px; border: 1px solid var(--line-2); border-radius: 2px; background: var(--paper-2); box-shadow: 10px 10px 0 rgba(13,13,12,.08); }
+    .eyebrow { margin: 0 0 10px; color: var(--gold-3); font-size: 12px; font-weight: 700; letter-spacing: .26em; text-transform: uppercase; }
+    h1 { margin: 0; color: var(--ink); font-size: 27px; font-weight: 800; letter-spacing: -.02em; }
+    .summary { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin: 22px 0; padding: 18px; border: 1px solid var(--line); background: var(--paper); }
+    .planName { margin: 0 0 6px; font-size: 18px; font-weight: 800; }
     .planMeta { margin: 0; color: var(--muted); font-size: 13px; }
-    .price { color: #0b9e84; font-size: 29px; font-weight: 950; white-space: nowrap; }
-    .price small { font-size: 14px; }
+    .price { color: var(--ink); font-size: 34px; font-weight: 800; letter-spacing: -.04em; white-space: nowrap; }
+    .price small { font-size: 14px; font-weight: 700; color: var(--faint); letter-spacing: 0; }
     .payButtons { display: grid; gap: 11px; }
-    .payButton { min-height: 52px; border: 0; border-radius: 13px; color: #fff; font-weight: 900; cursor: pointer; box-shadow: 0 12px 26px rgba(22,70,88,.12); }
-    .payButton:disabled { cursor: wait; opacity: .68; }
-    .wechat { background: linear-gradient(135deg, #15b764, #08a94d); }
-    .alipay { background: linear-gradient(135deg, #1688ff, #1768e8); }
-    .status { min-height: 22px; margin: 12px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; text-align: center; }
-    .status.error { color: #d54848; }
-    .status.ok { color: #0b8f78; }
-    .fallback { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
-    .fallback h2 { margin: 0 0 5px; color: #132b68; font-size: 18px; }
-    .fallback > p { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .payButton { min-height: 52px; border: 1px solid var(--ink); border-radius: 2px; font-weight: 700; letter-spacing: .04em; cursor: pointer; transition: box-shadow .2s ease, transform .15s ease; }
+    .payButton:active { transform: translateY(1px); }
+    .payButton:disabled { cursor: wait; opacity: .5; }
+    .wechat { background: var(--ink); color: var(--paper-2); }
+    .wechat:hover { box-shadow: 6px 6px 0 rgba(168,128,31,.35); }
+    .alipay { background: transparent; color: var(--ink); }
+    .alipay:hover { box-shadow: 6px 6px 0 rgba(13,13,12,.14); }
+    .status { min-height: 22px; margin: 14px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; text-align: center; }
+    .status.error { color: var(--red); }
+    .status.ok { color: var(--gold-3); }
+    .fallback { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
+    .fallback h2 { margin: 0 0 6px; color: var(--ink); font-size: 17px; font-weight: 800; }
+    .fallback > p { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.7; }
     .qrGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .qrCard { padding: 11px; border: 1px solid var(--line); border-radius: 14px; background: #fff; text-align: center; }
-    .qrCard img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 9px; background: #f7fafb; }
-    .qrCard strong { display: block; margin-top: 9px; font-size: 14px; }
-    .notice { margin: 18px 0 0; padding: 13px 14px; border: 1px solid #ffe0a6; border-radius: 12px; background: #fff8e9; color: #714900; font-size: 13px; font-weight: 800; line-height: 1.7; }
-    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 13px; }
-    .actions button, .actions a { min-height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 11px; font-weight: 900; text-decoration: none; }
-    .done { border: 0; background: linear-gradient(135deg, #17c7a8, #43c8f4); color: #062430; cursor: pointer; }
-    .support { border: 1px solid var(--line); background: #fff; color: #132b68; }
-    .submitToast { position: fixed; z-index: 30; top: calc(18px + env(safe-area-inset-top)); left: 50%; width: min(calc(100% - 28px), 520px); padding: 14px 16px; border-radius: 13px; background: #102f47; color: #fff; font-size: 14px; font-weight: 800; line-height: 1.6; text-align: center; box-shadow: 0 16px 44px rgba(6,31,48,.28); opacity: 0; pointer-events: none; transform: translate(-50%, -18px); transition: .2s ease; }
+    .qrCard { padding: 11px; border: 1px solid var(--line); background: #fff; text-align: center; }
+    .qrCard img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; background: #fff; }
+    .qrCard strong { display: block; margin-top: 10px; font-size: 13.5px; font-weight: 700; }
+    .notice { margin: 20px 0 0; padding: 14px; border: 1px solid rgba(168,128,31,.4); background: rgba(214,177,92,.12); color: var(--gold-3); font-size: 13px; font-weight: 700; line-height: 1.75; }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .actions button, .actions a { min-height: 46px; display: flex; align-items: center; justify-content: center; border-radius: 2px; font-weight: 700; text-decoration: none; }
+    .done { border: 0; background: linear-gradient(135deg, var(--gold-2), var(--gold)); color: #1A1405; cursor: pointer; }
+    .done:disabled { opacity: .55; cursor: default; }
+    .support { border: 1px solid var(--line-2); background: transparent; color: var(--ink); }
+    .submitToast { position: fixed; z-index: 30; top: calc(18px + env(safe-area-inset-top)); left: 50%; width: min(calc(100% - 28px), 520px); padding: 15px 16px; border-radius: 2px; background: var(--ink); color: var(--paper-2); font-size: 14px; font-weight: 700; line-height: 1.7; text-align: center; box-shadow: 8px 8px 0 rgba(168,128,31,.3); opacity: 0; pointer-events: none; transform: translate(-50%, -18px); transition: .2s ease; }
     .submitToast.active { opacity: 1; transform: translate(-50%, 0); }
-    .submitToast.error { background: #b93838; }
-    .submitToast.ok { background: #0b8f78; }
-    @media (max-width: 380px) { .card { padding: 18px; } .summary { align-items: start; flex-direction: column; } .qrGrid, .actions { grid-template-columns: 1fr; } .qrCard img { width: min(100%, 260px); margin: 0 auto; } }
+    .submitToast.error { background: var(--red); box-shadow: 8px 8px 0 rgba(13,13,12,.2); }
+    .submitToast.ok { background: var(--ink); }
+    @media (max-width: 380px) { .card { padding: 20px 18px; } .summary { align-items: start; flex-direction: column; } .qrGrid, .actions { grid-template-columns: 1fr; } .qrCard img { width: min(100%, 260px); margin: 0 auto; } }
   </style>
 </head>
 <body>
   <main class="shell">
-    <div class="top"><a class="brand" href="/"><span class="mark"></span><span>星隧</span></a><a class="back" href="/vip">返回套餐</a></div>
+    <div class="top">
+      <a class="brand" href="/">
+        <svg class="mark" viewBox="0 0 200 200" aria-hidden="true">
+          <defs><linearGradient id="payGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E6C87C"/><stop offset="1" stop-color="#A8801F"/></linearGradient></defs>
+          <circle cx="100" cy="100" r="96" fill="#0D0D0C"/>
+          <circle cx="100" cy="100" r="86" fill="none" stroke="url(#payGold)" stroke-width="2.5"/>
+          <g fill="url(#payGold)">
+            <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
+            <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
+            <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
+            <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
+            <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
+          </g>
+        </svg>
+        <span>MARX VPN</span>
+      </a>
+      <a class="back" href="/#pricing">返回套餐</a>
+    </div>
     <section class="card">
       <p class="eyebrow">安全支付 · 人工到账确认</p>
       <h1>选择支付方式</h1>
@@ -139,7 +174,7 @@ PAYMENT_HTML_TEMPLATE = """<!doctype html>
       }, 1800);
     }
     function startPayment(channel) {
-      if (!token) { location.href = '/login'; return; }
+      if (!token) { location.href = '/dashboard'; return; }
       if (!selectedPlan) return;
       const target = paymentTarget(channel);
       if (!target) { setStatus('支付跳转暂未配置，请使用下方二维码完成付款。', 'error'); return; }

@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F7FBFF"
+    android:background="@color/xingsui_paper"
     android:fillViewport="true">
 
     <LinearLayout
@@ -44,10 +44,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            app:cardBackgroundColor="#FFFFFFFF"
+            app:cardBackgroundColor="@color/xingsui_ink"
             app:cardCornerRadius="18dp"
             app:cardElevation="1dp"
-            app:strokeColor="#E4EEF6"
+            app:strokeColor="@color/xingsui_line_strong"
             app:strokeWidth="1dp">
 
             <LinearLayout
@@ -84,7 +84,7 @@
                     android:layout_height="wrap_content"
                     android:text="@string/xingsui_monthly_sale_price"
                     android:textAppearance="?attr/textAppearanceHeadlineSmall"
-                    android:textColor="@color/xingsui_offer_gold"
+                    android:textColor="@color/xingsui_gold_deep"
                     android:textStyle="bold" />
 
                 <TextView
@@ -137,10 +137,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            app:cardBackgroundColor="#FFFFFFFF"
+            app:cardBackgroundColor="@color/xingsui_ink"
             app:cardCornerRadius="18dp"
             app:cardElevation="1dp"
-            app:strokeColor="#E4EEF6"
+            app:strokeColor="@color/xingsui_line_strong"
             app:strokeWidth="1dp">
 
             <LinearLayout
@@ -163,7 +163,7 @@
                     android:layout_marginTop="6dp"
                     android:text="@string/xingsui_website_recharge_hint"
                     android:textAppearance="?attr/textAppearanceBodyMedium"
-                    android:textColor="#66758A" />
+                    android:textColor="@color/xingsui_muted" />
 
                 <com.google.android.material.button.MaterialButtonToggleGroup
                     android:id="@+id/pay_channel_group"
@@ -237,10 +237,10 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:layout_marginBottom="24dp"
-            app:cardBackgroundColor="#FFFFFFFF"
+            app:cardBackgroundColor="@color/xingsui_ink"
             app:cardCornerRadius="18dp"
             app:cardElevation="1dp"
-            app:strokeColor="#E4EEF6"
+            app:strokeColor="@color/xingsui_line_strong"
             app:strokeWidth="1dp">
 
             <LinearLayout
@@ -261,7 +261,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:background="#F3FAFC"
+                    android:background="@color/xingsui_paper_raised"
                     android:contentDescription="@string/xingsui_copy_invite"
                     android:padding="12dp"
                     android:text="@string/xingsui_invite_code_label"

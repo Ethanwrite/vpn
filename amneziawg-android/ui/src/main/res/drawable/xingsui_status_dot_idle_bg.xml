@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 中央连接按钮的点击区是透明的：视觉全部由 XingsuiEmblemView 绘制。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="#00000000" />
+    <solid android:color="@color/xingsui_faint" />
 </shape>

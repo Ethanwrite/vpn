@@ -1,7 +1,5 @@
 package org.amnezia.awg.xingsui
 
-import android.animation.AnimatorSet
-import android.animation.ObjectAnimator
 import android.app.Activity
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -12,8 +10,6 @@ import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.LinearInterpolator
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -60,8 +56,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private var selectedNodeName: String? = null
     private var selectedNodeDetail: String? = null
     private var pendingConnectAfterPermission = false
-    private var pulseAnimator: AnimatorSet? = null
-    private var spinAnimator: ObjectAnimator? = null
     private var statusMonitorJob: Job? = null
     private var shownAnnouncementId: String? = null
     private var connectAttemptId = 0L
@@ -115,6 +109,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
             Snackbar.make(binding.root, message, Snackbar.LENGTH_SHORT).show()
         }
         binding.connectButton.setOnClickListener { lifecycleScope.launch { toggleConnection() } }
+        binding.emblem.setOnClickListener { lifecycleScope.launch { toggleConnection() } }
         binding.nodeManageButton.setOnClickListener {
             lifecycleScope.launch { showNodePicker() }
         }
@@ -138,6 +133,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
                     is TunnelManager.ManagedTunnelEvent.DeadLinkDisconnected -> {
                         Snackbar.make(binding.root, R.string.xingsui_link_dead_disconnected, Snackbar.LENGTH_LONG).show()
                         renderTunnelState(null)
+                        renderConnectionCopy(XingsuiEmblemView.Phase.LOST)
                     }
                     is TunnelManager.ManagedTunnelEvent.EntitlementDenied -> {
                         renderTunnelState(null)
@@ -161,7 +157,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopStatusMonitor()
-        stopPulse()
         super.onDestroy()
     }
 
@@ -236,12 +231,12 @@ class XingsuiHomeActivity : AppCompatActivity() {
             getString(R.string.xingsui_node_auto_title),
             getString(R.string.xingsui_node_auto_detail),
         )
-        binding.connectionState.setText(R.string.xingsui_home_disconnected)
         binding.connectButton.setText(R.string.xingsui_home_login_connect)
         binding.authActions.visibility = View.VISIBLE
         binding.vipButton.isEnabled = true
         binding.connectButton.isEnabled = true
-        stopPulse()
+        renderConnectionCopy(XingsuiEmblemView.Phase.IDLE)
+        binding.connectionDetail.setText(R.string.xingsui_home_detail_login)
     }
 
     private fun renderSessionOffline(email: String) {
@@ -292,24 +287,18 @@ class XingsuiHomeActivity : AppCompatActivity() {
         }
         val nodeDetail = selectedNodeDetail ?: getString(R.string.xingsui_node_auto_detail)
         renderSelectedNode(nodeTitle, nodeDetail)
-        binding.connectionState.text = when {
-            isBusy -> binding.connectionState.text
-            isUp && tunnel?.connectionStatus == ObservableTunnel.ConnectionStatus.CONNECTED -> getString(R.string.xingsui_home_connected)
-            isUp -> getString(R.string.xingsui_home_connecting)
-            else -> getString(R.string.xingsui_home_disconnected)
-        }
+        val connected = isUp && tunnel?.connectionStatus == ObservableTunnel.ConnectionStatus.CONNECTED
         binding.connectButton.text = if (isUp) {
             getString(R.string.xingsui_home_disconnect)
         } else {
             getString(R.string.xingsui_home_connect)
         }
-        if (isUp && tunnel?.connectionStatus == ObservableTunnel.ConnectionStatus.CONNECTED) {
-            stopSpin()
-            startPulse()
-        } else if (isUp) {
-            startConnectingAnimation()
-        } else if (!isBusy) {
-            stopPulse()
+        when {
+            connected -> renderConnectionCopy(XingsuiEmblemView.Phase.CONNECTED)
+            isUp -> renderConnectionCopy(XingsuiEmblemView.Phase.CONNECTING)
+            // 忙碌中的文案由 setBusy 负责，这里不要把它覆盖回「未连接」
+            !isBusy -> renderConnectionCopy(XingsuiEmblemView.Phase.IDLE)
+            else -> binding.emblem.setPhase(XingsuiEmblemView.Phase.CONNECTING)
         }
     }
 
@@ -468,15 +457,15 @@ class XingsuiHomeActivity : AppCompatActivity() {
             isFillViewport = true
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(0xFF1B1829.toInt(), 0xFF0D0D16.toInt()),
+                intArrayOf(0xFFFAF7F0.toInt(), 0xFFF2EDE3.toInt()),
             ).apply {
                 cornerRadii = floatArrayOf(
-                    28 * dp, 28 * dp,
-                    28 * dp, 28 * dp,
+                    4 * dp, 4 * dp,
+                    4 * dp, 4 * dp,
                     0f, 0f,
                     0f, 0f,
                 )
-                setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF343047.toInt())
+                setStroke((1 * dp).toInt().coerceAtLeast(1), 0x330D0D0C)
             }
         }
         val root = LinearLayout(this).apply {
@@ -488,7 +477,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
         root.addView(View(this).apply {
             background = GradientDrawable().apply {
                 cornerRadius = 999f
-                setColor(0xFF545064.toInt())
+                setColor(0x330D0D0C)
             }
             layoutParams = LinearLayout.LayoutParams((42 * dp).toInt(), (4 * dp).toInt()).also {
                 it.gravity = Gravity.CENTER_HORIZONTAL
@@ -497,13 +486,13 @@ class XingsuiHomeActivity : AppCompatActivity() {
         })
         root.addView(TextView(this).apply {
             setText(R.string.xingsui_node_picker_title)
-            setTextColor(0xFFF7F5FF.toInt())
+            setTextColor(0xFF0D0D0C.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 21f)
             typeface = Typeface.DEFAULT_BOLD
         })
         val subtitle = TextView(this).apply {
             setText(R.string.xingsui_node_picker_loading)
-            setTextColor(0xFFA7AEC2.toInt())
+            setTextColor(0xFF6B6459.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             setPadding(0, (5 * dp).toInt(), 0, (18 * dp).toInt())
         }
@@ -514,7 +503,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
             setPadding(0, (22 * dp).toInt(), 0, (30 * dp).toInt())
         }
         val spinner = ProgressBar(this).apply {
-            indeterminateTintList = ColorStateList.valueOf(0xFF8B5CF6.toInt())
+            indeterminateTintList = ColorStateList.valueOf(0xFFA8801F.toInt())
             layoutParams = LinearLayout.LayoutParams((34 * dp).toInt(), (34 * dp).toInt())
         }
         spinnerBox.addView(spinner)
@@ -526,7 +515,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
                 sheet.elevation = 24 * dp
                 BottomSheetBehavior.from(sheet).state = BottomSheetBehavior.STATE_EXPANDED
             }
-            dialog.window?.setDimAmount(0.72f)
+            dialog.window?.setDimAmount(0.42f)
         }
         dialog.setContentView(scroll)
         dialog.show()
@@ -539,7 +528,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
         if (nodes == null || nodes.isEmpty()) {
             subtitle.setText(R.string.xingsui_node_picker_empty)
-            subtitle.setTextColor(0xFFFF9A9A.toInt())
+            subtitle.setTextColor(0xFF8E1B13.toInt())
             return
         }
 
@@ -647,16 +636,16 @@ class XingsuiHomeActivity : AppCompatActivity() {
         val rowBg = if (isSelected) {
             GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(0xFF30265E.toInt(), 0xFF211B43.toInt()),
+                intArrayOf(0xFF0D0D0C.toInt(), 0xFF1E1C19.toInt()),
             ).apply {
-                cornerRadius = 16 * dp
-                setStroke((2 * dp).toInt().coerceAtLeast(1), 0xFF8B5CF6.toInt())
+                cornerRadius = 3 * dp
+                setStroke((2 * dp).toInt().coerceAtLeast(1), 0xFFA8801F.toInt())
             }
         } else {
             GradientDrawable().apply {
-                cornerRadius = 16 * dp
-                setColor(0xFF171720.toInt())
-                setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF302E40.toInt())
+                cornerRadius = 3 * dp
+                setColor(0xFFFAF7F0.toInt())
+                setStroke((1 * dp).toInt().coerceAtLeast(1), 0x260D0D0C)
             }
         }
         val row = LinearLayout(this).apply {
@@ -674,7 +663,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
             ).also { it.bottomMargin = (10 * dp).toInt() }
         }
 
-        val dotColor = if (isOnline) 0xFF34D399.toInt() else 0xFF646579.toInt()
+        val dotColor = if (isOnline) 0xFFA8801F.toInt() else 0xFF9A9184.toInt()
         val dot = View(this).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(dotColor) }
             layoutParams = LinearLayout.LayoutParams((10 * dp).toInt(), (10 * dp).toInt()).also {
@@ -689,7 +678,13 @@ class XingsuiHomeActivity : AppCompatActivity() {
         }
         textCol.addView(TextView(this).apply {
             text = label
-            setTextColor(if (isLocked) 0xFFC3C4D2.toInt() else 0xFFF8F7FF.toInt())
+            setTextColor(
+                when {
+                    isSelected -> 0xFFFAF7F0.toInt()
+                    isLocked -> 0xFF9A9184.toInt()
+                    else -> 0xFF0D0D0C.toInt()
+                }
+            )
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = Typeface.DEFAULT_BOLD
             maxLines = 1
@@ -698,7 +693,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
         if (sublabel.isNotBlank()) {
             textCol.addView(TextView(this).apply {
                 text = sublabel.trim()
-                setTextColor(if (isSelected) 0xFFD7D1F8.toInt() else 0xFFA7AEC2.toInt())
+                setTextColor(if (isSelected) 0xCCFAF7F0.toInt() else 0xFF6B6459.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setPadding(0, (5 * dp).toInt(), 0, 0)
                 maxLines = 2
@@ -709,14 +704,14 @@ class XingsuiHomeActivity : AppCompatActivity() {
         if (badge.isNotEmpty()) {
             row.addView(TextView(this).apply {
                 text = if (isSelected) "✓  $badge" else badge
-                setTextColor(if (isSelected) Color.WHITE else 0xFFC2B9F5.toInt())
+                setTextColor(if (isSelected) 0xFF1A1405.toInt() else 0xFF6E5210.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 background = GradientDrawable().apply {
-                    cornerRadius = 999f
-                    setColor(if (isSelected) 0xFF7C3AED.toInt() else 0xFF27223D.toInt())
-                    setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF4A416A.toInt())
+                    cornerRadius = 2 * dp
+                    setColor(if (isSelected) 0xFFD6B15C.toInt() else 0x00000000)
+                    setStroke((1 * dp).toInt().coerceAtLeast(1), 0x4D0D0D0C)
                 }
                 setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
                 layoutParams = LinearLayout.LayoutParams(
@@ -782,13 +777,14 @@ class XingsuiHomeActivity : AppCompatActivity() {
         binding.refreshButton.isEnabled = !busy
         binding.vipButton.isEnabled = !busy
         binding.smartModeSwitch.isEnabled = !busy
+        if (busy) {
+            binding.emblem.setPhase(XingsuiEmblemView.Phase.CONNECTING)
+            binding.connectionDetail.setText(R.string.xingsui_home_detail_connecting)
+        } else if (managedTunnel?.state != Tunnel.State.UP) {
+            renderConnectionCopy(XingsuiEmblemView.Phase.IDLE)
+        }
         if (status != null) {
             binding.connectionState.text = status
-        }
-        if (busy) {
-            startConnectingAnimation()
-        } else if (managedTunnel?.state != Tunnel.State.UP) {
-            stopPulse()
         }
     }
 
@@ -823,10 +819,10 @@ class XingsuiHomeActivity : AppCompatActivity() {
             isFillViewport = true
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(0xFF1B1829.toInt(), 0xFF0D0D16.toInt()),
+                intArrayOf(0xFFFAF7F0.toInt(), 0xFFF2EDE3.toInt()),
             ).apply {
-                cornerRadii = floatArrayOf(28 * dp, 28 * dp, 28 * dp, 28 * dp, 0f, 0f, 0f, 0f)
-                setStroke((1 * dp).toInt().coerceAtLeast(1), 0xFF343047.toInt())
+                cornerRadii = floatArrayOf(4 * dp, 4 * dp, 4 * dp, 4 * dp, 0f, 0f, 0f, 0f)
+                setStroke((1 * dp).toInt().coerceAtLeast(1), 0x330D0D0C)
             }
         }
         val root = LinearLayout(this).apply {
@@ -838,7 +834,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
         root.addView(View(this).apply {
             background = GradientDrawable().apply {
                 cornerRadius = 999f
-                setColor(0xFF545064.toInt())
+                setColor(0x330D0D0C)
             }
             layoutParams = LinearLayout.LayoutParams((42 * dp).toInt(), (4 * dp).toInt()).also {
                 it.gravity = Gravity.CENTER_HORIZONTAL
@@ -847,13 +843,13 @@ class XingsuiHomeActivity : AppCompatActivity() {
         })
         root.addView(TextView(this).apply {
             setText(titleRes)
-            setTextColor(0xFFF7F5FF.toInt())
+            setTextColor(0xFF0D0D0C.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             typeface = Typeface.DEFAULT_BOLD
         })
         root.addView(TextView(this).apply {
             setText(bodyRes)
-            setTextColor(0xFFA7AEC2.toInt())
+            setTextColor(0xFF6B6459.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setLineSpacing(6 * dp, 1f)
             setPadding(0, (10 * dp).toInt(), 0, (24 * dp).toInt())
@@ -861,13 +857,13 @@ class XingsuiHomeActivity : AppCompatActivity() {
         root.addView(TextView(this).apply {
             setText(R.string.xingsui_paywall_open_website)
             gravity = Gravity.CENTER
-            setTextColor(0xFFFFFFFF.toInt())
+            setTextColor(0xFF1A1405.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = Typeface.DEFAULT_BOLD
             background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(0xFF8B5CF6.toInt(), 0xFF6D3FEA.toInt()),
-            ).apply { cornerRadius = 16 * dp }
+                intArrayOf(0xFFD6B15C.toInt(), 0xFFA8801F.toInt()),
+            ).apply { cornerRadius = 3 * dp }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, (52 * dp).toInt(),
             )
@@ -879,7 +875,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
         root.addView(TextView(this).apply {
             setText(R.string.xingsui_paywall_dismiss)
             gravity = Gravity.CENTER
-            setTextColor(0xFF9AA1B8.toInt())
+            setTextColor(0xFF6B6459.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, (48 * dp).toInt(),
@@ -893,7 +889,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
                 sheet.elevation = 24 * dp
                 BottomSheetBehavior.from(sheet).state = BottomSheetBehavior.STATE_EXPANDED
             }
-            dialog.window?.setDimAmount(0.72f)
+            dialog.window?.setDimAmount(0.42f)
         }
         dialog.setContentView(scroll)
         dialog.show()
@@ -905,46 +901,34 @@ class XingsuiHomeActivity : AppCompatActivity() {
             .onFailure { Snackbar.make(binding.root, R.string.xingsui_api_unavailable, Snackbar.LENGTH_LONG).show() }
     }
 
-    private fun startConnectingAnimation() {
-        startPulse()
-        if (spinAnimator?.isRunning == true) return
-        binding.powerRing.rotation = 0f
-        spinAnimator = ObjectAnimator.ofFloat(binding.powerRing, View.ROTATION, 0f, 360f).apply {
-            duration = 900L
-            repeatCount = ObjectAnimator.INFINITE
-            interpolator = LinearInterpolator()
-            start()
+    /**
+     * 连接状态的唯一出口：状态标题、副文案与中央锤镰标志的动画阶段一起切换，
+     * 避免三者各自更新而出现「文案说已连接、标志还在扣合」这类不一致。
+     */
+    private fun renderConnectionCopy(phase: XingsuiEmblemView.Phase) {
+        binding.emblem.setPhase(phase)
+        val (titleRes, detailRes) = when (phase) {
+            XingsuiEmblemView.Phase.CONNECTED ->
+                R.string.xingsui_home_connected to R.string.xingsui_home_detail_connected
+            XingsuiEmblemView.Phase.CONNECTING ->
+                R.string.xingsui_home_connecting to R.string.xingsui_home_detail_connecting
+            XingsuiEmblemView.Phase.LOST ->
+                R.string.xingsui_home_lost to R.string.xingsui_home_detail_lost
+            XingsuiEmblemView.Phase.IDLE ->
+                R.string.xingsui_home_disconnected to R.string.xingsui_home_detail_idle
         }
-    }
-
-    private fun startPulse() {
-        if (pulseAnimator?.isRunning == true) return
-        val scaleX = ObjectAnimator.ofFloat(binding.powerRing, View.SCALE_X, 1f, 1.08f, 1f).apply {
-            repeatCount = ObjectAnimator.INFINITE
-        }
-        val scaleY = ObjectAnimator.ofFloat(binding.powerRing, View.SCALE_Y, 1f, 1.08f, 1f).apply {
-            repeatCount = ObjectAnimator.INFINITE
-        }
-        pulseAnimator = AnimatorSet().apply {
-            duration = 1200L
-            interpolator = AccelerateDecelerateInterpolator()
-            playTogether(scaleX, scaleY)
-            start()
-        }
-    }
-
-    private fun stopPulse() {
-        pulseAnimator?.cancel()
-        pulseAnimator = null
-        stopSpin()
-        binding.powerRing.scaleX = 1f
-        binding.powerRing.scaleY = 1f
-    }
-
-    private fun stopSpin() {
-        spinAnimator?.cancel()
-        spinAnimator = null
-        binding.powerRing.rotation = 0f
+        binding.connectionState.setText(titleRes)
+        binding.connectionDetail.setText(detailRes)
+        binding.connectionState.setTextColor(
+            getColor(if (phase == XingsuiEmblemView.Phase.LOST) R.color.xingsui_red else R.color.xingsui_ink)
+        )
+        binding.statusDot.setBackgroundResource(
+            if (phase == XingsuiEmblemView.Phase.CONNECTED) {
+                R.drawable.xingsui_status_dot_bg
+            } else {
+                R.drawable.xingsui_status_dot_idle_bg
+            }
+        )
     }
 
     private fun openVipCenter() {
@@ -962,7 +946,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
     companion object {
         private const val MANAGED_TUNNEL_NAME = "xingsui"
-        private const val DISPLAY_NODE_NAME = "星隧智能节点"
+        private const val DISPLAY_NODE_NAME = "星火智能节点"
         private const val PROTOCOL_AMNEZIAWG = "amneziawg"
         private const val VIP_ACTIVE = "active"
         private const val VIP_EXPIRED = "expired"

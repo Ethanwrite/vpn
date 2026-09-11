@@ -5,9 +5,9 @@ import { useStore } from "../store/useStore";
 import type { ToastItem } from "../lib/types";
 
 const STYLES: Record<ToastItem["kind"], string> = {
-  success: "border-emerald-400/40 bg-emerald-500/15 text-emerald-100",
-  error: "border-rose-400/40 bg-rose-500/15 text-rose-100",
-  info: "border-indigo-400/40 bg-indigo-500/15 text-indigo-100",
+  success: "border-gold bg-gold-light text-ink-900",
+  error: "border-signal bg-signal text-paper-raised",
+  info: "border-ink-900/20 bg-paper-raised text-ink-900",
 };
 
 function ToastRow({ item }: { item: ToastItem }) {
@@ -19,8 +19,8 @@ function ToastRow({ item }: { item: ToastItem }) {
   return (
     <div
       onClick={() => dismiss(item.id)}
-      className={`pointer-events-auto animate-fade-in cursor-pointer rounded-xl border px-4 py-2.5
-        whitespace-pre-line text-sm shadow-glass backdrop-blur-glass ${STYLES[item.kind]}`}
+      className={`pointer-events-auto animate-fade-in cursor-pointer rounded-brand border px-4 py-2.5
+        whitespace-pre-line text-sm font-semibold shadow-block ${STYLES[item.kind]}`}
     >
       {item.text}
     </div>

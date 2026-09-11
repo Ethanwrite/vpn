@@ -3,7 +3,7 @@ ADMIN_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>星隧 Admin</title>
+  <title>星火 Admin</title>
   <style>
     :root {
       color-scheme: dark;
@@ -162,7 +162,7 @@ ADMIN_HTML = """<!doctype html>
 </head>
 <body>
   <nav>
-    <div class="nav-logo"><h1>星隧</h1><span>Admin Console</span></div>
+    <div class="nav-logo"><h1>星火</h1><span>Admin Console</span></div>
     <div class="nav-item active" data-sec="dashboard" onclick="go('dashboard')"><span class="nav-icon">📊</span>概览</div>
     <div class="nav-item" data-sec="orders" onclick="go('orders')"><span class="nav-icon">📋</span>订单</div>
     <div class="nav-item" data-sec="users" onclick="go('users')"><span class="nav-icon">👥</span>用户</div>

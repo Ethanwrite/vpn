@@ -1,30 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- TV / 大屏横幅：奶油白纸面上的黑金锤镰与构成主义斜线。 -->
+<!-- 自适应图标前景：只放金色锤镰，黑底由 background 层提供；整体收进 66% 安全区。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="320dp"
-    android:height="180dp"
-    android:viewportWidth="320"
-    android:viewportHeight="180">
-
-    <path
-        android:fillColor="#F2EDE3"
-        android:pathData="M0,0h320v180h-320z" />
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M-20,150 L140,-10 M20,190 L200,10 M60,200 L260,0"
-        android:strokeColor="#1A0D0D0C"
-        android:strokeWidth="1" />
-    <path
-        android:fillColor="#0D0D0C"
-        android:pathData="M160,90 a64,64 0 1 0 128,0 a64,64 0 1 0 -128,0z" />
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
 
     <group
         android:pivotX="100"
         android:pivotY="100"
-        android:scaleX="0.58"
-        android:scaleY="0.58"
-        android:translateX="124"
-        android:translateY="-10">
+        android:scaleX="0.78"
+        android:scaleY="0.78">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M14,100 a86,86 0 1 0 172,0 a86,86 0 1 0 -172,0z"
+            android:strokeColor="#A8801F"
+            android:strokeWidth="3" />
         <path
             android:fillColor="#D6B15C"
             android:pathData="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z" />

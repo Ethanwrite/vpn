@@ -93,7 +93,7 @@
     <string name="xingsui_profile_traffic_remaining">剩余 %1$s / %2$s</string>
     <string name="xingsui_profile_traffic_vip">会员不限流量</string>
     <string name="xingsui_profile_website">官网</string>
-    <string name="xingsui_profile_website_hint">访问星隧官网</string>
+    <string name="xingsui_profile_website_hint">访问星火官网</string>
     <string name="xingsui_profile_invite">我的邀请码</string>
     <string name="xingsui_profile_update">检查更新</string>
     <string name="xingsui_profile_update_hint">当前版本 %s</string>
@@ -136,8 +136,8 @@
     <string name="xingsui_pay_manual_confirm">已付款？点击提交确认</string>
     <string name="xingsui_order_pending_confirm">已提交付款，等待确认</string>
     <string name="xingsui_invite_reward">好友首单付款后，你可得 10 元返现</string>
-    <string name="xingsui_vip_center">星隧会员</string>
-    <string name="xingsui_auth_title">登录星隧</string>
+    <string name="xingsui_vip_center">星火会员</string>
+    <string name="xingsui_auth_title">登录星火</string>
     <string name="xingsui_auth_subtitle">使用邮箱和密码注册登录，无需邮箱验证码。</string>
     <string name="xingsui_email">邮箱</string>
     <string name="xingsui_password">密码</string>
@@ -198,7 +198,7 @@
     <string name="xingsui_withdraw_submitted">提现申请已提交，处理完成后打款。</string>
     <string name="xingsui_withdraw_failed">提现申请提交失败，请稍后重试。</string>
     <string name="xingsui_withdraw_unavailable">满 10 元可申请提现</string>
-    <string name="xingsui_vip_required_login">请先登录星隧账号再启动 VPN</string>
+    <string name="xingsui_vip_required_login">请先登录星火账号再启动 VPN</string>
     <string name="xingsui_vip_required_active">需要有效 VIP 才能连接</string>
     <string name="xingsui_free_trial_exhausted">60MB 免费流量已用完，请开通会员后继续使用</string>
     <string name="xingsui_vip_expired">VIP 已过期，请续费后再启动 VPN</string>
@@ -246,8 +246,8 @@
     <string name="config_rename_error">无法重命名配置 “%s”</string>
     <string name="config_save_error">无法保存 “%1$s” 的配置：%2$s</string>
     <string name="config_save_success">已保存 “%s” 的配置</string>
-    <string name="app_name" translatable="false">星隧</string>
-    <string name="create_activity_title">创建星隧网络通道</string>
+    <string name="app_name" translatable="false">星火</string>
+    <string name="create_activity_title">创建星火网络通道</string>
     <string name="create_bin_dir_error">无法创建本地二进制文件目录</string>
     <string name="create_downloads_file_error">无法在下载目录中创建文件</string>
     <string name="create_empty">手动创建</string>
@@ -291,14 +291,14 @@
     <string name="interface_title">本地（Interface）</string>
     <string name="key_contents_error">密钥中含有错误字符</string>
     <string name="key_length_error">密钥长度错误</string>
-    <string name="key_length_explanation_base64">：星隧 的 Base64 密钥长度必须为 44 个字符（32 字节）</string>
-    <string name="key_length_explanation_binary">：星隧 密钥大小必须为 32 字节</string>
-    <string name="key_length_explanation_hex">：星隧 的十六进制密钥长度必须为 64 个字符（32 字节）</string>
+    <string name="key_length_explanation_base64">：星火 的 Base64 密钥长度必须为 44 个字符（32 字节）</string>
+    <string name="key_length_explanation_binary">：星火 密钥大小必须为 32 字节</string>
+    <string name="key_length_explanation_hex">：星火 的十六进制密钥长度必须为 64 个字符（32 字节）</string>
     <string name="latest_handshake">上次握手时间</string>
     <string name="latest_handshake_ago">%s之前</string>
     <string name="listen_port">监听端口</string>
     <string name="log_export_error">无法导出日志：%s</string>
-    <string name="log_export_subject">星隧 日志文件</string>
+    <string name="log_export_subject">星火 日志文件</string>
     <string name="log_export_success">已保存至 “%s”</string>
     <string name="log_export_title">导出日志文件</string>
     <string name="log_saver_activity_label">保存日志</string>
@@ -331,8 +331,8 @@
     <string name="parse_error_integer">数字</string>
     <string name="parse_error_reason">无法解析%1$s “%2$s”\u0020</string>
     <string name="peer">远程（Peer）</string>
-    <string name="permission_description">自由控制 星隧 隧道的开启或关闭，但可能会导致流量误传</string>
-    <string name="permission_label">控制 星隧 隧道</string>
+    <string name="permission_description">自由控制 星火 隧道的开启或关闭，但可能会导致流量误传</string>
+    <string name="permission_label">控制 星火 隧道</string>
     <string name="persistent_keepalive">连接保活间隔</string>
     <string name="pre_shared_key">预共享密钥</string>
     <string name="pre_shared_key_enabled">已启用</string>
@@ -390,7 +390,7 @@
     <string name="version_summary">%1$s backend %2$s</string>
     <string name="version_summary_checking">正在检查 %s backend 版本</string>
     <string name="version_summary_unknown">未知的 %s 版本</string>
-    <string name="version_title">星隧 for Android v%s</string>
+    <string name="version_title">星火 for Android v%s</string>
     <string name="vpn_not_authorized_error">用户未授权 VPN 服务</string>
     <string name="vpn_start_error">无法启动 Android VPN 服务</string>
     <string name="zip_export_error">无法导出隧道配置：%s</string>

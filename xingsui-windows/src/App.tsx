@@ -47,7 +47,7 @@ export default function App() {
   }, [setUser, setConn, setStats, resetStats, pushToast]);
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-ink-900 bg-brand-radial text-white">
+    <div className="relative flex h-full flex-col overflow-hidden bg-paper bg-paper-field text-ink-900">
       <TitleBar />
       <ToastHost />
       <main className="flex-1 overflow-hidden">
@@ -68,7 +68,7 @@ export default function App() {
 function Splash() {
   return (
     <div className="grid h-full place-items-center">
-      <div className="h-10 w-10 animate-spin-slow rounded-full border-2 border-white/20 border-t-brand-glow" />
+      <div className="h-10 w-10 animate-spin-slow rounded-full border-2 border-ink-900/15 border-t-gold" />
     </div>
   );
 }

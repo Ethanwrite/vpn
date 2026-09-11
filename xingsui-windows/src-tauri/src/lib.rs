@@ -1,4 +1,4 @@
-//! 星隧 VPN Windows 客户端 Rust 壳入口。
+//! 星火 VPN Windows 客户端 Rust 壳入口。
 
 mod api;
 mod commands;

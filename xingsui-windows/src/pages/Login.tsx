@@ -1,6 +1,7 @@
-// 登录 / 注册页：毛玻璃卡片 + 品牌渐变。
+// 登录 / 注册页：奶油白纸面卡片 + 黑金标志。
 
 import { useState } from "react";
+import BrandMark from "../components/BrandMark";
 import { api, errText } from "../lib/api";
 import { useStore } from "../store/useStore";
 
@@ -36,21 +37,22 @@ export default function Login() {
   return (
     <div className="flex h-full flex-col items-center justify-center px-7">
       <div className="mb-7 text-center">
-        <div className="mx-auto mb-3 grid h-16 w-16 place-items-center rounded-2xl bg-brand-gradient shadow-glow">
-          <span className="text-2xl font-black">星</span>
-        </div>
-        <h1 className="text-xl font-bold tracking-wide">星隧 VPN</h1>
-        <p className="mt-1 text-xs text-white/50">极速 · 安全 · 抗封锁</p>
+        <BrandMark className="mx-auto mb-4 h-16 w-16" />
+        <p className="kicker">MARX VPN</p>
+        <h1 className="mt-2 text-2xl font-extrabold tracking-tight">星火 VPN</h1>
+        <p className="mt-1.5 text-xs text-ink-500">连接世界 · 消除网络边界</p>
       </div>
 
-      <div className="glass w-full rounded-2xl p-5">
-        <div className="mb-4 flex rounded-xl bg-white/5 p-1 text-sm">
+      <div className="card w-full p-5 shadow-block">
+        <div className="mb-4 flex border-b border-ink-900/12 text-sm">
           {(["login", "register"] as const).map((m) => (
             <button
               key={m}
               onClick={() => setMode(m)}
-              className={`flex-1 rounded-lg py-2 transition ${
-                mode === m ? "bg-brand-gradient font-semibold" : "text-white/60"
+              className={`flex-1 border-b-2 py-2.5 font-bold transition ${
+                mode === m
+                  ? "border-gold text-ink-900"
+                  : "border-transparent text-ink-300"
               }`}
             >
               {m === "login" ? "登录" : "注册"}
@@ -60,14 +62,14 @@ export default function Login() {
 
         <div className="space-y-3">
           <input
-            className="glass-input"
+            className="field"
             placeholder="邮箱"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
           <input
-            className="glass-input"
+            className="field"
             placeholder="密码"
             type="password"
             value={password}
@@ -76,7 +78,7 @@ export default function Login() {
           />
           {mode === "register" && (
             <input
-              className="glass-input"
+              className="field"
               placeholder="邀请码（选填）"
               value={invite}
               onChange={(e) => setInvite(e.target.value)}

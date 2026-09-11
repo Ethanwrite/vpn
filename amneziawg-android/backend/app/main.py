@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exception_handlers import http_exception_handler as default_http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -32,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import node_service
 from app.admin_page import ADMIN_HTML
@@ -116,6 +118,23 @@ async def subscription_api_exception_handler(_: Request, exc: SubscriptionApiExc
         status_code=exc.status_code,
         content={"success": False, "code": exc.code, "message": exc.message},
     )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
+    """浏览器直接打开不存在的页面时返回品牌化 404（SPA 自己渲染「这里暂时没有生产资料」）。
+
+    只拦截 **GET + 明确接受 HTML + 非 /api /admin 前缀** 的 404；其余一律走 FastAPI
+    默认 JSON 处理，避免把 API 错误变成 HTML。
+    """
+    if (
+        exc.status_code == 404
+        and request.method == "GET"
+        and "text/html" in (request.headers.get("accept") or "")
+        and not request.url.path.startswith(("/api/", "/admin"))
+    ):
+        return HTMLResponse(SITE_HTML, status_code=404)
+    return await default_http_exception_handler(request, exc)
 
 ADMIN_SESSION_COOKIE = "xingsui_admin_session"
 ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 8
@@ -256,7 +275,7 @@ def render_admin_login(error: bool = False) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>星隧 Admin 登录</title>
+  <title>星火 Admin 登录</title>
   <style>
     :root {{ color-scheme: dark; --bg: #061120; --panel: #0b1b2f; --line: #24415f; --text: #eef7ff; --muted: #91a8ba; --cyan: #20e6d2; --danger: #ff6b7a; }}
     * {{ box-sizing: border-box; }}
@@ -273,7 +292,7 @@ def render_admin_login(error: bool = False) -> str:
 </head>
 <body>
   <form method="post" action="/admin/login">
-    <h1>星隧 Admin</h1>
+    <h1>星火 Admin</h1>
     <p>请输入后台管理密码</p>
     {error_html}
     <label for="password">密码</label>
@@ -995,7 +1014,7 @@ def yaml_bool(value: bool) -> str:
 
 
 def unique_proxy_name(name: str, used: set[str]) -> str:
-    cleaned = unquote(name).strip() or f"星隧节点 {len(used) + 1}"
+    cleaned = unquote(name).strip() or f"星火节点 {len(used) + 1}"
     candidate = cleaned
     index = 2
     while candidate in used:
@@ -1120,7 +1139,7 @@ def render_clash_yaml(user: UserRow, proxies: list[dict[str, object]]) -> str:
         proxies = [info_node, *proxies]
     names = [str(proxy["name"]) for proxy in proxies]
     lines = [
-        "# 星隧订阅",
+        "# 星火订阅",
         f"# 账号: {user.email}",
         f"# VIP 到期: {expires_at}",
         f"# 节点数量: {len(proxies)}",
@@ -1139,13 +1158,13 @@ def render_clash_yaml(user: UserRow, proxies: list[dict[str, object]]) -> str:
     lines.extend(
         [
             "proxy-groups:",
-            "  - name: 星隧",
+            "  - name: 星火",
             "    type: select",
             "    proxies:",
         ]
     )
     lines.extend(f"      - {yaml_scalar(name)}" for name in names)
-    lines.extend(["rules:", "  - MATCH,星隧", ""])
+    lines.extend(["rules:", "  - MATCH,星火", ""])
     return "\n".join(lines)
 
 
@@ -1187,7 +1206,7 @@ def subscription_proxy_dict(node: VpnNodeRow, vless_uuid: str, used_names: set[s
     config = node_service.build_vless_config(node, vless_uuid)
     if config is None:
         return None
-    label = unique_proxy_name(f"星隧-{node.region or node.name}", used_names)
+    label = unique_proxy_name(f"星火-{node.region or node.name}", used_names)
     proxy: dict[str, object] = {
         "name": label,
         "type": "vless",
@@ -1496,7 +1515,7 @@ def to_user(row: UserRow) -> User:
             id="vip-compensation-20260814",
             title="服务恢复及会员补偿通知",
             message=(
-                "亲爱的星隧会员：\n\n"
+                "亲爱的星火会员：\n\n"
                 "受不可抗力因素影响，服务此前曾短暂停运，给您带来的不便，我们深表歉意。\n\n"
                 "为表达歉意，现已为所有仍在有效期内的 VIP 会员统一赠送 30 天会员时长，"
                 "新的到期时间已自动更新，无需手动领取。\n\n"
@@ -2564,7 +2583,7 @@ def seed_database() -> None:
             db.add(
                 PromotionActivityRow(
                     id=PROMOTION_ID,
-                    name="星隧首月 18 元限时特惠",
+                    name="星火首月 18 元限时特惠",
                     tag="限时特惠",
                     plan_id=MONTHLY_PLAN_ID,
                     starts_at=datetime.now(UTC) - timedelta(days=1),
@@ -2596,7 +2615,7 @@ def seed_database() -> None:
                     password_salt=salt,
                     password_hash=password_hash,
                     phone="13800000000",
-                    nickname="星隧体验用户",
+                    nickname="星火体验用户",
                     invite_code="XS2026",
                 )
             )

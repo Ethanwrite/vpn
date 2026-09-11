@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "星隧 VPN 桌面端默认权限",
+  "description": "星火 VPN 桌面端默认权限",
   "windows": ["main"],
   "permissions": [
     "core:default",

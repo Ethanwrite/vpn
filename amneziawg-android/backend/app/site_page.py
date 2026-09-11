@@ -1,743 +1,887 @@
+"""星火 VPN（MARX VPN）官网单页。
+
+设计基调：奶油白背景 / 黑色大标题 / 黑金 Logo / 巨大无衬线 MARX /
+构成主义几何线条 / 金色网络节点 / 极少量暗红只做状态强调。
+
+页面职责划分：
+  - ``/``          纯品牌与销售页，7 屏：Hero → 全球节点 → 纲领 → 客户端 → 套餐 → 步骤 → Footer
+  - ``/dashboard`` 登录 / 注册 / 用户中心 / 订阅链接 / 设备与会员状态（``/login`` ``/register``
+                   ``/center`` 均为其别名，老链接与 App 内跳转继续可用）
+
+注意：首屏世界地图上的节点卡片是**展示数据**（``WORLD_NODES``），真实节点列表在
+``GET /vpn/nodes``，该接口需要登录态，故公开首页不拉取。调整文案时不要把它当成实时数据。
+"""
+
 SITE_HTML = """<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>星隧 - 智能全球网络</title>
+  <title>星火 VPN · MARX VPN — 连接世界，消除网络边界</title>
+  <meta name="description" content="星火 VPN（MARX VPN）：面向 AI、全球网站与流媒体的智能网络服务。自动选择更优线路，让信息自由抵达。" />
   <style>
     :root {
-      color-scheme: dark;
-      --ink: #e9f2ff;
-      --muted: #93a7c6;
-      --faint: #64789a;
-      --line: rgba(150, 198, 255, .11);
-      --line-strong: rgba(150, 198, 255, .2);
-      --glass: rgba(12, 27, 52, .52);
-      --glass-deep: rgba(8, 19, 39, .74);
-      --cyan: #5ee7d0;
-      --ice: #7ec8ff;
-      --gold: #e6c680;
-      --danger: #ff8087;
-      --grad: linear-gradient(135deg, #54e0c6 0%, #58b7ff 100%);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color-scheme: light;
+      --paper: #F2EDE3;
+      --paper-2: #FAF7F0;
+      --paper-3: #E8E1D3;
+      --ink: #0D0D0C;
+      --ink-2: #1E1C19;
+      --muted: #6B6459;
+      --faint: #9A9184;
+      --gold: #A8801F;
+      --gold-2: #D6B15C;
+      --gold-3: #6E5210;
+      --red: #8E1B13;
+      --line: rgba(13, 13, 12, .14);
+      --line-2: rgba(13, 13, 12, .30);
+      --sans: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      font-family: var(--sans);
     }
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; scroll-padding-top: 78px; }
     body {
       margin: 0;
-      min-height: 100vh;
+      background: var(--paper);
       color: var(--ink);
-      background:
-        radial-gradient(1100px 700px at 84% -12%, rgba(64, 150, 255, .16), transparent 62%),
-        radial-gradient(900px 620px at -12% 28%, rgba(84, 224, 198, .10), transparent 60%),
-        radial-gradient(1300px 900px at 52% 118%, rgba(96, 112, 255, .10), transparent 62%),
-        linear-gradient(180deg, #050e20 0%, #081831 52%, #050d1d 100%);
-      background-attachment: fixed;
-      letter-spacing: 0;
-    }
-    body:before {
-      content: "";
-      position: fixed;
-      inset: -20% -10%;
-      z-index: -1;
-      pointer-events: none;
-      background:
-        radial-gradient(620px 340px at 70% 18%, rgba(94, 231, 208, .07), transparent 70%),
-        radial-gradient(720px 420px at 22% 64%, rgba(126, 200, 255, .06), transparent 70%);
-      animation: auroraDrift 36s ease-in-out infinite alternate;
-    }
-    @keyframes auroraDrift {
-      0% { transform: translate3d(0, 0, 0); opacity: .8; }
-      100% { transform: translate3d(3%, 2%, 0); opacity: 1; }
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
     a { color: inherit; text-decoration: none; }
-    button, input, select { font: inherit; letter-spacing: 0; }
-    button { cursor: pointer; }
-    .shell { width: min(1140px, calc(100% - 36px)); margin: 0 auto; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; background: none; border: 0; }
+    img { max-width: 100%; }
+    ::selection { background: var(--ink); color: var(--paper); }
+    .shell { width: min(1220px, calc(100% - 40px)); margin: 0 auto; }
+
+    /* ============ 构成主义底纹：极细几何线 ============ */
+    .grain {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(to right, rgba(13,13,12,.055) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(13,13,12,.035) 1px, transparent 1px);
+      background-size: 96px 96px, 96px 96px;
+      mask-image: radial-gradient(120% 90% at 50% 0%, #000 25%, transparent 78%);
+      -webkit-mask-image: radial-gradient(120% 90% at 50% 0%, #000 25%, transparent 78%);
+    }
+    main, header, footer { position: relative; z-index: 1; }
+
+    /* ============ 顶栏 ============ */
     .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      border-bottom: 1px solid var(--line);
-      background: rgba(6, 15, 31, .66);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      position: sticky; top: 0; z-index: 40;
+      border-bottom: 1px solid transparent;
+      transition: background .35s ease, border-color .35s ease, backdrop-filter .35s ease;
     }
-    .nav { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    .brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 800; font-size: 21px; color: var(--ink); }
-    .mark {
-      width: 34px; height: 34px; border-radius: 10px;
-      background:
-        radial-gradient(circle at 66% 30%, rgba(255,255,255,.9) 0 8%, transparent 9%),
-        linear-gradient(135deg, #123a7a 0%, #2b6ae0 46%, #35cfe0 78%, #aefaea 100%);
-      box-shadow: 0 8px 26px rgba(64, 190, 230, .28);
-      position: relative;
-      overflow: hidden;
+    .topbar.stuck {
+      background: rgba(242, 237, 227, .72);
+      border-bottom-color: var(--line);
+      backdrop-filter: saturate(160%) blur(18px);
+      -webkit-backdrop-filter: saturate(160%) blur(18px);
     }
-    .mark:after {
-      content: "";
-      position: absolute;
-      width: 52px; height: 17px; left: -14px; bottom: 4px;
-      border-radius: 100% 100% 0 0;
-      background: rgba(196, 246, 255, .6);
-      transform: rotate(-28deg);
+    .nav { min-height: 76px; display: flex; align-items: center; gap: 26px; }
+    .brand { display: inline-flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+    .brandMark { width: 38px; height: 38px; display: block; flex: 0 0 auto; }
+    .brandName { font-size: 17px; font-weight: 800; letter-spacing: .14em; color: var(--ink); }
+    .navLinks { display: flex; align-items: center; gap: 4px; margin-left: 8px; flex: 1 1 auto; }
+    .navLinks a {
+      padding: 9px 13px; border-radius: 2px; font-size: 14px; font-weight: 600;
+      color: var(--muted); transition: color .25s ease, background .25s ease;
     }
-    .links { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
-    .menuToggle { display: none; min-height: 38px; border: 1px solid var(--line-strong); border-radius: 10px; background: transparent; color: var(--ink); padding: 0 14px; font-weight: 600; }
-    .links a, .ghost {
-      min-height: 38px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 10px;
-      padding: 0 13px;
-      color: var(--muted);
-      background: transparent;
-      border: 1px solid transparent;
-      font-weight: 600;
-      transition: color .3s, background .3s;
-    }
-    .links a.active, .links a:hover, .ghost:hover { color: var(--ink); background: rgba(126, 200, 255, .08); }
-    .links a.telegram { color: #9fd2f5; gap: 7px; }
-    .links a.telegram:hover { color: #cfeaff; background: rgba(42, 171, 238, .12); }
-    .tgIcon { width: 16px; height: 16px; fill: currentColor; flex: 0 0 auto; }
-    .primary, .secondary, .unavailable, .danger {
-      min-height: 46px;
-      border-radius: 11px;
-      border: 0;
-      padding: 0 20px;
-      font-weight: 700;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      white-space: nowrap;
-      transition: transform .35s ease, box-shadow .35s ease, background .35s ease, border-color .35s ease;
-    }
-    .primary { background: var(--grad); color: #04263a; box-shadow: 0 12px 34px rgba(84, 190, 255, .2); }
-    .primary:hover { transform: translateY(-1px); box-shadow: 0 16px 40px rgba(84, 190, 255, .28); }
-    .secondary { border: 1px solid var(--line-strong); color: var(--ink); background: rgba(14, 30, 56, .5); }
-    .secondary:hover { border-color: rgba(150, 198, 255, .38); background: rgba(20, 40, 72, .6); }
-    .unavailable { border: 1px solid var(--line); color: var(--faint); background: rgba(10, 22, 42, .5); cursor: not-allowed; }
-    .danger { background: rgba(255, 110, 118, .1); color: var(--danger); border: 1px solid rgba(255, 110, 118, .26); }
+    .navLinks a:hover, .navLinks a.active { color: var(--ink); background: rgba(13,13,12,.05); }
+    .navRight { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+    .menuToggle { display: none; width: 42px; height: 38px; border: 1px solid var(--line-2); border-radius: 2px; }
+    .menuToggle span { display: block; width: 18px; height: 1.5px; background: var(--ink); margin: 3px auto; }
 
-    /* ---------- 首页 ---------- */
-    .hero { min-height: calc(100vh - 72px); display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding: 56px 0 48px; }
-    .eyebrow {
-      margin: 0;
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--faint);
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: .18em;
+    /* ============ 按钮 ============ */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      min-height: 46px; padding: 0 22px; border-radius: 2px;
+      font-size: 14.5px; font-weight: 700; letter-spacing: .02em; white-space: nowrap;
+      border: 1px solid transparent; transition: transform .2s ease, background .25s ease, color .25s ease, border-color .25s ease, box-shadow .25s ease;
     }
-    .eyebrow:before { content: ""; width: 26px; height: 1px; background: linear-gradient(90deg, var(--cyan), transparent); }
-    h1 { margin: 22px 0 18px; font-size: clamp(30px, 4.1vw, 48px); line-height: 1.22; font-weight: 700; color: var(--ink); max-width: 640px; }
-    h1 em {
-      font-style: normal;
-      background: linear-gradient(120deg, #8ff3de 0%, #7ec8ff 90%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-    .lead { margin: 0; max-width: 540px; color: var(--muted); font-size: clamp(15px, 1.6vw, 17px); line-height: 1.95; }
-    .keyline { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 26px; color: #b7cbe8; font-size: 14px; font-weight: 600; letter-spacing: .06em; }
-    .keyline i { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
-    .heroActions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 30px; }
-    .heroDeal { margin: 22px 0 0; color: var(--faint); font-size: 14px; }
-    .heroDeal b { color: var(--gold); font-weight: 700; font-size: 16px; }
+    .btn:active { transform: translateY(1px); }
+    .btn-ink { background: var(--ink); color: var(--paper-2); }
+    .btn-ink:hover { background: #000; box-shadow: 6px 6px 0 rgba(168,128,31,.35); }
+    .btn-gold { background: linear-gradient(135deg, var(--gold-2), var(--gold)); color: #1A1405; }
+    .btn-gold:hover { box-shadow: 6px 6px 0 rgba(13,13,12,.18); }
+    .btn-line { border-color: var(--line-2); color: var(--ink); }
+    .btn-line:hover { border-color: var(--ink); box-shadow: 5px 5px 0 rgba(13,13,12,.12); }
+    .btn-sm { min-height: 38px; padding: 0 15px; font-size: 13.5px; }
+    .btn[disabled] { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
 
-    /* 智能网络核心舱 */
-    .heroPanel {
-      position: relative;
-      border-radius: 26px;
-      background:
-        radial-gradient(560px 380px at 52% 34%, rgba(52, 132, 226, .16), transparent 70%),
-        linear-gradient(158deg, rgba(13, 30, 58, .66), rgba(7, 17, 36, .78));
-      border: 1px solid var(--line);
-      box-shadow: 0 30px 90px rgba(3, 12, 28, .5), inset 0 1px 0 rgba(180, 224, 255, .07);
-      overflow: hidden;
-      padding: 26px 26px 0;
-      isolation: isolate;
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+    /* ============ 排版 ============ */
+    .kicker {
+      display: inline-flex; align-items: center; gap: 12px;
+      font-size: 12px; font-weight: 700; letter-spacing: .34em; color: var(--gold-3);
+      text-transform: uppercase;
     }
-    .coreCaption { display: flex; justify-content: space-between; align-items: center; color: var(--faint); font-size: 12px; letter-spacing: .22em; font-weight: 600; }
-    .coreCaption span:last-child { display: inline-flex; align-items: center; gap: 7px; letter-spacing: .08em; color: #7fd9c4; }
-    .coreCaption span:last-child:before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); animation: breathe 3.6s ease-in-out infinite; }
-    @keyframes breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
-    .coreScene { position: relative; margin: 0 auto; width: min(520px, 100%); transition: transform .7s cubic-bezier(.22, .61, .36, 1); will-change: transform; }
-    .coreScene svg { display: block; width: 100%; height: auto; }
-    .coreStats {
-      display: flex;
-      margin: 4px -26px 0;
-      padding: 16px 10px;
-      border-top: 1px solid var(--line);
-      background: rgba(6, 14, 30, .4);
-    }
-    .coreStats > div { flex: 1; text-align: center; padding: 2px 6px; }
-    .coreStats > div + div { border-left: 1px solid var(--line); }
-    .coreStats b { display: block; color: var(--ink); font-size: 17px; font-weight: 700; }
-    .coreStats span { color: var(--faint); font-size: 12px; }
+    .kicker:before { content: ""; width: 34px; height: 1px; background: var(--gold); }
+    h1, h2, h3 { margin: 0; color: var(--ink); font-weight: 800; letter-spacing: -.02em; }
+    h1 { font-size: clamp(44px, 6.4vw, 86px); line-height: 1.02; }
+    h2 { font-size: clamp(32px, 4.4vw, 58px); line-height: 1.08; }
+    .lead { margin: 0; color: var(--muted); font-size: clamp(15px, 1.35vw, 17px); line-height: 1.9; max-width: 40em; }
+    .rule { height: 1px; background: var(--line); border: 0; margin: 0; }
+    .sectionNum { font-family: var(--mono); font-size: 12px; letter-spacing: .2em; color: var(--faint); }
 
-    .orbitRing { fill: none; stroke: rgba(140, 206, 255, .14); stroke-width: 1; }
-    .orbitDot { fill: #9fe2ff; opacity: .8; }
-    .orbitDot.small { opacity: .5; }
-    .globeLine { fill: none; stroke: rgba(150, 214, 255, .13); stroke-width: 1; }
-    .globeEdge { fill: url(#globeBody); stroke: rgba(150, 214, 255, .2); stroke-width: 1; }
-    .beamPath { fill: none; stroke: url(#beamGrad); stroke-width: 1.4; opacity: .55; stroke-linecap: round; }
-    .particle { fill: #c8f7ec; filter: drop-shadow(0 0 4px rgba(120, 240, 214, .9)); }
-    .nodeCore { fill: #eafffa; stroke: rgba(94, 231, 208, .9); stroke-width: 1.6; filter: drop-shadow(0 0 6px rgba(94, 231, 208, .8)); }
-    .nodeHalo { fill: none; stroke: rgba(94, 231, 208, .5); stroke-width: 1.2; animation: haloPulse 4.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
-    @keyframes haloPulse {
-      0% { transform: scale(.5); opacity: .7; }
-      70% { transform: scale(1.9); opacity: 0; }
-      100% { transform: scale(1.9); opacity: 0; }
+    /* ============ 第一屏 Hero ============ */
+    .hero { position: relative; padding: clamp(40px, 6vw, 86px) 0 clamp(56px, 7vw, 104px); overflow: hidden; }
+    .heroGrid { display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, .98fr); gap: clamp(30px, 5vw, 72px); align-items: center; }
+    .marxWord {
+      position: absolute; left: -2.2vw; bottom: -3.6vw; z-index: 0; pointer-events: none;
+      font-size: clamp(180px, 27vw, 420px); font-weight: 800; letter-spacing: -.055em; line-height: .72;
+      color: transparent; -webkit-text-stroke: 1.5px rgba(13,13,12,.10);
+      user-select: none;
     }
-    .nodeText { fill: rgba(206, 230, 255, .72); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
-    .nodeText.origin { fill: rgba(240, 250, 255, .9); font-size: 12px; }
+    .heroCopy { position: relative; z-index: 1; }
+    .heroCopy h1 { margin: 26px 0 0; }
+    .heroCopy h1 .gold { color: var(--gold); }
+    .heroCopy .lead { margin-top: 24px; }
+    .heroActions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
+    .heroMeta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 28px 0 0; color: var(--faint); font-size: 13px; font-weight: 600; letter-spacing: .06em; }
+    .heroMeta i { width: 3px; height: 3px; border-radius: 50%; background: var(--gold); display: inline-block; }
 
-    /* ---------- 页面通用 ---------- */
-    section.page { display: none; padding: 48px 0 88px; }
-    section.page.active { display: block; }
-    section.hero.active { display: grid; }
-    .sectionHead { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 30px; }
-    .sectionHead h2 { margin: 0; font-size: clamp(26px, 3.6vw, 40px); font-weight: 700; color: var(--ink); }
-    .sectionHead p { margin: 12px 0 0; color: var(--muted); line-height: 1.8; max-width: 560px; }
-    .grid { display: grid; gap: 16px; }
-    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .panel, .formBox {
-      background: var(--glass);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 24px;
-      box-shadow: 0 16px 44px rgba(3, 12, 28, .3);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+    /* ---- 黑金锤镰核心 ---- */
+    .emblemStage { position: relative; z-index: 1; display: grid; justify-items: center; gap: 22px; }
+    .emblemBox {
+      position: relative; width: min(430px, 100%); aspect-ratio: 1;
+      display: grid; place-items: center; cursor: pointer;
     }
-    .panel h3, .formBox h2 { margin: 0 0 10px; color: var(--ink); font-weight: 700; }
-    .panel p { margin: 0; color: var(--muted); line-height: 1.8; }
-    .formPage { min-height: calc(100vh - 72px); display: grid; place-items: center; padding: 40px 0; }
-    .formBox { width: min(440px, 100%); padding: 30px; }
-    label { display: block; font-weight: 600; color: #b8cbe8; margin: 14px 0 8px; }
-    input, select {
-      width: 100%;
-      min-height: 46px;
-      border: 1px solid var(--line-strong);
-      border-radius: 10px;
-      background: rgba(7, 17, 34, .66);
-      color: var(--ink);
-      padding: 0 13px;
-      outline: none;
-      transition: border-color .3s, box-shadow .3s;
-    }
-    input:focus, select:focus { border-color: rgba(94, 231, 208, .55); box-shadow: 0 0 0 3px rgba(94, 231, 208, .12); }
-    .formBox .primary { width: 100%; margin-top: 18px; }
-    .muted { color: var(--muted); }
-    .muted a { color: var(--ice); }
-    .status { min-height: 24px; color: var(--muted); line-height: 1.6; }
-    .status.error { color: var(--danger); }
-    .status.ok { color: var(--cyan); }
-    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-    .metric strong { display: block; color: var(--ink); font-size: 20px; margin-top: 6px; overflow-wrap: anywhere; font-weight: 700; }
+    .emblemBox svg { width: 100%; height: 100%; display: block; overflow: visible; }
+    .emStatic { stroke: rgba(13,13,12,.10); fill: none; stroke-width: 1; }
+    .emRays { stroke: rgba(168,128,31,.22); stroke-width: 1; opacity: 0; transition: opacity .9s ease .25s; }
+    .is-locked .emRays { opacity: 1; }
+    .emDisc { fill: var(--ink); opacity: 0; transform: scale(.9); transform-origin: 100px 100px; transition: opacity .7s ease, transform .7s cubic-bezier(.16,1,.3,1); }
+    .is-locked .emDisc { opacity: 1; transform: scale(1); }
 
-    /* ---------- 套餐 ---------- */
-    .dealTag {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 16px;
-      border-radius: 12px;
-      color: var(--gold);
-      background: rgba(230, 198, 128, .08);
-      border: 1px solid rgba(230, 198, 128, .24);
-      font-weight: 700;
-      white-space: nowrap;
+    .emTrack { fill: none; stroke: rgba(13,13,12,.12); stroke-width: 2; }
+    .emProgress {
+      fill: none; stroke: var(--red); stroke-width: 2.6; stroke-linecap: round;
+      stroke-dasharray: 566; stroke-dashoffset: 566;
+      transform: rotate(-90deg); transform-origin: 100px 100px;
+      transition: stroke-dashoffset 1.45s cubic-bezier(.5,0,.2,1), stroke .5s ease .1s, opacity .5s ease;
     }
-    .plansGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: stretch; padding-top: 14px; }
+    .is-connecting .emProgress, .is-locked .emProgress { stroke-dashoffset: 0; }
+    .is-locked .emProgress { stroke: var(--gold); }
+
+    .emPulse {
+      fill: none; stroke: var(--gold-2); stroke-width: 2; opacity: 0;
+      transform-origin: 100px 100px;
+    }
+    .is-locked .emPulse { animation: emPulse 1.15s cubic-bezier(.2,.7,.3,1) .05s 1 both; }
+    @keyframes emPulse {
+      0% { opacity: .9; transform: scale(.62); }
+      100% { opacity: 0; transform: scale(1.55); }
+    }
+
+    .emPart { transition: transform 1.05s cubic-bezier(.16, 1.02, .28, 1); }
+    .emSickle { transform: translate(26px, 26px) rotate(10deg); transform-origin: 100px 100px; }
+    .emHammer { transform: translate(-26px, -26px) rotate(-10deg); transform-origin: 100px 100px; }
+    .is-connecting .emSickle, .is-locked .emSickle,
+    .is-connecting .emHammer, .is-locked .emHammer { transform: translate(0, 0) rotate(0deg); }
+
+    /* 空心线框：统一线宽，形体靠轮廓自身的宽窄变化区分；连接后线条转金并浮出辉光。
+       dasharray 取 300 —— 比最长的一条轮廓（刃 ≈282）还长，短轮廓因而先画完，
+       四个部件自然形成先后错落的勾勒节奏。 */
+    .emStroke, .emGlow {
+      fill: none; stroke-linecap: round; stroke-linejoin: round;
+      stroke-dasharray: 300; stroke-dashoffset: 300;
+      transition: stroke-dashoffset .95s cubic-bezier(.4,0,.2,1) .12s, stroke .6s ease, opacity .6s ease;
+    }
+    .emStroke { stroke: var(--ink); opacity: 0; }
+    .emGlow { stroke: #F0C874; opacity: 0; }
+    /* 未连接时看见的是这一层：轮廓始终画满、但很淡，扣合开始后淡出，
+       把画面交给正在逐段勾勒的实色描边。 */
+    .emGhost {
+      fill: none; stroke: var(--ink); stroke-linecap: round; stroke-linejoin: round;
+      opacity: .22; transition: opacity .45s ease;
+    }
+    .is-connecting .emGhost, .is-locked .emGhost { opacity: 0; }
+    .is-connecting .emStroke, .is-locked .emStroke { opacity: 1; }
+    .is-connecting .emStroke, .is-locked .emStroke,
+    .is-connecting .emGlow, .is-locked .emGlow { stroke-dashoffset: 0; }
+    .is-locked .emStroke { stroke: #F5D68C; }
+
+    .is-locked .emGlow1 { opacity: .16; }
+    .is-locked .emGlow2 { opacity: .26; }
+    .is-locked .emGlow3 { opacity: .42; }
+
+    .emReadout {
+      display: grid; gap: 7px; justify-items: center; text-align: center; min-height: 62px;
+    }
+    .emReadout b {
+      font-family: var(--mono); font-size: 12.5px; font-weight: 700; letter-spacing: .26em;
+      color: var(--faint); transition: color .4s ease;
+    }
+    .is-locked ~ .emReadout b, .emStage-locked b { color: var(--gold-3); }
+    .emReadout span { font-size: 13.5px; color: var(--muted); letter-spacing: .04em; }
+    .emReadout .lost { color: var(--red); }
+    .emHint { font-size: 12px; color: var(--faint); letter-spacing: .1em; }
+
+    /* ============ 第二屏 全球节点 ============ */
+    .worldSection { padding: clamp(56px, 7vw, 110px) 0; border-top: 1px solid var(--line); }
+    .worldHead { display: grid; gap: 18px; margin-bottom: clamp(28px, 4vw, 52px); }
+    .worldWrap {
+      position: relative; border: 1px solid var(--line); background: var(--paper-2);
+      padding: clamp(14px, 2.4vw, 30px); overflow: hidden;
+    }
+    .worldWrap:before, .worldWrap:after {
+      content: ""; position: absolute; width: 14px; height: 14px; border: 1px solid var(--gold); opacity: .6;
+    }
+    .worldWrap:before { left: 10px; top: 10px; border-right: 0; border-bottom: 0; }
+    .worldWrap:after { right: 10px; bottom: 10px; border-left: 0; border-top: 0; }
+    .worldMap { position: relative; width: 100%; }
+    .worldMap svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .landDot { fill: rgba(13,13,12,.30); }
+    .routeLine { fill: none; stroke: rgba(168,128,31,.55); stroke-width: .9; stroke-dasharray: 2.4 3.4; }
+    .routeFlow { fill: var(--gold-2); }
+    .nodeHit { cursor: pointer; }
+    .nodeGlow { fill: rgba(168,128,31,.16); }
+    .nodeDot { fill: var(--gold); stroke: var(--paper-2); stroke-width: .8; }
+    .nodePing { fill: none; stroke: var(--gold); stroke-width: .8; transform-box: fill-box; transform-origin: center; animation: nodePing 3.6s ease-out infinite; }
+    @keyframes nodePing { 0% { transform: scale(.4); opacity: .75; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
+    .nodeLabel { font-family: var(--mono); font-size: 5.2px; letter-spacing: .14em; fill: rgba(13,13,12,.55); }
+    .nodeHit:hover .nodeDot { fill: var(--red); }
+
+    .nodeCard {
+      position: absolute; z-index: 5; min-width: 196px; padding: 14px 16px;
+      background: var(--ink); color: var(--paper-2); border-radius: 2px;
+      box-shadow: 8px 8px 0 rgba(168,128,31,.28);
+      opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity .22s ease, transform .22s ease;
+    }
+    .nodeCard.show { opacity: 1; transform: translateY(0); }
+    .nodeCard h4 { margin: 0; font-family: var(--mono); font-size: 12.5px; letter-spacing: .2em; font-weight: 700; color: var(--gold-2); }
+    .nodeCard dl { margin: 11px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 12.5px; }
+    .nodeCard dt { color: rgba(250,247,240,.5); }
+    .nodeCard dd { margin: 0; text-align: right; font-family: var(--mono); }
+    .nodeCard .go { display: block; margin-top: 12px; font-size: 12.5px; font-weight: 700; color: var(--gold-2); letter-spacing: .08em; }
+
+    .worldStats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); margin-top: clamp(18px, 2.6vw, 32px); }
+    .worldStats > div { padding: 22px 8px 4px; }
+    .worldStats > div + div { border-left: 1px solid var(--line); padding-left: 22px; }
+    .worldStats b { display: block; font-size: clamp(26px, 3vw, 38px); font-weight: 800; letter-spacing: -.03em; }
+    .worldStats span { display: block; margin-top: 6px; font-size: 12.5px; color: var(--muted); letter-spacing: .08em; }
+
+    /* ============ 第三屏 纲领 ============ */
+    .manifesto { padding: clamp(56px, 7vw, 110px) 0; border-top: 1px solid var(--line); }
+    .manifestoHead { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+    .manifestoTitle { font-size: clamp(34px, 5.6vw, 76px); font-weight: 800; letter-spacing: -.035em; }
+    .manifestoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); margin-top: clamp(30px, 4vw, 54px); border: 1px solid var(--line); }
+    .mCard { background: var(--paper); padding: clamp(26px, 3vw, 40px); transition: background .3s ease; }
+    .mCard:hover { background: var(--paper-2); }
+    .mCard .no { font-family: var(--mono); font-size: 12.5px; letter-spacing: .22em; color: var(--gold); }
+    .mCard h3 { margin: 22px 0 0; font-size: 21px; letter-spacing: 0; }
+    .mCard .slogan { margin: 18px 0 0; font-size: clamp(20px, 2vw, 26px); font-weight: 800; line-height: 1.42; letter-spacing: -.02em; }
+    .mCard p { margin: 18px 0 0; color: var(--muted); font-size: 14.5px; line-height: 1.85; }
+    .mCard .mLine { display: block; width: 46px; height: 2px; background: var(--ink); margin-top: 26px; }
+
+    /* ============ 第四屏 客户端 ============ */
+    .clients { padding: clamp(56px, 7vw, 110px) 0; border-top: 1px solid var(--line); }
+    .clientGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: clamp(28px, 4vw, 48px); }
+    .clientCard { border: 1px solid var(--line); background: var(--paper-2); padding: 28px; display: flex; flex-direction: column; }
+    .clientCard .os { font-family: var(--mono); font-size: 12px; letter-spacing: .22em; color: var(--faint); }
+    .clientCard h3 { margin: 14px 0 0; font-size: 20px; letter-spacing: 0; }
+    .clientCard p { margin: 12px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.8; flex: 1; }
+    .clientCard .btn { width: 100%; }
+    .clientNote { margin: 22px 0 0; color: var(--faint); font-size: 13px; line-height: 1.8; }
+
+    /* ============ 第五屏 套餐 ============ */
+    .pricing { padding: clamp(56px, 7vw, 110px) 0; border-top: 1px solid var(--line); }
+    .planGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: clamp(28px, 4vw, 48px); align-items: stretch; }
     .plan {
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      border-radius: 20px;
-      padding: 28px 26px;
-      background: var(--glass);
-      border: 1px solid var(--line);
-      box-shadow: 0 16px 44px rgba(3, 12, 28, .3);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      transition: transform .45s ease, box-shadow .45s ease, border-color .45s ease;
+      position: relative; display: flex; flex-direction: column;
+      border: 1px solid var(--line-2); background: var(--paper-2); padding: 32px 30px 30px;
+      transition: transform .3s ease, box-shadow .3s ease, border-color .3s ease;
     }
-    .plan:hover { transform: translateY(-4px); }
-    .plan h3 { margin: 0; color: var(--ink); font-size: 21px; font-weight: 700; }
-    .planTagline { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
-    .planTag {
-      position: absolute;
-      top: -13px;
-      left: 26px;
-      padding: 5px 13px;
-      border-radius: 999px;
-      font-size: 12.5px;
-      font-weight: 700;
-      color: #06301f;
-      background: var(--grad);
-      box-shadow: 0 8px 22px rgba(84, 224, 198, .3);
+    .plan:hover { transform: translateY(-4px); box-shadow: 10px 10px 0 rgba(13,13,12,.10); }
+    .plan .tag {
+      position: absolute; top: -1px; right: -1px; padding: 6px 12px;
+      background: var(--ink); color: var(--paper-2); font-size: 11.5px; font-weight: 700; letter-spacing: .14em;
     }
-    .planPrice { display: flex; align-items: baseline; gap: 6px; margin: 24px 0 4px; }
-    .planPrice em { font-style: normal; color: var(--ink); font-size: 18px; font-weight: 700; }
-    .planPrice b { color: var(--ink); font-size: 42px; font-weight: 800; line-height: 1; }
-    .planPrice span { color: var(--faint); font-size: 14px; }
-    .perMonth { margin: 6px 0 0; color: var(--faint); font-size: 13px; min-height: 18px; }
-    .planFeatures { list-style: none; margin: 22px 0 26px; padding: 0; display: grid; gap: 12px; flex: 1; }
-    .planFeatures li { display: flex; align-items: start; gap: 10px; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
-    .planFeatures li:before {
-      content: "✓";
-      flex: 0 0 auto;
-      width: 18px; height: 18px;
-      margin-top: 2px;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      font-size: 11px;
-      font-weight: 800;
-      color: var(--cyan);
-      background: rgba(94, 231, 208, .1);
-      border: 1px solid rgba(94, 231, 208, .28);
-    }
-    .planBtn {
-      width: 100%;
-      min-height: 46px;
-      border-radius: 11px;
-      border: 1px solid var(--line-strong);
-      background: rgba(14, 30, 56, .5);
-      color: var(--ink);
-      font-weight: 700;
-      transition: transform .35s ease, box-shadow .35s ease, background .35s ease, border-color .35s ease;
-    }
-    .planBtn:hover { border-color: rgba(150, 198, 255, .4); background: rgba(20, 40, 72, .65); }
+    .plan h3 { font-size: 26px; letter-spacing: -.01em; }
+    .plan .tagline { margin: 12px 0 0; color: var(--muted); font-size: 14.5px; line-height: 1.7; min-height: 44px; }
+    .plan .price { display: flex; align-items: baseline; gap: 7px; margin: 26px 0 0; }
+    .plan .price em { font-style: normal; font-size: 20px; font-weight: 700; }
+    .plan .price b { font-size: 54px; font-weight: 800; letter-spacing: -.045em; line-height: .9; }
+    .plan .price span { color: var(--faint); font-size: 14px; }
+    .plan .per { margin: 10px 0 0; color: var(--faint); font-size: 12.5px; min-height: 18px; font-family: var(--mono); }
+    .plan ul { list-style: none; margin: 26px 0 28px; padding: 22px 0 0; border-top: 1px solid var(--line); display: grid; gap: 13px; flex: 1; }
+    .plan li { display: flex; gap: 11px; color: var(--ink-2); font-size: 14.5px; }
+    .plan li:before { content: "✓"; color: var(--gold); font-weight: 800; }
+    .plan.featured { background: var(--ink); border-color: var(--ink); color: var(--paper-2); }
+    .plan.featured h3, .plan.featured .price b, .plan.featured .price em { color: var(--paper-2); }
+    .plan.featured .tagline, .plan.featured li { color: rgba(250,247,240,.78); }
+    .plan.featured .per { color: rgba(250,247,240,.45); }
+    .plan.featured ul { border-top-color: rgba(250,247,240,.16); }
+    .plan.featured .tag { background: var(--gold-2); color: #1A1405; }
+    .plan.featured li:before { color: var(--gold-2); }
+    .plan.gold { border-color: var(--gold); }
+    .plan.gold .tag { background: linear-gradient(135deg, var(--gold-2), var(--gold)); color: #1A1405; }
+    .planFoot { margin: 26px 0 0; color: var(--faint); font-size: 13px; line-height: 1.9; }
 
-    .plan.featured {
-      transform: translateY(-12px);
-      border: 1px solid transparent;
-      background:
-        linear-gradient(rgba(11, 26, 50, .92), rgba(11, 26, 50, .92)) padding-box,
-        linear-gradient(165deg, rgba(94, 231, 208, .7), rgba(88, 183, 255, .4) 55%, rgba(94, 231, 208, .2)) border-box;
-      box-shadow: 0 34px 80px rgba(4, 16, 36, .55), 0 0 70px rgba(72, 200, 220, .1);
-    }
-    .plan.featured:hover { transform: translateY(-18px); box-shadow: 0 42px 90px rgba(4, 16, 36, .6), 0 0 90px rgba(72, 200, 220, .16); }
-    .plan.featured .planBtn { background: var(--grad); border: 0; color: #04263a; box-shadow: 0 12px 32px rgba(84, 190, 255, .22); }
-    .plan.featured .planBtn:hover { transform: translateY(-1px); box-shadow: 0 16px 38px rgba(84, 190, 255, .3); }
+    /* ============ 第六屏 步骤 ============ */
+    .steps { padding: clamp(56px, 7vw, 110px) 0; border-top: 1px solid var(--line); }
+    .stepGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-top: clamp(28px, 4vw, 48px); }
+    .step { background: var(--paper); padding: 30px 26px 34px; }
+    .step .no { font-family: var(--mono); font-size: 12.5px; letter-spacing: .2em; color: var(--gold); }
+    .step h3 { margin: 18px 0 0; font-size: 18px; letter-spacing: 0; }
+    .step p { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+    .faqWrap { margin-top: clamp(34px, 4vw, 56px); border-top: 1px solid var(--line); }
+    .faq { border-bottom: 1px solid var(--line); }
+    .faq summary { list-style: none; cursor: pointer; padding: 22px 4px; display: flex; align-items: center; justify-content: space-between; gap: 18px; font-size: 16px; font-weight: 700; }
+    .faq summary::-webkit-details-marker { display: none; }
+    .faq summary:after { content: "+"; color: var(--gold); font-size: 20px; font-weight: 400; }
+    .faq[open] summary:after { content: "−"; }
+    .faq p { margin: 0 4px 24px; color: var(--muted); font-size: 14.5px; line-height: 1.9; max-width: 62em; }
 
-    .plan.gold { background: linear-gradient(168deg, rgba(9, 20, 42, .9), rgba(6, 13, 29, .94)); border-color: rgba(230, 198, 128, .22); }
-    .plan.gold:before {
-      content: "";
-      position: absolute;
-      inset: 0 0 auto;
-      height: 1px;
-      border-radius: 1px;
-      background: linear-gradient(90deg, transparent, rgba(230, 198, 128, .55), transparent);
-    }
-    .plan.gold .planTag { color: #3d2c07; background: linear-gradient(135deg, #f2ddac, #d9b878); box-shadow: 0 8px 22px rgba(217, 184, 120, .24); }
-    .plan.gold .planPrice b, .plan.gold .planPrice em { color: #f0dcae; }
-    .plan.gold .planFeatures li:before {
-      color: var(--gold);
-      background: rgba(230, 198, 128, .08);
-      border-color: rgba(230, 198, 128, .3);
-    }
-    .plan.gold .planBtn { border-color: rgba(230, 198, 128, .3); color: #f0dcae; background: rgba(230, 198, 128, .06); }
-    .plan.gold .planBtn:hover { border-color: rgba(230, 198, 128, .5); background: rgba(230, 198, 128, .12); }
+    /* ============ Footer ============ */
+    footer { border-top: 1px solid var(--line); background: var(--ink); color: rgba(250,247,240,.6); }
+    .footGrid { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)); gap: 34px; padding: clamp(40px, 5vw, 66px) 0 30px; }
+    .footBrand .brandName { color: var(--paper-2); }
+    .footBrand p { margin: 18px 0 0; font-size: 13.5px; line-height: 1.9; max-width: 26em; }
+    .footCol h4 { margin: 0 0 16px; color: var(--paper-2); font-size: 13px; letter-spacing: .18em; font-weight: 700; }
+    .footCol a { display: block; padding: 6px 0; font-size: 13.5px; transition: color .2s ease; }
+    .footCol a:hover { color: var(--gold-2); }
+    .footBar { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; padding: 20px 0 30px; border-top: 1px solid rgba(250,247,240,.12); font-size: 12.5px; font-family: var(--mono); letter-spacing: .06em; }
 
-    .planFootnote { margin: 26px 0 0; color: var(--faint); font-size: 13.5px; line-height: 1.8; text-align: center; }
-    .faqPanel { margin-top: 40px; }
-    .faqPanel h3 { margin-bottom: 16px; }
-    .faqItem + .faqItem { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
-    .faqItem strong { display: block; color: #c6d8f2; margin-bottom: 5px; font-size: 15px; }
-    .faqItem span { color: var(--muted); font-size: 14px; line-height: 1.75; }
-
-    .orderBox { display: none; margin-top: 26px; }
-    .orderBox.active { display: block; }
-    .qr { width: 210px; height: 210px; object-fit: contain; border: 1px solid var(--line-strong); border-radius: 12px; background: #fff; padding: 8px; }
-
-    /* ---------- 用户中心 / 其它 ---------- */
-    .subscriptionCard { margin-top: 16px; }
-    .subscriptionCard .status { margin: 10px 0 0; }
-    .subscriptionActions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-    .subscriptionLinkBox { display: none; margin-top: 14px; }
-    .subscriptionLinkBox.active { display: block; }
-    .subscriptionInput { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-    .clientGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
-    .clientTip { min-height: 86px; border: 1px solid var(--line); border-radius: 12px; background: rgba(9, 20, 40, .5); padding: 14px; }
-    .clientTip strong { display: block; color: var(--ink); margin-bottom: 5px; }
-    .clientTip span { color: var(--muted); line-height: 1.6; font-size: 13px; }
-    .guidePanel { margin-top: 16px; }
-    .guidePanel h3 { margin-bottom: 10px; }
-    .securityHint {
-      margin-top: 12px;
-      padding: 12px 14px;
-      border-radius: 10px;
-      background: rgba(230, 198, 128, .07);
-      border: 1px solid rgba(230, 198, 128, .22);
-      color: #dfc48d;
-      font-weight: 600;
-      line-height: 1.6;
+    /* ============ Dashboard ============ */
+    .page { display: none; }
+    .page.active { display: block; }
+    .dash { padding: clamp(34px, 5vw, 66px) 0 clamp(56px, 7vw, 96px); min-height: 68vh; }
+    .dashHead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 34px; }
+    .dashHead h2 { font-size: clamp(30px, 3.6vw, 46px); }
+    .authWrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(28px, 5vw, 70px); align-items: center; }
+    .authAside h2 { font-size: clamp(30px, 4vw, 52px); }
+    .authAside p { margin: 22px 0 0; color: var(--muted); line-height: 1.9; font-size: 15px; }
+    .authAside ul { list-style: none; margin: 30px 0 0; padding: 0; display: grid; gap: 12px; }
+    .authAside li { display: flex; gap: 12px; color: var(--ink-2); font-size: 14.5px; }
+    .authAside li:before { content: "—"; color: var(--gold); }
+    .authBox { border: 1px solid var(--line-2); background: var(--paper-2); padding: clamp(26px, 3vw, 38px); }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+    .tabs button { padding: 12px 2px; margin-right: 26px; font-size: 15px; font-weight: 700; color: var(--faint); border-bottom: 2px solid transparent; }
+    .tabs button.active { color: var(--ink); border-bottom-color: var(--gold); }
+    label { display: block; margin: 18px 0 8px; font-size: 13px; font-weight: 700; letter-spacing: .06em; color: var(--ink-2); }
+    input, select {
+      width: 100%; min-height: 48px; padding: 0 14px; border-radius: 2px;
+      border: 1px solid var(--line-2); background: var(--paper); outline: none;
+      transition: border-color .2s ease, box-shadow .2s ease;
     }
-    .steps { counter-reset: step; display: grid; gap: 22px; }
-    .step { position: relative; padding-left: 50px; }
-    .step:before {
-      counter-increment: step;
-      content: counter(step);
-      position: absolute; left: 0; top: 0;
-      width: 32px; height: 32px; border-radius: 50%;
-      display: grid; place-items: center; color: #04263a; font-weight: 800;
-      background: var(--grad);
-      box-shadow: 0 8px 20px rgba(84, 190, 255, .2);
-    }
-    .step h3 { margin: 3px 0 6px; color: var(--ink); }
-    .centerNav { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
-    .vipGold { color: var(--gold); }
-    footer { border-top: 1px solid var(--line); padding: 30px 0; color: var(--faint); background: rgba(5, 12, 26, .5); font-size: 14px; }
+    input:focus, select:focus { border-color: var(--ink); box-shadow: 3px 3px 0 rgba(168,128,31,.3); }
+    .authBox .btn { width: 100%; margin-top: 24px; }
+    .status { min-height: 22px; margin: 14px 0 0; font-size: 13.5px; line-height: 1.7; color: var(--muted); }
+    .status.err { color: var(--red); }
+    .status.ok { color: var(--gold-3); }
+    .switchLine { margin: 16px 0 0; font-size: 13.5px; color: var(--muted); }
+    .switchLine button { font-weight: 700; color: var(--ink); border-bottom: 1px solid var(--gold); }
+
+    .dashGrid { display: grid; gap: 20px; }
+    .card { border: 1px solid var(--line); background: var(--paper-2); padding: 26px; }
+    .card h3 { font-size: 17px; letter-spacing: .02em; }
+    .card > p { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.85; }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-top: 20px; }
+    .metric { background: var(--paper-2); padding: 18px 20px; }
+    .metric span { font-size: 12px; color: var(--faint); letter-spacing: .1em; }
+    .metric strong { display: block; margin-top: 8px; font-size: 18px; font-weight: 800; overflow-wrap: anywhere; }
+    .metric strong.gold { color: var(--gold); }
+    .rowActions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+    .dashTwo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .subInput { font-family: var(--mono); font-size: 13px; margin-top: 14px; }
+    .subMeta { margin: 10px 0 0; font-size: 12.5px; color: var(--faint); font-family: var(--mono); overflow-wrap: anywhere; }
+    .hidden { display: none !important; }
+
+    /* ---- 镰刀弧 loading ring ---- */
+    .spinner { width: 16px; height: 16px; display: inline-block; }
+    .spinner circle { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-dasharray: 30 44; transform-origin: center; animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ============ 404 ============ */
+    .lost404 { min-height: 62vh; display: grid; place-items: center; text-align: center; padding: 80px 0; }
+    .lost404 .code { font-size: clamp(90px, 16vw, 200px); font-weight: 800; letter-spacing: -.06em; color: transparent; -webkit-text-stroke: 2px var(--line-2); }
+    .lost404 h2 { margin: 18px 0 0; font-size: clamp(24px, 3vw, 36px); }
+    .lost404 p { margin: 16px 0 30px; color: var(--muted); }
 
     @media (prefers-reduced-motion: reduce) {
-      *, *:before, *:after { animation: none !important; transition: none !important; }
+      *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      html { scroll-behavior: auto; }
     }
-    @media (max-width: 920px) {
-      .nav { min-height: 64px; flex-wrap: wrap; }
-      .menuToggle { display: inline-flex; align-items: center; justify-content: center; }
-      .links { display: none; width: 100%; padding: 0 0 12px; align-items: stretch; flex-direction: column; }
-      .links.open { display: flex; }
-      .links a { min-height: 44px; justify-content: flex-start; }
-      .hero { grid-template-columns: 1fr; gap: 34px; padding-top: 36px; min-height: 0; }
-      h1 { font-size: clamp(30px, 8vw, 40px); }
-      .heroPanel { padding: 20px 20px 0; border-radius: 22px; }
-      .coreCaption { font-size: 10.5px; letter-spacing: .12em; }
-      .coreCaption span { white-space: nowrap; }
-      .coreStats { margin: 2px -20px 0; flex-wrap: wrap; }
-      .coreStats > div { flex: 1 1 40%; padding: 8px 6px; }
-      .coreStats > div:nth-child(3) { border-left: 0; }
-      .plansGrid { grid-template-columns: 1fr; gap: 26px; padding-top: 6px; }
-      .plan.featured { transform: none; }
-      .plan.featured:hover { transform: translateY(-4px); }
-      .grid.three, .grid.two, .metrics, .clientGrid { grid-template-columns: 1fr; }
-      .sectionHead { align-items: start; flex-direction: column; }
-      .brand { font-size: 19px; }
+    @media (max-width: 1024px) {
+      .manifestoGrid, .clientGrid, .planGrid { grid-template-columns: 1fr; }
+      .stepGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .footGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 900px) {
+      html { scroll-padding-top: 68px; }
+      .nav { min-height: 64px; flex-wrap: wrap; gap: 12px; }
+      .menuToggle { display: block; order: 3; margin-left: auto; }
+      .navRight { order: 2; margin-left: auto; }
+      .navRight .btn:not(.btn-ink) { display: none; }
+      .navLinks {
+        order: 4; width: 100%; display: none; flex-direction: column; align-items: stretch;
+        gap: 0; padding-bottom: 12px; border-top: 1px solid var(--line); margin-left: 0;
+      }
+      .navLinks.open { display: flex; }
+      .navLinks a { padding: 14px 2px; border-bottom: 1px solid var(--line); }
+      .heroGrid, .authWrap, .dashTwo { grid-template-columns: 1fr; }
+      .emblemStage { order: -1; }
+      .emblemBox { width: min(320px, 82%); }
+      /* 窄屏上把 MARX 收小并整体放进视口，避免只露出「MAR」看起来像截断 */
+      .marxWord { font-size: clamp(110px, 29vw, 190px); left: 4vw; bottom: auto; top: 42vh; opacity: .75; }
+      .worldStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .worldStats > div { border-left: 0 !important; padding-left: 8px !important; border-top: 1px solid var(--line); }
+      .worldStats > div:nth-child(-n+2) { border-top: 0; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stepGrid { grid-template-columns: 1fr; }
+      .footGrid { grid-template-columns: 1fr; gap: 24px; }
     }
   </style>
 </head>
 <body>
-  <header class="topbar">
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="topbar" id="topbar">
     <div class="shell nav">
-      <a class="brand" href="/" data-route="home" aria-label="星隧首页"><span class="mark"></span><span>星隧</span></a>
-      <button class="menuToggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="nav">菜单</button>
-      <nav class="links" id="nav">
-        <a href="/" data-route="home">首页</a>
-        <a href="/vip" data-route="vip">套餐</a>
-        <a href="/download" data-route="download">下载</a>
-        <a href="/center" data-route="center">用户中心</a>
-        <a href="/guide" data-route="guide">帮助中心</a>
-        <a class="telegram" href="https://t.me/+peCBtyuzOzNjNzA1" target="_blank" rel="noopener noreferrer" aria-label="加入星隧 Telegram 官方群">
-          <svg class="tgIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.78 15.64 9.39 21c.56 0 .8-.24 1.09-.53l2.62-2.5 5.43 3.98c1 .55 1.7.26 1.97-.92l3.57-16.73c.32-1.48-.53-2.06-1.5-1.7L1.62 10.65c-1.43.56-1.41 1.36-.24 1.72l5.36 1.67L19.2 6.25c.59-.39 1.12-.17.68.22z"/></svg>
-          官方群
-        </a>
-        <a href="/login" data-route="login" id="loginLink">登录</a>
+      <a class="brand" href="/" data-route="home" aria-label="星火 VPN 首页">
+        <svg class="brandMark" viewBox="0 0 200 200" aria-hidden="true">
+          <defs>
+            <linearGradient id="bmGold" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#E6C87C"/><stop offset="1" stop-color="#A8801F"/>
+            </linearGradient>
+          </defs>
+          <circle cx="100" cy="100" r="96" fill="#0D0D0C"/>
+          <circle cx="100" cy="100" r="86" fill="none" stroke="url(#bmGold)" stroke-width="2.5"/>
+          <g fill="url(#bmGold)">
+            <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
+            <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
+            <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
+            <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
+            <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
+          </g>
+        </svg>
+        <span class="brandName">MARX VPN</span>
+      </a>
+
+      <nav class="navLinks" id="navLinks">
+        <a href="/" data-route="home" data-anchor="top">首页</a>
+        <a href="/#nodes" data-route="home" data-anchor="nodes">全球节点</a>
+        <a href="/#pricing" data-route="home" data-anchor="pricing">套餐</a>
+        <a href="/#clients" data-route="home" data-anchor="clients">客户端下载</a>
+        <a href="/#steps" data-route="home" data-anchor="steps">指南</a>
+        <a href="/dashboard" data-route="dashboard">用户中心</a>
       </nav>
+
+      <div class="navRight">
+        <a class="btn btn-line btn-sm" href="/dashboard" data-route="dashboard" id="navAuth">登录</a>
+        <a class="btn btn-ink btn-sm" href="/#pricing" data-route="home" data-anchor="pricing">开始连接</a>
+      </div>
+
+      <button class="menuToggle" id="menuToggle" type="button" aria-label="菜单" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
     </div>
   </header>
 
   <main>
-    <section class="shell hero page active" id="page-home">
-      <div class="heroCopy">
-        <p class="eyebrow">XINGSUI · 智能网络服务</p>
-        <h1>更快抵达世界，<br/><em>更稳定连接每一次灵感</em></h1>
-        <p class="lead">面向 AI 工具、全球网站与高清流媒体的智能网络服务。自动匹配更优线路，在不同网络环境下依然保持稳定连接。</p>
-        <div class="keyline"><span>稳定</span><i></i><span>AI 专线</span><i></i><span>低延迟</span><i></i><span>智能调度</span></div>
-        <div class="heroActions">
-          <a class="primary" href="/register" data-route="register">立即开始</a>
-          <a class="secondary" href="/vip" data-route="vip">查看套餐</a>
-          <a class="ghost" href="/download" data-route="download">下载客户端</a>
+    <!-- ================= 首页 ================= -->
+    <section class="page active" id="page-home">
+
+      <!-- 1 / Hero -->
+      <section class="hero" id="top">
+        <div class="marxWord" aria-hidden="true">MARX</div>
+        <div class="shell heroGrid">
+          <div class="heroCopy">
+            <p class="kicker">MARX VPN · 星火</p>
+            <h1>连接世界。<br/>消除<span class="gold">网络边界</span>。</h1>
+            <p class="lead">面向 AI、全球网站与流媒体的智能网络服务。自动选择更优线路，让信息自由抵达。</p>
+            <div class="heroActions">
+              <a class="btn btn-ink" href="/dashboard" data-route="dashboard">立即连接</a>
+              <a class="btn btn-line" href="/#clients" data-route="home" data-anchor="clients">下载客户端</a>
+            </div>
+            <p class="heroMeta">
+              <span>不限流量</span><i></i><span>智能路由</span><i></i><span>多端同步</span><i></i><span>全球节点</span>
+            </p>
+          </div>
+
+          <div class="emblemStage">
+            <div class="emblemBox" id="emblemBox" role="img" aria-label="星火 VPN 黑金锤镰标志：锤子与镰刀扣合表示连接建立">
+              <svg viewBox="0 0 200 200" id="emblemSvg">
+                <defs>
+                  <linearGradient id="emGold" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stop-color="#E6C87C"/><stop offset="1" stop-color="#A8801F"/>
+                  </linearGradient>
+                </defs>
+
+                <!-- 淡淡的圆环 + 构成主义参考线 -->
+                <circle class="emStatic" cx="100" cy="100" r="96"/>
+                <circle class="emStatic" cx="100" cy="100" r="68" stroke-dasharray="1 5"/>
+                <line class="emStatic" x1="4" y1="100" x2="196" y2="100"/>
+                <line class="emStatic" x1="100" y1="4" x2="100" y2="196"/>
+
+                <!-- 放射纹（连接后浮现） -->
+                <g class="emRays" id="emRays"></g>
+
+                <!-- 黑色圆盘（连接后浮现） -->
+                <circle class="emDisc" cx="100" cy="100" r="84"/>
+
+                <!-- 进度环：暗红慢慢闭合 → 连接后转金 -->
+                <circle class="emTrack" cx="100" cy="100" r="90"/>
+                <circle class="emProgress" id="emProgress" cx="100" cy="100" r="90"/>
+
+                <!-- 扣合瞬间的脉冲光环 -->
+                <circle class="emPulse" id="emPulse" cx="100" cy="100" r="76"/>
+
+                <!-- 镰刀：与锤子沿 45° 轴对称分离，连接时向中心扣合 -->
+                <g class="emPart emSickle" id="emSickle" transform-origin="100 100">
+                    <g class="emGlow emGlow1" stroke-width="16.4">
+                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
+                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
+                    </g>
+                    <g class="emGlow emGlow2" stroke-width="12.4">
+                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
+                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
+                    </g>
+                    <g class="emGlow emGlow3" stroke-width="8.8">
+                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
+                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
+                    </g>
+                    <g class="emGhost" stroke-width="5.4">
+                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
+                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
+                    </g>
+                    <g class="emStroke" stroke-width="5.4">
+                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
+                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
+                    </g>
+                  </g>
+
+                <!-- 锤子：与镰刀沿 45° 轴对称分离，连接时向中心扣合 -->
+                <g class="emPart emHammer" id="emHammer" transform-origin="100 100">
+                    <g class="emGlow emGlow1" stroke-width="16.4">
+                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
+                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
+                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
+                    </g>
+                    <g class="emGlow emGlow2" stroke-width="12.4">
+                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
+                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
+                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
+                    </g>
+                    <g class="emGlow emGlow3" stroke-width="8.8">
+                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
+                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
+                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
+                    </g>
+                    <g class="emGhost" stroke-width="5.4">
+                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
+                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
+                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
+                    </g>
+                    <g class="emStroke" stroke-width="5.4">
+                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
+                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
+                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
+                    </g>
+                  </g>
+              </svg>
+            </div>
+
+            <div class="emReadout" id="emReadout">
+              <b id="emState">NETWORK IDLE</b>
+              <span id="emDetail">将指针移入标志 · 建立连接</span>
+              <span class="emHint" id="emHint">HAMMER + SICKLE = CONNECTED</span>
+            </div>
+          </div>
         </div>
-        <p class="heroDeal">新用户首月 <b id="homeNow">¥18</b> · 不限流量 · 多端会员同步</p>
-      </div>
+      </section>
 
-      <div class="heroPanel" id="heroPanel" aria-label="星隧智能网络核心">
-        <div class="coreCaption"><span>GLOBAL NETWORK CORE</span><span>智能调度运行中</span></div>
-        <div class="coreScene" id="coreScene">
-          <svg viewBox="0 0 560 540" role="img" aria-label="星隧全球智能网络：从国内出发通往日本、美国、新加坡、澳大利亚、法国与新西兰的线路">
-            <defs>
-              <radialGradient id="coreGlow" cx="50%" cy="46%" r="55%">
-                <stop offset="0" stop-color="rgba(96, 205, 255, .16)"/>
-                <stop offset=".55" stop-color="rgba(70, 150, 255, .06)"/>
-                <stop offset="1" stop-color="rgba(70, 150, 255, 0)"/>
-              </radialGradient>
-              <radialGradient id="globeBody" cx="38%" cy="30%" r="80%">
-                <stop offset="0" stop-color="rgba(64, 130, 220, .18)"/>
-                <stop offset=".5" stop-color="rgba(24, 58, 116, .14)"/>
-                <stop offset="1" stop-color="rgba(8, 20, 44, .3)"/>
-              </radialGradient>
-              <linearGradient id="beamGrad" x1="0" x2="1" y1="0" y2="0">
-                <stop offset="0" stop-color="#5ee7d0"/>
-                <stop offset="1" stop-color="#58b7ff"/>
-              </linearGradient>
-            </defs>
+      <!-- 2 / 全球节点 -->
+      <section class="worldSection" id="nodes">
+        <div class="shell">
+          <div class="worldHead">
+            <p class="kicker">02 — Global Network</p>
+            <h2>全世界的网络，连接起来。</h2>
+            <p class="lead">线路按延迟、负载与可用性实时调度。你不需要知道数据走了哪条路，只需要它一定抵达。</p>
+          </div>
 
-            <circle cx="280" cy="252" r="252" fill="url(#coreGlow)"/>
+          <div class="worldWrap">
+            <div class="worldMap" id="worldMap">
+              <svg viewBox="0 0 360 190" id="worldSvg" role="img" aria-label="全球节点分布图"></svg>
+              <div class="nodeCard" id="nodeCard" aria-hidden="true">
+                <h4 id="ncName">SINGAPORE 01</h4>
+                <dl>
+                  <dt>延迟</dt><dd id="ncPing">38 ms</dd>
+                  <dt>负载</dt><dd id="ncLoad">21%</dd>
+                  <dt>协议</dt><dd id="ncProto">AWG / VLESS</dd>
+                </dl>
+                <span class="go">立即连接 →</span>
+              </div>
+            </div>
 
-            <g transform="rotate(-14 280 252)">
-              <ellipse class="orbitRing" cx="280" cy="252" rx="252" ry="84"/>
-              <circle class="orbitDot" r="3">
-                <animateMotion dur="52s" repeatCount="indefinite" path="M 28,252 a 252,84 0 1 0 504,0 a 252,84 0 1 0 -504,0"/>
-              </circle>
-              <circle class="orbitDot small" r="2">
-                <animateMotion dur="52s" begin="-26s" repeatCount="indefinite" path="M 28,252 a 252,84 0 1 0 504,0 a 252,84 0 1 0 -504,0"/>
-              </circle>
-            </g>
-            <g transform="rotate(22 280 252)">
-              <ellipse class="orbitRing" cx="280" cy="252" rx="226" ry="112" style="opacity:.6"/>
-              <circle class="orbitDot small" r="2.4">
-                <animateMotion dur="68s" repeatCount="indefinite" path="M 54,252 a 226,112 0 1 0 452,0 a 226,112 0 1 0 -452,0"/>
-              </circle>
-            </g>
-
-            <circle class="globeEdge" cx="280" cy="252" r="168"/>
-            <g>
-              <ellipse class="globeLine" cx="280" cy="252" rx="56" ry="168"/>
-              <ellipse class="globeLine" cx="280" cy="252" rx="112" ry="168"/>
-              <ellipse class="globeLine" cx="280" cy="252" rx="158" ry="168"/>
-              <ellipse class="globeLine" cx="280" cy="252" rx="168" ry="52"/>
-              <ellipse class="globeLine" cx="280" cy="252" rx="168" ry="108"/>
-              <ellipse class="globeLine" cx="280" cy="252" rx="168" ry="150"/>
-            </g>
-
-            <g>
-              <path class="beamPath" id="arcJP" d="M322,215 Q350,196 372,203"/>
-              <path class="beamPath" id="arcUS" d="M322,215 Q240,138 158,203"/>
-              <path class="beamPath" id="arcSG" d="M322,215 Q332,254 316,289"/>
-              <path class="beamPath" id="arcAU" d="M322,215 Q354,276 350,336"/>
-              <path class="beamPath" id="arcNZ" d="M322,215 Q396,282 400,352"/>
-              <path class="beamPath" id="arcFR" d="M322,215 Q266,152 198,145"/>
-            </g>
-            <g>
-              <circle class="particle" r="2.4"><animateMotion dur="6.5s" repeatCount="indefinite" path="M322,215 Q350,196 372,203"/></circle>
-              <circle class="particle" r="2.4"><animateMotion dur="9s" begin="-3s" repeatCount="indefinite" path="M322,215 Q240,138 158,203"/></circle>
-              <circle class="particle" r="2.4"><animateMotion dur="7s" begin="-1.5s" repeatCount="indefinite" path="M322,215 Q332,254 316,289"/></circle>
-              <circle class="particle" r="2.4"><animateMotion dur="8s" begin="-5s" repeatCount="indefinite" path="M322,215 Q354,276 350,336"/></circle>
-              <circle class="particle" r="2.4"><animateMotion dur="9.5s" begin="-2s" repeatCount="indefinite" path="M322,215 Q396,282 400,352"/></circle>
-              <circle class="particle" r="2.4"><animateMotion dur="8.5s" begin="-6s" repeatCount="indefinite" path="M322,215 Q266,152 198,145"/></circle>
-            </g>
-
-            <g>
-              <circle class="nodeHalo" cx="322" cy="215" r="9"/>
-              <circle class="nodeCore" cx="322" cy="215" r="5"/>
-              <text class="nodeText origin" x="316" y="200" text-anchor="end">国内智能接入</text>
-
-              <circle class="nodeHalo" cx="372" cy="203" r="7" style="animation-delay:-1s"/>
-              <circle class="nodeCore" cx="372" cy="203" r="3.6"/>
-              <text class="nodeText" x="382" y="199">日本</text>
-
-              <circle class="nodeHalo" cx="158" cy="203" r="7" style="animation-delay:-2.2s"/>
-              <circle class="nodeCore" cx="158" cy="203" r="3.6"/>
-              <text class="nodeText" x="148" y="196" text-anchor="end">美国</text>
-
-              <circle class="nodeHalo" cx="316" cy="289" r="7" style="animation-delay:-3.1s"/>
-              <circle class="nodeCore" cx="316" cy="289" r="3.6"/>
-              <text class="nodeText" x="300" y="304" text-anchor="end">新加坡</text>
-
-              <circle class="nodeHalo" cx="350" cy="336" r="7" style="animation-delay:-1.7s"/>
-              <circle class="nodeCore" cx="350" cy="336" r="3.6"/>
-              <text class="nodeText" x="336" y="356" text-anchor="end">澳大利亚</text>
-
-              <circle class="nodeHalo" cx="400" cy="352" r="7" style="animation-delay:-4s"/>
-              <circle class="nodeCore" cx="400" cy="352" r="3.6"/>
-              <text class="nodeText" x="410" y="364">新西兰</text>
-
-              <circle class="nodeHalo" cx="198" cy="145" r="7" style="animation-delay:-2.8s"/>
-              <circle class="nodeCore" cx="198" cy="145" r="3.6"/>
-              <text class="nodeText" x="188" y="134" text-anchor="end">法国</text>
-            </g>
-          </svg>
+            <div class="worldStats">
+              <div><b>6+</b><span>全球区域</span></div>
+              <div><b>99.9%</b><span>连接可用性</span></div>
+              <div><b>48<i style="font-size:.5em;font-style:normal;">ms</i></b><span>平均延迟</span></div>
+              <div><b>24/7</b><span>全天候智能调度</span></div>
+            </div>
+          </div>
         </div>
-        <div class="coreStats">
-          <div><b>6+</b><span>全球区域</span></div>
-          <div><b>99.9%</b><span>连接可用性</span></div>
-          <div><b>48ms</b><span>平均延迟</span></div>
-          <div><b>全天候</b><span>智能调度</span></div>
+      </section>
+
+      <!-- 3 / 纲领 -->
+      <section class="manifesto" id="manifesto">
+        <div class="shell">
+          <div class="manifestoHead">
+            <div class="manifestoTitle">NETWORK<br/>MANIFESTO</div>
+            <p class="lead" style="max-width:26em;">三件事决定一条连接的好坏：谁来选路、能去哪里、谁看得到你。</p>
+          </div>
+
+          <div class="manifestoGrid">
+            <article class="mCard">
+              <span class="no">01 / 智能调度</span>
+              <p class="slogan">不选择线路。<br/>让线路选择你。</p>
+              <p>实时根据延迟、负载与可用性自动调度。握手失败会自动换线重连，不需要你手动比较节点。</p>
+              <span class="mLine"></span>
+            </article>
+            <article class="mCard">
+              <span class="no">02 / 全球连接</span>
+              <p class="slogan">地理有边界，<br/>网络不应该有。</p>
+              <p>AI 工具、海外网站、高清流媒体，一套连接覆盖。手机、电脑与第三方客户端共用同一个账号。</p>
+              <span class="mLine"></span>
+            </article>
+            <article class="mCard">
+              <span class="no">03 / 隐私</span>
+              <p class="slogan">你的通信，<br/>只属于你。</p>
+              <p>加密传输、短期配置下发、设备状态保护。配置不写死在客户端里，每次连接单独签发、到期自动回收。</p>
+              <span class="mLine"></span>
+            </article>
+          </div>
         </div>
+      </section>
+
+      <!-- 4 / 客户端 -->
+      <section class="clients" id="clients">
+        <div class="shell">
+          <p class="kicker">04 — Clients</p>
+          <h2 style="margin-top:18px;">一个账号，所有设备。</h2>
+          <div class="clientGrid">
+            <div class="clientCard">
+              <span class="os">ANDROID</span>
+              <h3>星火 VPN for Android</h3>
+              <p>AmneziaWG 协议，一键连接即智能选路。后台休眠、切换网络都能保持隧道不断。</p>
+              <a class="btn btn-ink" href="/download/android">下载 APK</a>
+            </div>
+            <div class="clientCard">
+              <span class="os">WINDOWS</span>
+              <h3>星火 VPN for Windows</h3>
+              <p>内置 sing-box，VLESS + Reality + Vision。安装后用同一邮箱登录即可连接。</p>
+              <a class="btn btn-ink" href="/download/windows">下载安装包</a>
+            </div>
+            <div class="clientCard">
+              <span class="os">THIRD PARTY</span>
+              <h3>订阅链接</h3>
+              <p>会员可在用户中心导出专属订阅链接，导入 Clash / sing-box 等开源客户端；泄露可随时重置。</p>
+              <a class="btn btn-line" href="/dashboard" data-route="dashboard">前往用户中心</a>
+            </div>
+          </div>
+          <p class="clientNote">客户端与官网共用账号体系，会员状态、到期时间实时同步。Android 与 Windows 均由官方签名分发，请只从本站下载。</p>
+        </div>
+      </section>
+
+      <!-- 5 / 套餐 -->
+      <section class="pricing" id="pricing">
+        <div class="shell">
+          <p class="kicker">05 — Plans</p>
+          <h2 style="margin-top:18px;">从一次连接开始。</h2>
+          <div class="planGrid" id="planGrid"></div>
+          <p class="planFoot">价格为人民币，支持微信 / 支付宝。付款后由人工确认到账，通常几分钟内开通，会员状态自动同步官网与客户端。</p>
+        </div>
+      </section>
+
+      <!-- 6 / 步骤 -->
+      <section class="steps" id="steps">
+        <div class="shell">
+          <p class="kicker">06 — How it works</p>
+          <h2 style="margin-top:18px;">四步接通。</h2>
+          <div class="stepGrid">
+            <div class="step"><span class="no">01</span><h3>注册账号</h3><p>邮箱加密码即可注册，无需验证码。有邀请码可一并填写。</p></div>
+            <div class="step"><span class="no">02</span><h3>选择计划</h3><p>火种 / 燎原 / 远征，按周期选择，微信或支付宝付款。</p></div>
+            <div class="step"><span class="no">03</span><h3>下载客户端</h3><p>Android、Windows 或第三方客户端导入订阅链接，任选其一。</p></div>
+            <div class="step"><span class="no">04</span><h3>开始连接</h3><p>用同一邮箱登录，点击连接。线路由服务端实时选择。</p></div>
+          </div>
+
+          <div class="faqWrap">
+            <details class="faq"><summary>会员在客户端和官网通用吗？</summary><p>通用。官网注册的邮箱账号可以直接在 Android、Windows 客户端登录，会员状态与到期时间自动同步，不需要额外绑定。</p></details>
+            <details class="faq"><summary>付款后多久开通？</summary><p>提交付款后进入待确认队列，由人工核对到账，通常几分钟内完成。开通后客户端下次刷新即可看到会员状态。</p></details>
+            <details class="faq"><summary>可以在几台设备上同时使用？</summary><p>同一账号支持手机与电脑同时在线。会员还可以导出订阅链接，在第三方开源客户端里使用；订阅链接与账号绑定，请勿分享。</p></details>
+            <details class="faq"><summary>新账号有免费额度吗？</summary><p>新注册账号有一份免费体验流量，用完后需要开通会员继续使用。免费额度按服务端实测流量计算。</p></details>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ================= 用户中心 ================= -->
+    <section class="page" id="page-dashboard">
+      <div class="shell dash">
+
+        <!-- 未登录：登录 / 注册 -->
+        <div id="authView">
+          <div class="authWrap">
+            <div class="authAside">
+              <p class="kicker">Dashboard</p>
+              <h2 style="margin-top:22px;">登录，<br/>接管你的连接。</h2>
+              <p>账号、会员状态、订阅链接与付款记录都在这里。官网只负责把产品讲清楚，其余全部收进用户中心。</p>
+              <ul>
+                <li>官网与客户端共用同一套账号</li>
+                <li>会员到期时间实时同步</li>
+                <li>订阅链接可随时重置，旧链接立即失效</li>
+              </ul>
+            </div>
+
+            <div class="authBox">
+              <div class="tabs">
+                <button type="button" id="tabLogin" class="active">登录</button>
+                <button type="button" id="tabRegister">注册</button>
+              </div>
+
+              <form id="loginForm">
+                <label for="loginEmail">邮箱</label>
+                <input id="loginEmail" type="email" autocomplete="email" required />
+                <label for="loginPassword">密码</label>
+                <input id="loginPassword" type="password" autocomplete="current-password" minlength="6" required />
+                <button class="btn btn-ink" type="submit">登录</button>
+                <p class="status" id="loginStatus"></p>
+                <p class="switchLine">还没有账号？<button type="button" id="goRegister">去注册</button></p>
+              </form>
+
+              <form id="registerForm" class="hidden">
+                <label for="registerEmail">邮箱</label>
+                <input id="registerEmail" type="email" autocomplete="email" required />
+                <label for="registerPassword">密码</label>
+                <input id="registerPassword" type="password" autocomplete="new-password" minlength="6" required />
+                <label for="registerInvite">邀请码（选填）</label>
+                <input id="registerInvite" type="text" autocomplete="off" />
+                <button class="btn btn-ink" type="submit">注册并进入用户中心</button>
+                <p class="status" id="registerStatus"></p>
+                <p class="switchLine">已经有账号？<button type="button" id="goLogin">去登录</button></p>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- 已登录：用户中心 -->
+        <div id="centerView" class="hidden">
+          <div class="dashHead">
+            <div>
+              <p class="kicker">Dashboard</p>
+              <h2 style="margin-top:18px;">用户中心</h2>
+            </div>
+            <div class="rowActions" style="margin:0;">
+              <a class="btn btn-gold btn-sm" href="/#pricing" data-route="home" data-anchor="pricing">开通 / 续费</a>
+              <button class="btn btn-line btn-sm" id="logoutButton" type="button">退出登录</button>
+            </div>
+          </div>
+
+          <div class="dashGrid">
+            <div class="card">
+              <h3>账号概览</h3>
+              <div class="metrics">
+                <div class="metric"><span>邮箱</span><strong id="meEmail">—</strong></div>
+                <div class="metric"><span>会员状态</span><strong id="meVip">—</strong></div>
+                <div class="metric"><span>到期时间</span><strong id="meExpiry">—</strong></div>
+                <div class="metric"><span>邀请码</span><strong id="meInvite">—</strong></div>
+              </div>
+              <div class="rowActions">
+                <a class="btn btn-line btn-sm" href="/download/android">下载 Android</a>
+                <a class="btn btn-line btn-sm" href="/download/windows">下载 Windows</a>
+                <button class="btn btn-line btn-sm" id="copyInvite" type="button">复制邀请码</button>
+              </div>
+            </div>
+
+            <div class="dashTwo">
+              <div class="card">
+                <h3>连接权益</h3>
+                <p id="trafficState">正在读取账号状态…</p>
+                <p id="balanceState" style="margin-top:10px;">返现余额：—</p>
+              </div>
+              <div class="card">
+                <h3>登录状态</h3>
+                <p id="sessionState">正在读取登录状态…</p>
+                <p style="margin-top:10px;">同一账号最多保留 2 个活跃会话（手机 + 电脑），第三次登录会挤掉最早的一个。</p>
+              </div>
+            </div>
+
+            <div class="card" id="subscriptionCard">
+              <h3>订阅链接</h3>
+              <p>会员可导出专属订阅链接，导入 Clash、sing-box 等第三方开源客户端。链接与账号绑定，请勿分享；如已泄露，点击“重置”即可让旧链接立即失效。</p>
+              <p class="status" id="subscriptionStatus"></p>
+              <div class="rowActions">
+                <button class="btn btn-ink btn-sm" id="exportSubscription" type="button">导出订阅链接</button>
+                <button class="btn btn-line btn-sm" id="copySubscription" type="button" disabled>复制链接</button>
+                <button class="btn btn-line btn-sm" id="resetSubscription" type="button" disabled>重置</button>
+              </div>
+              <div class="hidden" id="subscriptionLinkBox">
+                <input class="subInput" id="subscriptionLink" type="text" readonly onclick="this.select()" aria-label="订阅链接" />
+                <p class="subMeta" id="subscriptionMeta"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </section>
 
-    <section class="page" id="page-login">
-      <div class="shell formPage">
-        <form class="formBox" id="loginForm">
-          <h2>登录星隧</h2>
-          <p class="muted">使用官网注册的邮箱和密码，App 中也使用同一套账号。</p>
-          <label for="loginEmail">邮箱</label>
-          <input id="loginEmail" type="email" autocomplete="email" required />
-          <label for="loginPassword">密码</label>
-          <input id="loginPassword" type="password" autocomplete="current-password" minlength="6" required />
-          <button class="primary" type="submit">登录</button>
-          <p class="status" id="loginStatus"></p>
-          <p class="muted">没有账号？<a href="/register" data-route="register">去注册</a></p>
-        </form>
-      </div>
-    </section>
-
-    <section class="page" id="page-register">
-      <div class="shell formPage">
-        <form class="formBox" id="registerForm">
-          <h2>注册星隧</h2>
-          <p class="muted">邮箱格式校验即可注册，无需验证码。邀请码可选填。</p>
-          <label for="registerEmail">邮箱</label>
-          <input id="registerEmail" type="email" autocomplete="email" required />
-          <label for="registerPassword">密码</label>
-          <input id="registerPassword" type="password" autocomplete="new-password" minlength="6" required />
-          <label for="registerInvite">邀请码（选填）</label>
-          <input id="registerInvite" type="text" autocomplete="off" />
-          <button class="primary" type="submit">注册并进入用户中心</button>
-          <p class="status" id="registerStatus"></p>
-          <p class="muted">已有账号？<a href="/login" data-route="login">去登录</a></p>
-        </form>
-      </div>
-    </section>
-
-    <section class="shell page" id="page-center">
-      <div class="sectionHead">
+    <!-- ================= 404 ================= -->
+    <section class="page" id="page-notfound">
+      <div class="shell lost404">
         <div>
-          <h2>用户中心</h2>
-          <p>查看账号、VIP、到期时间、设备/登录状态和 App 下载入口。</p>
-        </div>
-        <button class="secondary" id="logoutButton">退出登录</button>
-      </div>
-      <div class="grid">
-        <div class="panel">
-          <h3>账号概览</h3>
-          <div class="metrics">
-            <div class="metric muted">邮箱<strong id="meEmail">未登录</strong></div>
-            <div class="metric muted">VIP 状态<strong id="meVip">-</strong></div>
-            <div class="metric muted">到期时间<strong id="meExpiry">-</strong></div>
-            <div class="metric muted">邀请码<strong id="meInvite">-</strong></div>
-          </div>
-          <div class="centerNav">
-            <a class="primary" href="/vip" data-route="vip">开通/续费 VIP</a>
-            <a class="secondary" href="/download" data-route="download">下载 App</a>
-            <button class="secondary" id="copyInvite">复制邀请码</button>
-          </div>
-        </div>
-        <div class="grid two">
-          <div class="panel">
-            <h3>登录状态</h3>
-            <p id="sessionState">当前浏览器未登录。</p>
-            <p class="muted">App 使用同一个邮箱密码登录后，会同步这里的 VIP 状态和到期时间。</p>
-          </div>
-          <div class="panel">
-            <h3>权益信息</h3>
-            <p id="trafficState">VPN 连接需要有效 VIP，每次连接都会向服务器申请短期安全配置。</p>
-            <p id="balanceState" class="muted">返现余额：-</p>
-          </div>
-        </div>
-        <div class="panel subscriptionCard" id="subscriptionCard">
-          <h3>订阅链接</h3>
-          <p class="muted">VIP 会员可导出专属订阅链接，导入 Clash、sing-box 等第三方开源客户端使用。链接与账号绑定，请勿分享；如泄露可随时点击“重置”使旧链接立即失效。</p>
-          <p class="status" id="subscriptionStatus"></p>
-          <div class="subscriptionActions">
-            <button class="primary" id="exportSubscription" type="button">导出订阅链接</button>
-            <button class="secondary" id="copySubscription" type="button" disabled>复制链接</button>
-            <button class="secondary" id="resetSubscription" type="button" disabled>重置</button>
-          </div>
-          <div class="subscriptionLinkBox" id="subscriptionLinkBox">
-            <input class="subscriptionInput" id="subscriptionLink" type="text" readonly onclick="this.select()" aria-label="订阅链接" />
-            <p class="muted" id="subscriptionMeta"></p>
-          </div>
+          <div class="code">404</div>
+          <h2>这里暂时没有生产资料。</h2>
+          <p>你要找的页面不在这条线路上。</p>
+          <a class="btn btn-ink" href="/" data-route="home">返回首页 →</a>
         </div>
       </div>
-    </section>
-
-    <section class="shell page" id="page-vip">
-      <div class="sectionHead">
-        <div>
-          <h2>选择适合你的连接周期</h2>
-          <p>所有套餐均包含不限流量、智能线路、节点自动切换与多端会员同步。</p>
-        </div>
-        <span class="dealTag" id="vipDeal">新用户首月 ¥18</span>
-      </div>
-      <div class="plansGrid" id="plans"></div>
-      <p class="planFootnote">适合经常使用 ChatGPT、Claude、YouTube 与海外网站的用户。支付后由人工确认开通，会员状态自动同步官网与 App。</p>
-      <div class="panel orderBox" id="orderBox">
-        <h3>安全支付</h3>
-        <p class="muted" id="orderSummary">订单已生成，请按页面提示完成付款。</p>
-        <div class="grid two" style="align-items:center; margin-top: 12px;">
-          <div>
-            <img class="qr" id="orderQr" alt="收款二维码" />
-            <p class="status" id="orderStatus"></p>
-          </div>
-          <div>
-            <label for="payChannel">支付通道</label>
-            <select id="payChannel">
-              <option value="wechat">微信支付</option>
-              <option value="alipay">支付宝支付</option>
-            </select>
-            <button class="primary" id="submitPaid" style="width:100%; margin-top:14px;">我已完成付款</button>
-            <p class="muted">提交后订单进入待确认列表，确认到账后 VIP 会同步到官网和 App。</p>
-          </div>
-        </div>
-      </div>
-      <div class="panel faqPanel">
-        <h3>常见问题</h3>
-        <div class="faqItem"><strong>会员在 App 和官网通用吗？</strong><span>通用。官网注册的邮箱账号在 Android、Windows 客户端直接登录，会员状态与到期时间自动同步。</span></div>
-        <div class="faqItem"><strong>支付后多久开通？</strong><span>提交付款后由人工确认到账，通常几分钟内完成，开通后无需任何额外操作。</span></div>
-        <div class="faqItem"><strong>可以在多台设备上使用吗？</strong><span>支持手机与电脑同时在线，VIP 还可导出订阅链接在 Clash 等第三方客户端中使用。</span></div>
-      </div>
-    </section>
-
-    <section class="shell page" id="page-download">
-      <div class="sectionHead">
-        <div>
-          <h2>App 下载</h2>
-          <p>安装后使用官网账号登录，自动同步会员状态。打开客户端，选择智能线路，即可开始稳定连接。</p>
-        </div>
-        <div class="actions">
-          <a class="primary" href="/download/android">下载 Android APK</a>
-          <a class="secondary" href="/download/windows">下载 Windows 客户端</a>
-        </div>
-      </div>
-      <div class="grid two">
-        <div class="panel"><h3>统一账号</h3><p>官网注册后，App 直接用邮箱和密码登录，下载即可同步使用。</p></div>
-        <div class="panel"><h3>智能线路</h3><p>自动匹配可用节点，减少手动配置成本，适合新手直接上手。</p></div>
-        <div class="panel"><h3>专线节点</h3><p>接入 ISP 专线与优质节点资源，面向 AI 工具、海外网站和高清流媒体场景优化。</p></div>
-        <div class="panel"><h3>稳定连接</h3><p>结合自研协议与智能调度策略，弱网环境下连接更稳。</p></div>
-      </div>
-    </section>
-
-    <section class="shell page" id="page-guide">
-      <div class="sectionHead">
-        <div>
-          <h2>使用教程</h2>
-          <p>从官网注册到 App 连接的完整流程。</p>
-        </div>
-      </div>
-      <div class="panel steps">
-        <div class="step"><h3>注册账号</h3><p class="muted">在官网输入邮箱和密码完成注册，可填写好友邀请码。</p></div>
-        <div class="step"><h3>开通 VIP</h3><p class="muted">选择套餐，按页面提示完成微信或支付宝付款，再点击“我已完成付款”。</p></div>
-        <div class="step"><h3>同步会员</h3><p class="muted">订单完成后，会员到期时间会自动写入账号。</p></div>
-        <div class="step"><h3>App 登录</h3><p class="muted">下载 APK 后用同一邮箱密码登录，首页会显示 VIP 状态和节点信息。</p></div>
-        <div class="step"><h3>连接网络</h3><p class="muted">App 会在线验证有效 VIP，然后匹配对应平台的节点并申请短期租约。</p></div>
-      </div>
-      <div class="panel guidePanel"><h3>关于订阅链接</h3><p class="muted">VIP 会员可在用户中心导出订阅链接，导入第三方开源客户端（Clash、sing-box 等）使用。链接经签名校验、限频保护，服务端全程 HTTPS，并对访问日志做脱敏处理；如担心泄露，可随时“重置”让旧链接立即失效。非会员开通 VIP 后即可导出。</p></div>
     </section>
   </main>
 
   <footer>
-    <div class="shell">星隧 · 智能全球网络 · 让 AI 与灵感触手可及</div>
+    <div class="shell">
+      <div class="footGrid">
+        <div class="footBrand">
+          <span class="brandName">MARX VPN · 星火</span>
+          <p>连接世界，消除网络边界。面向 AI、全球网站与流媒体的智能网络服务。</p>
+        </div>
+        <div class="footCol">
+          <h4>产品</h4>
+          <a href="/#nodes" data-route="home" data-anchor="nodes">全球节点</a>
+          <a href="/#pricing" data-route="home" data-anchor="pricing">套餐</a>
+          <a href="/#clients" data-route="home" data-anchor="clients">客户端下载</a>
+        </div>
+        <div class="footCol">
+          <h4>账户</h4>
+          <a href="/dashboard" data-route="dashboard">用户中心</a>
+          <a href="/dashboard" data-route="dashboard">订阅链接</a>
+          <a href="/#steps" data-route="home" data-anchor="steps">使用指南</a>
+        </div>
+        <div class="footCol">
+          <h4>联系</h4>
+          <a href="https://t.me/+peCBtyuzOzNjNzA1" target="_blank" rel="noopener noreferrer">Telegram 官方群</a>
+          <a href="/#steps" data-route="home" data-anchor="steps">常见问题</a>
+        </div>
+      </div>
+      <div class="footBar">
+        <span>© <span id="year">2026</span> MARX VPN — 星火</span>
+        <span>UNLIMITED · SMART ROUTING · MULTI-DEVICE</span>
+      </div>
+    </div>
   </footer>
 
   <script>
+    'use strict';
+
     const state = {
       token: localStorage.getItem('xingsui_token') || '',
       user: JSON.parse(localStorage.getItem('xingsui_user') || 'null'),
       plans: [],
       promo: null,
-      currentOrder: null,
       subscription: null,
     };
 
@@ -746,8 +890,8 @@ SITE_HTML = """<!doctype html>
       const value = cents / 100;
       return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0$/, '');
     };
-    const fmtDate = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-';
-    const authHeaders = () => state.token ? { Authorization: `Bearer ${state.token}` } : {};
+    const fmtDate = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
+    const authHeaders = () => state.token ? { Authorization: 'Bearer ' + state.token } : {};
 
     async function api(path, options = {}) {
       const headers = { Accept: 'application/json', ...(options.headers || {}) };
@@ -755,15 +899,405 @@ SITE_HTML = """<!doctype html>
       const response = await fetch(path, { ...options, headers: { ...headers, ...authHeaders() } });
       const text = await response.text();
       const data = text ? JSON.parse(text) : null;
-      if (!response.ok || data?.success === false) {
-        const detail = data?.message || data?.detail?.message || data?.detail || text || `请求失败 ${response.status}`;
+      if (!response.ok || (data && data.success === false)) {
+        const detail = (data && (data.message || (data.detail && data.detail.message) || data.detail)) || text || ('请求失败 ' + response.status);
         const error = new Error(typeof detail === 'string' ? detail : '请求失败，请稍后重试。');
-        error.code = data?.code || data?.detail?.code || '';
+        error.code = (data && (data.code || (data.detail && data.detail.code))) || '';
         throw error;
       }
       return data;
     }
 
+    /* ================= 路由 ================= */
+    const ROUTES = ['home', 'dashboard', 'notfound'];
+    const PATH_TO_ROUTE = {
+      '': 'home',
+      'dashboard': 'dashboard',
+      'center': 'dashboard',
+      'login': 'dashboard',
+      'register': 'dashboard',
+      'account/subscription': 'dashboard',
+      'user/subscription': 'dashboard',
+      'vip': 'home',
+      'download': 'home',
+      'guide': 'home',
+    };
+    const PATH_TO_ANCHOR = { vip: 'pricing', download: 'clients', guide: 'steps' };
+
+    function cleanPath() {
+      let p = location.pathname;
+      while (p.startsWith('/')) p = p.slice(1);
+      while (p.endsWith('/')) p = p.slice(0, -1);
+      return p;
+    }
+
+    function routeFromPath() {
+      const p = cleanPath();
+      if (p in PATH_TO_ROUTE) return PATH_TO_ROUTE[p];
+      return 'notfound';
+    }
+
+    function renderRoute(route, anchor) {
+      if (!ROUTES.includes(route)) route = 'notfound';
+      document.querySelectorAll('section.page').forEach((page) => page.classList.remove('active'));
+      const target = $('page-' + route);
+      if (target) target.classList.add('active');
+      document.querySelectorAll('.navLinks a').forEach((link) => {
+        link.classList.toggle('active', link.dataset.route === route && (route !== 'home' || !anchor || link.dataset.anchor === anchor));
+      });
+      if (route === 'dashboard') refreshMe();
+      if (route === 'home') {
+        renderPlans();
+        requestAnimationFrame(() => {
+          const el = anchor ? $(anchor) : null;
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          else window.scrollTo({ top: 0, behavior: 'auto' });
+        });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+    }
+
+    function navigate(route, anchor, replace) {
+      let path = route === 'home' ? '/' : '/' + route;
+      if (route === 'home' && anchor && anchor !== 'top') path = '/#' + anchor;
+      history[replace ? 'replaceState' : 'pushState']({ route: route, anchor: anchor || '' }, '', path);
+      renderRoute(route, anchor);
+    }
+
+    function bootRoute() {
+      const p = cleanPath();
+      const route = routeFromPath();
+      const anchor = PATH_TO_ANCHOR[p] || (location.hash ? location.hash.slice(1) : '');
+      renderRoute(route, anchor);
+    }
+
+    /* ================= 顶栏 ================= */
+    const topbar = $('topbar');
+    const onScroll = () => topbar.classList.toggle('stuck', window.scrollY > 12);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+
+    $('menuToggle').addEventListener('click', () => {
+      const open = $('navLinks').classList.toggle('open');
+      $('menuToggle').setAttribute('aria-expanded', String(open));
+    });
+
+    document.addEventListener('click', (event) => {
+      const el = event.target.closest('[data-route]');
+      if (!el) return;
+      event.preventDefault();
+      navigate(el.dataset.route, el.dataset.anchor || '');
+      $('navLinks').classList.remove('open');
+      $('menuToggle').setAttribute('aria-expanded', 'false');
+    });
+
+    window.addEventListener('popstate', () => bootRoute());
+
+    /* ================= 首屏锤镰动画 ================= */
+    // 时序：圆环淡出现 → 锤镰两侧滑入（带轻微旋转与吸附）→ 中心扣合脉冲 →
+    //       暗红圆环闭合转金 → 放射纹浮现 → CONNECTED。总时长约 1.6s。
+    const emblem = (function initEmblem() {
+      const box = $('emblemBox');
+      if (!box) return null;
+      const readout = $('emReadout');
+      const stateText = $('emState');
+      const detailText = $('emDetail');
+      const hintText = $('emHint');
+      const rays = $('emRays');
+
+      if (rays) {
+        let markup = '';
+        for (let i = 0; i < 36; i += 1) {
+          const angle = (i * 10) * Math.PI / 180;
+          const r1 = 92, r2 = i % 3 === 0 ? 116 : 104;
+          markup += '<line x1="' + (100 + Math.cos(angle) * r1).toFixed(2) + '" y1="' + (100 + Math.sin(angle) * r1).toFixed(2) +
+                    '" x2="' + (100 + Math.cos(angle) * r2).toFixed(2) + '" y2="' + (100 + Math.sin(angle) * r2).toFixed(2) + '"/>';
+        }
+        rays.innerHTML = markup;
+      }
+
+      let timer = null;
+      let phase = 'idle';
+
+      function setPhase(next) {
+        phase = next;
+        box.classList.toggle('is-connecting', next === 'connecting');
+        box.classList.toggle('is-locked', next === 'locked');
+        readout.classList.toggle('emStage-locked', next === 'locked');
+        if (next === 'connecting') {
+          stateText.textContent = 'ESTABLISHING…';
+          detailText.textContent = '锤子与镰刀正在扣合';
+          detailText.classList.remove('lost');
+          hintText.textContent = 'HANDSHAKE IN PROGRESS';
+        } else if (next === 'locked') {
+          stateText.textContent = 'NETWORK CONNECTED';
+          detailText.textContent = 'Beijing → Singapore · 42 ms';
+          detailText.classList.remove('lost');
+          hintText.textContent = '世界已经接通。';
+        } else {
+          stateText.textContent = 'CONNECTION LOST';
+          detailText.textContent = '重新建立连接 →';
+          detailText.classList.add('lost');
+          hintText.textContent = 'HAMMER + SICKLE = CONNECTED';
+        }
+      }
+
+      function connect() {
+        if (phase !== 'idle') return;
+        setPhase('connecting');
+        clearTimeout(timer);
+        timer = setTimeout(() => setPhase('locked'), 1550);
+      }
+
+      function reset() {
+        clearTimeout(timer);
+        box.classList.remove('is-connecting', 'is-locked');
+        readout.classList.remove('emStage-locked');
+        phase = 'idle';
+        stateText.textContent = 'NETWORK IDLE';
+        detailText.textContent = '将指针移入标志 · 建立连接';
+        detailText.classList.remove('lost');
+        hintText.textContent = 'HAMMER + SICKLE = CONNECTED';
+      }
+
+      box.addEventListener('mouseenter', connect);
+      box.addEventListener('click', () => {
+        if (phase === 'locked') { reset(); setTimeout(connect, 260); } else { connect(); }
+      });
+      box.tabIndex = 0;
+      box.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); connect(); } });
+
+      // 首次加载自动演示一次
+      setTimeout(connect, 620);
+      return { connect: connect, reset: reset };
+    })();
+
+    /* ================= 世界地图 ================= */
+    // 5° 网格的陆地掩码：row = (90 - lat) / 5，col = (lon + 180) / 5。
+    // 每行若干 [起列, 止列] 区间；只用于视觉，不参与任何业务判断。
+    const LAND = {
+      2:  [[12,22],[24,31],[39,40],[46,47],[54,56]],
+      3:  [[11,22],[24,32],[40,41],[43,64]],
+      4:  [[3,8],[9,22],[25,31],[38,42],[43,66]],
+      5:  [[2,9],[10,22],[26,28],[31,32],[37,42],[43,68]],
+      6:  [[2,8],[9,23],[34,36],[37,42],[43,69]],
+      7:  [[10,24],[34,36],[37,42],[43,71]],
+      8:  [[11,25],[35,42],[43,63],[64,65]],
+      9:  [[11,22],[24,25],[34,42],[43,47],[48,62],[62,65]],
+      10: [[11,20],[34,36],[38,44],[45,62],[62,65]],
+      11: [[12,20],[34,42],[43,48],[49,62],[63,65]],
+      12: [[13,20],[33,43],[43,48],[49,62]],
+      13: [[14,16],[19,21],[32,43],[43,48],[49,61]],
+      14: [[15,18],[20,23],[32,43],[43,47],[49,55],[55,61],[59,61]],
+      15: [[18,19],[21,24],[32,44],[44,47],[50,54],[56,61],[59,61]],
+      16: [[19,24],[33,45],[45,46],[51,52],[56,60],[59,61]],
+      17: [[20,26],[33,45],[55,62]],
+      18: [[19,29],[37,44],[55,64]],
+      19: [[20,29],[38,44],[57,64],[64,66]],
+      20: [[20,28],[38,44],[44,46],[58,62],[61,65],[64,66]],
+      21: [[21,28],[38,44],[44,46],[58,66]],
+      22: [[21,28],[38,43],[44,46],[58,66]],
+      23: [[21,26],[39,42],[58,66]],
+      24: [[21,25],[39,42],[59,65]],
+      25: [[21,24],[64,65],[69,70]],
+      26: [[21,23],[69,71]],
+      27: [[21,22],[70,71]],
+      28: [[21,22]],
+      29: [[21,22]],
+    };
+
+    // 展示用节点（真实节点列表需要登录态，见 /vpn/nodes）
+    const WORLD_NODES = [
+      { id: 'beijing',   name: 'BEIJING 01',    cn: '北京',     lat: 39.9,  lon: 116.4, ping: '12 ms', load: '34%', proto: '智能接入', anchor: true },
+      { id: 'tokyo',     name: 'TOKYO 01',      cn: '东京',     lat: 35.7,  lon: 139.7, ping: '31 ms', load: '18%', proto: 'AWG / VLESS' },
+      { id: 'hongkong',  name: 'HONG KONG 01',  cn: '香港',     lat: 22.3,  lon: 114.2, ping: '26 ms', load: '42%', proto: 'AWG / VLESS' },
+      { id: 'singapore', name: 'SINGAPORE 01',  cn: '新加坡',   lat: 1.35,  lon: 103.8, ping: '38 ms', load: '21%', proto: 'AWG / VLESS' },
+      { id: 'frankfurt', name: 'FRANKFURT 01',  cn: '法兰克福', lat: 50.1,  lon: 8.7,   ping: '164 ms', load: '12%', proto: 'VLESS' },
+      { id: 'losangeles',name: 'LOS ANGELES 01',cn: '洛杉矶',   lat: 34.05, lon: -118.2,ping: '148 ms', load: '27%', proto: 'VLESS' },
+      { id: 'sydney',    name: 'SYDNEY 01',     cn: '悉尼',     lat: -33.9, lon: 151.2, ping: '119 ms', load: '9%',  proto: 'VLESS' },
+    ];
+
+    const ROUTES_PAIRS = [
+      ['beijing', 'tokyo'], ['beijing', 'hongkong'], ['hongkong', 'singapore'],
+      ['singapore', 'frankfurt'], ['tokyo', 'losangeles'], ['singapore', 'sydney'],
+    ];
+
+    (function drawWorld() {
+      const svg = $('worldSvg');
+      if (!svg) return;
+      const W = 360, H = 190;
+      const CELL = W / 72;             // 5° 一格
+      const TOP_ROW = 2, BOTTOM_ROW = 30;
+      const rows = BOTTOM_ROW - TOP_ROW;
+      const rowH = H / rows;
+      const x = (lon) => (lon + 180) / 360 * W;
+      const y = (lat) => ((90 - lat) / 5 - TOP_ROW) * rowH;
+
+      let dots = '';
+      Object.keys(LAND).forEach((rowKey) => {
+        const row = Number(rowKey);
+        const cy = (row - TOP_ROW + 0.5) * rowH;
+        LAND[row].forEach((range) => {
+          for (let c = range[0]; c <= range[1]; c += 1) {
+            const cx = (c + 0.5) * CELL;
+            dots += '<circle class="landDot" cx="' + cx.toFixed(2) + '" cy="' + cy.toFixed(2) + '" r="0.82"/>';
+          }
+        });
+      });
+
+      const byId = {};
+      WORLD_NODES.forEach((n) => { byId[n.id] = n; });
+
+      let lines = '';
+      ROUTES_PAIRS.forEach((pair, index) => {
+        const a = byId[pair[0]], b = byId[pair[1]];
+        if (!a || !b) return;
+        const ax = x(a.lon), ay = y(a.lat), bx = x(b.lon), by = y(b.lat);
+        const mx = (ax + bx) / 2, my = (ay + by) / 2 - Math.abs(bx - ax) * 0.16 - 6;
+        const d = 'M' + ax.toFixed(1) + ' ' + ay.toFixed(1) + ' Q' + mx.toFixed(1) + ' ' + my.toFixed(1) + ' ' + bx.toFixed(1) + ' ' + by.toFixed(1);
+        lines += '<path class="routeLine" id="route' + index + '" d="' + d + '"/>';
+        lines += '<circle class="routeFlow" r="1.1"><animateMotion dur="' + (7 + index * 1.4).toFixed(1) +
+                 's" repeatCount="indefinite" path="' + d + '"/></circle>';
+      });
+
+      let nodes = '';
+      WORLD_NODES.forEach((n) => {
+        const nx = x(n.lon), ny = y(n.lat);
+        nodes += '<g class="nodeHit" data-node="' + n.id + '" transform="translate(' + nx.toFixed(2) + ',' + ny.toFixed(2) + ')">' +
+                 '<circle class="nodeGlow" r="6"/>' +
+                 '<circle class="nodePing" r="3"/>' +
+                 '<circle class="nodeDot" r="' + (n.anchor ? 2.6 : 2.1) + '"/>' +
+                 '<circle r="9" fill="transparent"/>' +
+                 '<text class="nodeLabel" x="6" y="-4">' + n.cn + '</text>' +
+                 '</g>';
+      });
+
+      svg.innerHTML =
+        '<g>' + dots + '</g>' +
+        '<g>' + lines + '</g>' +
+        '<g>' + nodes + '</g>';
+
+      const card = $('nodeCard');
+      const wrap = $('worldMap');
+      let hideTimer = null;
+
+      function showCard(node, clientX, clientY) {
+        clearTimeout(hideTimer);
+        $('ncName').textContent = node.name;
+        $('ncPing').textContent = node.ping;
+        $('ncLoad').textContent = node.load;
+        $('ncProto').textContent = node.proto;
+        const rect = wrap.getBoundingClientRect();
+        let left = clientX - rect.left + 16;
+        let top = clientY - rect.top + 14;
+        left = Math.min(left, rect.width - 212);
+        left = Math.max(8, left);
+        top = Math.max(8, Math.min(top, rect.height - 130));
+        card.style.left = left + 'px';
+        card.style.top = top + 'px';
+        card.classList.add('show');
+      }
+
+      svg.querySelectorAll('.nodeHit').forEach((group) => {
+        const node = byId[group.dataset.node];
+        group.addEventListener('mouseenter', (e) => showCard(node, e.clientX, e.clientY));
+        group.addEventListener('mousemove', (e) => showCard(node, e.clientX, e.clientY));
+        group.addEventListener('mouseleave', () => {
+          hideTimer = setTimeout(() => card.classList.remove('show'), 120);
+        });
+        group.addEventListener('click', () => navigate('home', 'pricing'));
+      });
+    })();
+
+    /* ================= 套餐 ================= */
+    const PLAN_META = {
+      plan_month: {
+        title: '火种计划',
+        tagline: '第一次连接世界。',
+        features: ['全球优质节点', '无限流量', 'AI 专线', '多设备同步'],
+        cta: '开始连接 →',
+        theme: '',
+      },
+      plan_quarter: {
+        title: '燎原计划',
+        tagline: '最受欢迎。稳定使用，综合成本更低。',
+        features: ['包含火种计划全部权益', '长期线路优化', '手机 + 电脑同时在线', '订阅链接导出'],
+        cta: '选择燎原 →',
+        theme: 'featured',
+        tag: '最受欢迎',
+      },
+      plan_year: {
+        title: '远征计划',
+        tagline: '长期连接，无需反复续费。',
+        features: ['包含全部会员权益', '一年内无需续费', '优先体验新增节点', '订阅链接导出'],
+        cta: '选择远征 →',
+        theme: 'gold',
+        tag: '年度最省',
+      },
+    };
+
+    const FALLBACK_PLANS = [
+      { id: 'plan_month', name: '火种计划', duration_days: 30, original_price_cents: 2880, sale_price_cents: 1800 },
+      { id: 'plan_quarter', name: '燎原计划', duration_days: 90, original_price_cents: 8640, sale_price_cents: 4800 },
+      { id: 'plan_year', name: '远征计划', duration_days: 365, original_price_cents: 34560, sale_price_cents: 15800 },
+    ];
+
+    function renderPlans() {
+      const box = $('planGrid');
+      if (!box) return;
+      const order = { plan_month: 1, plan_quarter: 2, plan_year: 3 };
+      const plans = (state.plans.length ? state.plans : FALLBACK_PLANS)
+        .slice()
+        .sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
+
+      box.innerHTML = plans.map((plan) => {
+        const promo = (state.promo && state.promo.plan_id === plan.id) ? state.promo : null;
+        const sale = (promo && promo.promo_price_cents) || plan.sale_price_cents;
+        const meta = PLAN_META[plan.id] || {
+          title: plan.name, tagline: '稳定连接全球网络。',
+          features: ['不限流量', '智能线路调度', '多端同步'], cta: '选择套餐 →', theme: '',
+        };
+        const months = Math.round(plan.duration_days / 30);
+        const per = months > 1 ? Math.round((sale / 100 / months) * 10) / 10 : 0;
+        const perText = months > 1 ? ('折合 ¥' + per + ' / 月') : '首次开通特惠';
+        return '<article class="plan ' + meta.theme + '">' +
+          (meta.tag ? '<span class="tag">' + meta.tag + '</span>' : '') +
+          '<h3>' + meta.title + '</h3>' +
+          '<p class="tagline">' + meta.tagline + '</p>' +
+          '<div class="price"><em>¥</em><b>' + money(sale) + '</b><span>/ ' + plan.duration_days + ' 天</span></div>' +
+          '<p class="per">' + perText + '</p>' +
+          '<ul>' + meta.features.map((f) => '<li>' + f + '</li>').join('') + '</ul>' +
+          '<button class="btn ' + (meta.theme === 'featured' ? 'btn-gold' : 'btn-ink') + '" data-buy="' + plan.id + '">' + meta.cta + '</button>' +
+          '</article>';
+      }).join('');
+
+      box.querySelectorAll('[data-buy]').forEach((button) => {
+        button.addEventListener('click', () => startOrder(button.dataset.buy));
+      });
+    }
+
+    function startOrder(planId) {
+      if (!state.token) {
+        navigate('dashboard');
+        return;
+      }
+      location.href = '/payment?' + new URLSearchParams({ plan_id: planId }).toString();
+    }
+
+    async function loadOffer() {
+      try {
+        const results = await Promise.all([
+          api('/plans'),
+          api('/promotions/active').catch(() => null),
+        ]);
+        state.plans = results[0] || [];
+        state.promo = results[1];
+      } catch (_) { /* 接口不可用时用兜底价渲染 */ }
+      renderPlans();
+    }
+
+    /* ================= 账号 ================= */
     function setAuth(session) {
       state.token = session.access_token;
       state.user = session.user;
@@ -775,94 +1309,59 @@ SITE_HTML = """<!doctype html>
     function clearAuth() {
       state.token = '';
       state.user = null;
+      state.subscription = null;
       localStorage.removeItem('xingsui_token');
       localStorage.removeItem('xingsui_user');
-      state.subscription = null;
       renderAuthState();
-      renderSubscriptionCard();
-    }
-
-    function routeFromPath() {
-      const clean = location.pathname.replace(/^\\//, '') || 'home';
-      const aliases = { dashboard: 'center', 'account/subscription': 'center', 'user/subscription': 'center' };
-      if (aliases[clean]) return aliases[clean];
-      return ['home', 'login', 'register', 'center', 'vip', 'download', 'guide'].includes(clean) ? clean : 'home';
-    }
-
-    function navigate(route, replace = false) {
-      const path = route === 'home' ? '/' : `/${route}`;
-      history[replace ? 'replaceState' : 'pushState']({}, '', path);
-      renderRoute(route);
-    }
-
-    function renderRoute(route = routeFromPath()) {
-      document.querySelectorAll('section.page').forEach(page => page.classList.remove('active'));
-      const page = $(`page-${route}`);
-      if (page) page.classList.add('active');
-      document.querySelectorAll('#nav a').forEach(link => link.classList.toggle('active', link.dataset.route === route));
-      if (route === 'center') {
-        refreshMe();
-        if (location.pathname.includes('subscription')) setTimeout(focusSubscriptionCard, 80);
-      }
-      if (route === 'vip') renderPlans();
     }
 
     function renderAuthState() {
-      const loginLink = $('loginLink');
-      if (loginLink) {
-        loginLink.textContent = state.token ? '用户中心' : '登录';
-        loginLink.dataset.route = state.token ? 'center' : 'login';
-        loginLink.setAttribute('href', state.token ? '/center' : '/login');
-        loginLink.hidden = Boolean(state.token);
-      }
+      const navAuth = $('navAuth');
+      if (navAuth) navAuth.textContent = state.token ? '用户中心' : '登录';
+      $('authView').classList.toggle('hidden', Boolean(state.token));
+      $('centerView').classList.toggle('hidden', !state.token);
     }
 
     function vipText(status) {
-      if (status === 'active') return '已开通';
+      if (status === 'active') return '会员有效';
       if (status === 'expired') return '已过期';
       return '未开通';
     }
 
     async function refreshMe() {
-      if (!state.token) {
-        $('meEmail').textContent = '未登录';
-        $('meVip').textContent = '-';
-        $('meExpiry').textContent = '-';
-        $('meInvite').textContent = '-';
-        $('sessionState').textContent = '当前浏览器未登录，请先登录或注册。';
-        $('trafficState').textContent = '登录后可查看会员同步状态。';
-        $('balanceState').textContent = '返现余额：-';
-        renderSubscriptionCard();
-        return;
-      }
+      renderAuthState();
+      if (!state.token) return;
       try {
         const me = await api('/me');
         state.user = me;
         localStorage.setItem('xingsui_user', JSON.stringify(me));
         $('meEmail').textContent = me.email;
         $('meVip').textContent = vipText(me.vip_status);
-        $('meVip').classList.toggle('vipGold', me.vip_status === 'active');
+        $('meVip').classList.toggle('gold', me.vip_status === 'active');
         $('meExpiry').textContent = fmtDate(me.vip_expired_at);
         $('meInvite').textContent = me.invite_code;
-        $('sessionState').textContent = `当前浏览器已登录，账号 ID：${me.id}`;
-        $('trafficState').textContent = me.vip_status === 'active' ? 'VIP 有效；官方 App 将在每次连接前签发短期租约。' : '请开通有效 VIP 后连接。';
-        $('balanceState').textContent = `返现余额：${money(me.cash_balance_cents)} 元`;
-        renderAuthState();
+        $('sessionState').textContent = '当前浏览器已登录，账号 ID：' + me.id + '。';
+        $('trafficState').textContent = me.vip_status === 'active'
+          ? '会员有效，不限流量。客户端每次连接前由服务端签发短期配置。'
+          : '当前为免费额度，用完后需要开通会员继续连接。';
+        $('balanceState').textContent = '返现余额：' + money(me.cash_balance_cents) + ' 元';
         renderSubscriptionCard();
       } catch (error) {
         clearAuth();
-        $('sessionState').textContent = '登录已失效，请重新登录。';
+        $('loginStatus').className = 'status err';
+        $('loginStatus').textContent = '登录已失效，请重新登录。';
       }
     }
 
+    /* ---- 订阅链接 ---- */
     function subscriptionErrorMessage(error) {
-      const code = error?.code || '';
-      if (code === 'VIP_REQUIRED') return '开通 VIP 后即可导出订阅链接。';
-      if (code === 'VIP_EXPIRED') return 'VIP 已过期，请续费后继续使用。';
+      const code = (error && error.code) || '';
+      if (code === 'VIP_REQUIRED') return '开通会员后即可导出订阅链接。';
+      if (code === 'VIP_EXPIRED') return '会员已过期，请续费后继续使用。';
       if (code === 'ACCOUNT_FROZEN') return '账号状态异常，请联系客服。';
       if (code === 'RATE_LIMITED') return '请求过于频繁，请稍后再试。';
       if (code === 'UNAUTHORIZED') return '请先登录后查看订阅链接。';
-      return error?.message || '订阅链接生成失败，请稍后重试。';
+      return (error && error.message) || '订阅链接生成失败，请稍后重试。';
     }
 
     function renderSubscriptionCard() {
@@ -873,73 +1372,38 @@ SITE_HTML = """<!doctype html>
       const linkBox = $('subscriptionLinkBox');
       const linkInput = $('subscriptionLink');
       const meta = $('subscriptionMeta');
-      if (!status || !exportBtn || !copyBtn || !resetBtn) return;
-      linkBox.classList.toggle('active', Boolean(state.subscription?.subscription_url));
-      linkInput.value = state.subscription?.subscription_url || '';
+      if (!status) return;
+
+      const url = state.subscription && state.subscription.subscription_url;
+      linkBox.classList.toggle('hidden', !url);
+      linkInput.value = url || '';
       meta.textContent = state.subscription
-        ? `Token：${state.subscription.masked_token} · 到期：${fmtDate(state.subscription.expires_at)}`
+        ? ('Token ' + state.subscription.masked_token + ' · 到期 ' + fmtDate(state.subscription.expires_at))
         : '';
-      copyBtn.disabled = !state.subscription?.subscription_url;
-      resetBtn.disabled = !state.subscription?.subscription_url;
+      copyBtn.disabled = !url;
+      resetBtn.disabled = !url;
 
-      if (!state.token) {
+      const vip = state.user && state.user.vip_status;
+      if (vip === 'expired') {
+        status.className = 'status err';
+        status.textContent = '会员已过期，请续费后继续使用。';
+        exportBtn.textContent = '去续费';
+      } else if (vip !== 'active') {
         status.className = 'status';
-        status.textContent = '请先登录后查看订阅链接。';
-        exportBtn.textContent = '登录后查看';
-        exportBtn.disabled = false;
-        copyBtn.disabled = true;
-        resetBtn.disabled = true;
-        return;
+        status.textContent = '开通会员后即可导出订阅链接。';
+        exportBtn.textContent = '去开通';
+      } else {
+        status.className = 'status ok';
+        status.textContent = url ? '订阅链接已生成，可复制到第三方客户端使用。' : '点击“导出订阅链接”生成专属链接。';
+        exportBtn.textContent = '导出订阅链接';
       }
-      if (state.user?.vip_status === 'expired') {
-        status.className = 'status error';
-        status.textContent = 'VIP 已过期，请续费后继续使用。';
-        exportBtn.textContent = '续费 VIP';
-        exportBtn.disabled = false;
-        copyBtn.disabled = true;
-        resetBtn.disabled = true;
-        return;
-      }
-      if (state.user?.vip_status !== 'active') {
-        status.className = 'status';
-        status.textContent = '开通 VIP 后即可导出订阅链接。';
-        exportBtn.textContent = '开通 VIP';
-        exportBtn.disabled = false;
-        copyBtn.disabled = true;
-        resetBtn.disabled = true;
-        return;
-      }
-      status.className = 'status ok';
-      status.textContent = state.subscription?.subscription_url ? '订阅链接已生成，可复制到客户端使用。' : '点击“导出订阅链接”后生成专属链接。';
-      exportBtn.textContent = '导出订阅链接';
-      exportBtn.disabled = false;
-    }
-
-    function focusSubscriptionCard() {
-      const card = $('subscriptionCard');
-      if (!card) return;
-      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      card.animate(
-        [
-          { boxShadow: '0 0 0 0 rgba(94, 231, 208, 0)' },
-          { boxShadow: '0 0 0 4px rgba(94, 231, 208, .22)' },
-          { boxShadow: '0 16px 44px rgba(3, 12, 28, .3)' },
-        ],
-        { duration: 1100, easing: 'ease-out' },
-      );
     }
 
     async function exportSubscriptionLink() {
       const status = $('subscriptionStatus');
       const exportBtn = $('exportSubscription');
-      if (!state.token) {
-        navigate('login');
-        return;
-      }
-      if (state.user?.vip_status !== 'active') {
-        navigate('vip');
-        return;
-      }
+      if (!state.token) { navigate('dashboard'); return; }
+      if (!state.user || state.user.vip_status !== 'active') { navigate('home', 'pricing'); return; }
       exportBtn.disabled = true;
       status.className = 'status';
       status.textContent = '正在生成订阅链接…';
@@ -947,7 +1411,7 @@ SITE_HTML = """<!doctype html>
         state.subscription = await api('/user/subscription-link');
         renderSubscriptionCard();
       } catch (error) {
-        status.className = 'status error';
+        status.className = 'status err';
         status.textContent = subscriptionErrorMessage(error);
       } finally {
         exportBtn.disabled = false;
@@ -955,199 +1419,59 @@ SITE_HTML = """<!doctype html>
     }
 
     async function copySubscriptionLink() {
-      const value = state.subscription?.subscription_url || $('subscriptionLink').value;
+      const value = (state.subscription && state.subscription.subscription_url) || $('subscriptionLink').value;
       if (!value) return;
       try {
         await navigator.clipboard.writeText(value);
         $('subscriptionStatus').className = 'status ok';
         $('subscriptionStatus').textContent = '订阅链接已复制。';
       } catch (_) {
-        $('subscriptionLinkBox').classList.add('active');
+        $('subscriptionLinkBox').classList.remove('hidden');
         $('subscriptionLink').focus();
         $('subscriptionLink').select();
         $('subscriptionStatus').className = 'status';
-        $('subscriptionStatus').textContent = '复制失败，请手动复制输入框中的订阅链接。';
+        $('subscriptionStatus').textContent = '复制失败，请手动复制输入框中的链接。';
       }
     }
 
     async function resetSubscriptionLink() {
-      if (!state.subscription?.subscription_url) return;
+      if (!state.subscription || !state.subscription.subscription_url) return;
       if (!confirm('重置后旧订阅链接将立即失效，是否继续？')) return;
       const status = $('subscriptionStatus');
       const resetBtn = $('resetSubscription');
       resetBtn.disabled = true;
       status.className = 'status';
-      status.textContent = '正在生成订阅链接…';
+      status.textContent = '正在重置…';
       try {
         state.subscription = await api('/user/subscription-link/reset', { method: 'POST' });
         renderSubscriptionCard();
       } catch (error) {
-        status.className = 'status error';
+        status.className = 'status err';
         status.textContent = subscriptionErrorMessage(error);
       } finally {
         resetBtn.disabled = false;
       }
     }
 
-    async function loadOffer() {
-      try {
-        const [plans, promo] = await Promise.all([
-          api('/plans'),
-          api('/promotions/active').catch(() => null),
-        ]);
-        state.plans = plans;
-        state.promo = promo;
-        const monthPlan = plans.find(item => item.id === 'plan_month');
-        if (monthPlan) {
-          const sale = (state.promo?.plan_id === 'plan_month' && state.promo?.promo_price_cents) || monthPlan.sale_price_cents;
-          const homeNow = $('homeNow');
-          const vipDeal = $('vipDeal');
-          if (homeNow) homeNow.textContent = `¥${money(sale)}`;
-          if (vipDeal) vipDeal.textContent = `新用户首月 ¥${money(sale)}`;
-        }
-        renderPlans();
-      } catch (_) {
-        renderPlans();
-      }
+    /* ================= 登录 / 注册表单 ================= */
+    function showAuthTab(which) {
+      const isLogin = which === 'login';
+      $('tabLogin').classList.toggle('active', isLogin);
+      $('tabRegister').classList.toggle('active', !isLogin);
+      $('loginForm').classList.toggle('hidden', !isLogin);
+      $('registerForm').classList.toggle('hidden', isLogin);
     }
 
-    const PLAN_META = {
-      plan_month: {
-        title: '月度体验',
-        tagline: '适合首次使用和短期需求',
-        features: ['全部优质节点', 'AI 与海外网站支持', 'App 与官网状态同步'],
-        cta: '开始体验',
-        theme: '',
-      },
-      plan_quarter: {
-        title: '季度会员',
-        tagline: '稳定使用，综合性价比更高',
-        features: ['包含月度全部权益', '长期线路优化', '多设备使用'],
-        cta: '选择季度会员',
-        theme: 'featured',
-        tag: '最多用户选择',
-      },
-      plan_year: {
-        title: '年度会员',
-        tagline: '适合长期使用，单月成本更低',
-        features: ['包含全部会员权益', '一年内无需重复续费', '优先体验新增节点'],
-        cta: '选择年度会员',
-        theme: 'gold',
-        tag: '年度最省',
-      },
-    };
-
-    function renderPlans() {
-      const box = $('plans');
-      if (!box) return;
-      const plans = (state.plans.length ? state.plans : [
-        { id: 'plan_month', name: '月度体验', duration_days: 30, original_price_cents: 2880, sale_price_cents: 1800 },
-        { id: 'plan_quarter', name: '季度会员', duration_days: 90, original_price_cents: 8640, sale_price_cents: 4800 },
-        { id: 'plan_year', name: '年度会员', duration_days: 365, original_price_cents: 34560, sale_price_cents: 15800 },
-      ]).slice().sort((a, b) => {
-        const order = { plan_month: 1, plan_quarter: 2, plan_year: 3 };
-        return (order[a.id] || 99) - (order[b.id] || 99);
-      });
-      box.innerHTML = plans.map(plan => {
-        const promo = state.promo?.plan_id === plan.id ? state.promo : null;
-        const sale = promo?.promo_price_cents || plan.sale_price_cents;
-        const meta = PLAN_META[plan.id] || {
-          title: plan.name,
-          tagline: '稳定连接全球网络',
-          features: ['不限流量不限速', '智能线路调度', '多端会员同步'],
-          cta: '选择套餐',
-          theme: '',
-        };
-        const months = Math.round(plan.duration_days / 30);
-        const per = months > 1 ? Math.round((sale / 100 / months) * 10) / 10 : 0;
-        const perText = months > 1 ? `折合 ¥${per} / 月` : '新用户首次开通特惠价';
-        return `<article class="plan ${meta.theme}">
-          ${meta.tag ? `<span class="planTag">${meta.tag}</span>` : ''}
-          <h3>${meta.title}</h3>
-          <p class="planTagline">${meta.tagline}</p>
-          <div class="planPrice"><em>¥</em><b>${money(sale)}</b><span>/ ${plan.duration_days} 天</span></div>
-          <p class="perMonth">${perText}</p>
-          <ul class="planFeatures">${meta.features.map(item => `<li>${item}</li>`).join('')}</ul>
-          <button class="planBtn" data-buy="${plan.id}">${meta.cta}</button>
-        </article>`;
-      }).join('');
-      box.querySelectorAll('[data-buy]').forEach(button => {
-        button.addEventListener('click', () => createOrder(button.dataset.buy));
-      });
-    }
-
-    async function createOrder(planId) {
-      if (!state.token) {
-        navigate('login');
-        return;
-      }
-      const params = new URLSearchParams({ plan_id: planId });
-      location.href = `/payment?${params.toString()}`;
-    }
-
-    async function submitPaid() {
-      if (!state.currentOrder) {
-        $('orderStatus').className = 'status error';
-        $('orderStatus').textContent = '请先选择套餐生成订单。';
-        return;
-      }
-      try {
-        const order = await api(`/orders/${state.currentOrder.id}/paid`, { method: 'POST' });
-        state.currentOrder = order;
-        renderOrderPayment(order);
-        $('orderStatus').className = 'status ok';
-        $('orderStatus').textContent = '已提交确认。二维码和订单信息已保留，管理员确认到账后将自动开通 VIP。';
-      } catch (error) {
-        $('orderStatus').className = 'status error';
-        $('orderStatus').textContent = error.message;
-      }
-    }
-
-    function renderOrderPayment(order) {
-      $('orderQr').src = order.payment_qr_url;
-      $('orderQr').style.display = order.payment_qr_url ? 'block' : 'none';
-      $('orderSummary').textContent = `订单 ${order.order_no} · 应付 ${money(order.pay_amount_cents)} 元 · ${order.pay_channel === 'wechat' ? '微信支付' : '支付宝支付'}`;
-      $('submitPaid').disabled = order.status !== 'pending_payment';
-      $('submitPaid').textContent = order.status === 'pending_confirm' ? '已提交，等待确认' : '我已完成付款';
-    }
-
-    // 核心舱视差：鼠标 / 触摸移动时轻微偏移
-    (function initParallax() {
-      const panel = $('heroPanel');
-      const scene = $('coreScene');
-      if (!panel || !scene) return;
-      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      panel.addEventListener('pointermove', (event) => {
-        const rect = panel.getBoundingClientRect();
-        const x = (event.clientX - rect.left) / rect.width - 0.5;
-        const y = (event.clientY - rect.top) / rect.height - 0.5;
-        scene.style.transform = `translate3d(${(x * 12).toFixed(1)}px, ${(y * 9).toFixed(1)}px, 0)`;
-      });
-      panel.addEventListener('pointerleave', () => { scene.style.transform = ''; });
-    })();
-
-    document.addEventListener('click', (event) => {
-      const routeEl = event.target.closest('[data-route]');
-      if (!routeEl) return;
-      event.preventDefault();
-      navigate(routeEl.dataset.route);
-      $('nav').classList.remove('open');
-      $('menuToggle').setAttribute('aria-expanded', 'false');
-    });
-
-    $('menuToggle').addEventListener('click', () => {
-      const nav = $('nav');
-      const opened = nav.classList.toggle('open');
-      $('menuToggle').setAttribute('aria-expanded', String(opened));
-    });
-
-    window.addEventListener('popstate', () => renderRoute());
+    $('tabLogin').addEventListener('click', () => showAuthTab('login'));
+    $('tabRegister').addEventListener('click', () => showAuthTab('register'));
+    $('goRegister').addEventListener('click', () => showAuthTab('register'));
+    $('goLogin').addEventListener('click', () => showAuthTab('login'));
 
     $('loginForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       const status = $('loginStatus');
       status.className = 'status';
-      status.textContent = '正在登录...';
+      status.textContent = '正在登录…';
       try {
         const session = await api('/auth/email/login', {
           method: 'POST',
@@ -1156,9 +1480,9 @@ SITE_HTML = """<!doctype html>
         setAuth(session);
         status.className = 'status ok';
         status.textContent = '登录成功';
-        navigate('center');
+        refreshMe();
       } catch (error) {
-        status.className = 'status error';
+        status.className = 'status err';
         status.textContent = error.message;
       }
     });
@@ -1167,7 +1491,7 @@ SITE_HTML = """<!doctype html>
       event.preventDefault();
       const status = $('registerStatus');
       status.className = 'status';
-      status.textContent = '正在注册...';
+      status.textContent = '正在注册…';
       try {
         const invite = $('registerInvite').value.trim();
         const session = await api('/auth/email/register', {
@@ -1181,9 +1505,9 @@ SITE_HTML = """<!doctype html>
         setAuth(session);
         status.className = 'status ok';
         status.textContent = '注册成功';
-        navigate('center');
+        refreshMe();
       } catch (error) {
-        status.className = 'status error';
+        status.className = 'status err';
         status.textContent = error.message;
       }
     });
@@ -1196,21 +1520,21 @@ SITE_HTML = """<!doctype html>
         navigate('home');
       }
     });
-    $('copyInvite').addEventListener('click', async () => {
-      if (!state.user?.invite_code) return;
-      await navigator.clipboard.writeText(state.user.invite_code);
-    });
-    $('payChannel').addEventListener('change', () => {
-      if (state.currentOrder) createOrder(state.currentOrder.plan_id);
-    });
-    $('submitPaid').addEventListener('click', submitPaid);
-    $('exportSubscription')?.addEventListener('click', exportSubscriptionLink);
-    $('copySubscription')?.addEventListener('click', copySubscriptionLink);
-    $('resetSubscription')?.addEventListener('click', resetSubscriptionLink);
 
+    $('copyInvite').addEventListener('click', async () => {
+      if (!state.user || !state.user.invite_code) return;
+      try { await navigator.clipboard.writeText(state.user.invite_code); } catch (_) { /* 忽略 */ }
+    });
+
+    $('exportSubscription').addEventListener('click', exportSubscriptionLink);
+    $('copySubscription').addEventListener('click', copySubscriptionLink);
+    $('resetSubscription').addEventListener('click', resetSubscriptionLink);
+
+    /* ================= 启动 ================= */
+    $('year').textContent = String(new Date().getFullYear());
     renderAuthState();
     renderSubscriptionCard();
-    renderRoute(routeFromPath());
+    bootRoute();
     loadOffer();
     if (state.token) refreshMe();
   </script>

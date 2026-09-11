@@ -30,7 +30,7 @@
                 android:contentDescription="@string/xingsui_profile_back"
                 android:gravity="center"
                 android:text="‹"
-                android:textColor="#EAF0FF"
+                android:textColor="@color/xingsui_ink"
                 android:textSize="28sp" />
 
             <LinearLayout
@@ -44,7 +44,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/xingsui_profile_title"
-                    android:textColor="#FFFFFFFF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="19sp"
                     android:textStyle="bold" />
 
@@ -53,7 +53,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:text="@string/xingsui_profile_subtitle"
-                    android:textColor="#7E89A3"
+                    android:textColor="@color/xingsui_faint"
                     android:textSize="11sp" />
             </LinearLayout>
         </LinearLayout>
@@ -78,8 +78,8 @@
                     android:layout_height="64dp"
                     android:background="@drawable/xingsui_avatar_bg"
                     android:gravity="center"
-                    android:text="星"
-                    android:textColor="#FFFFFFFF"
+                    android:text="火"
+                    android:textColor="@color/xingsui_gold_light"
                     android:textSize="23sp"
                     android:textStyle="bold" />
 
@@ -97,7 +97,7 @@
                         android:ellipsize="middle"
                         android:singleLine="true"
                         android:text="user@example.com"
-                        android:textColor="#FFFFFFFF"
+                        android:textColor="@color/xingsui_ink"
                         android:textSize="16sp"
                         android:textStyle="bold" />
 
@@ -112,7 +112,7 @@
                         android:paddingEnd="10dp"
                         android:paddingBottom="5dp"
                         android:text="@string/xingsui_profile_standard"
-                        android:textColor="#221A06"
+                        android:textColor="@color/xingsui_ink"
                         android:textSize="11sp"
                         android:textStyle="bold" />
                 </LinearLayout>
@@ -139,7 +139,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/xingsui_profile_expiry_label"
-                        android:textColor="#7E89A3"
+                        android:textColor="@color/xingsui_faint"
                         android:textSize="11sp" />
 
                     <TextView
@@ -150,7 +150,7 @@
                         android:ellipsize="end"
                         android:singleLine="true"
                         android:text="@string/xingsui_profile_not_active"
-                        android:textColor="#FFFFFFFF"
+                        android:textColor="@color/xingsui_ink"
                         android:textSize="14sp"
                         android:textStyle="bold" />
                 </LinearLayout>
@@ -169,7 +169,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/xingsui_profile_status_label"
-                        android:textColor="#7E89A3"
+                        android:textColor="@color/xingsui_faint"
                         android:textSize="11sp" />
 
                     <TextView
@@ -180,7 +180,7 @@
                         android:ellipsize="end"
                         android:singleLine="true"
                         android:text="@string/xingsui_profile_synced"
-                        android:textColor="#FFFFFFFF"
+                        android:textColor="@color/xingsui_ink"
                         android:textSize="14sp"
                         android:textStyle="bold" />
                 </LinearLayout>
@@ -207,7 +207,7 @@
                 android:background="@drawable/xingsui_segment_bg"
                 android:gravity="center"
                 android:text="⌂"
-                android:textColor="#CFC8FF"
+                android:textColor="@color/xingsui_gold"
                 android:textSize="18sp" />
 
             <LinearLayout
@@ -221,7 +221,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/xingsui_profile_website"
-                    android:textColor="#F7F5FF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
@@ -230,7 +230,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="3dp"
                     android:text="@string/xingsui_profile_website_hint"
-                    android:textColor="#7E89A3"
+                    android:textColor="@color/xingsui_faint"
                     android:textSize="11sp" />
             </LinearLayout>
 
@@ -238,7 +238,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="›"
-                android:textColor="#667087"
+                android:textColor="@color/xingsui_muted"
                 android:textSize="24sp" />
         </LinearLayout>
 
@@ -262,7 +262,7 @@
                 android:background="@drawable/xingsui_segment_bg"
                 android:gravity="center"
                 android:text="✦"
-                android:textColor="#CFC8FF"
+                android:textColor="@color/xingsui_gold"
                 android:textSize="18sp" />
 
             <LinearLayout
@@ -276,7 +276,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/xingsui_profile_invite"
-                    android:textColor="#F7F5FF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
@@ -286,7 +286,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="3dp"
                     android:text="—"
-                    android:textColor="#7E89A3"
+                    android:textColor="@color/xingsui_faint"
                     android:textSize="11sp" />
             </LinearLayout>
 
@@ -294,7 +294,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="›"
-                android:textColor="#667087"
+                android:textColor="@color/xingsui_muted"
                 android:textSize="24sp" />
         </LinearLayout>
 
@@ -318,7 +318,7 @@
                 android:background="@drawable/xingsui_segment_bg"
                 android:gravity="center"
                 android:text="↻"
-                android:textColor="#CFC8FF"
+                android:textColor="@color/xingsui_gold"
                 android:textSize="19sp" />
 
             <LinearLayout
@@ -332,7 +332,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/xingsui_profile_update"
-                    android:textColor="#F7F5FF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
@@ -342,7 +342,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="3dp"
                     android:text="@string/xingsui_profile_update"
-                    android:textColor="#7E89A3"
+                    android:textColor="@color/xingsui_faint"
                     android:textSize="11sp" />
             </LinearLayout>
 
@@ -350,7 +350,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="›"
-                android:textColor="#667087"
+                android:textColor="@color/xingsui_muted"
                 android:textSize="24sp" />
         </LinearLayout>
 
@@ -361,7 +361,7 @@
             android:layout_marginTop="24dp"
             android:background="@drawable/xingsui_outline_button_bg"
             android:text="@string/xingsui_profile_logout"
-            android:textColor="#FFB8C0"
+            android:textColor="@color/xingsui_red"
             android:textStyle="bold"
             app:backgroundTint="@null"
             app:cornerRadius="14dp" />

@@ -66,7 +66,15 @@
     <string name="xingsui_session_expired">登录已过期，请重新登录</string>
     <string name="xingsui_home_auto_node">智能线路将自动配置</string>
     <string name="xingsui_home_disconnected">未连接</string>
-    <string name="xingsui_home_connected">已连接</string>
+    <string name="xingsui_brand_latin" translatable="false">MARX VPN</string>
+    <string name="xingsui_home_headline">星火 VPN</string>
+    <string name="xingsui_home_lost">CONNECTION LOST</string>
+    <string name="xingsui_home_detail_idle">锤子与镰刀分离 · 等待连接</string>
+    <string name="xingsui_home_detail_connecting">锤子与镰刀正在扣合</string>
+    <string name="xingsui_home_detail_connected">世界已经接通。</string>
+    <string name="xingsui_home_detail_lost">重新建立连接 →</string>
+    <string name="xingsui_home_detail_login">登录后即可建立连接</string>
+    <string name="xingsui_home_connected">连接成功</string>
     <string name="xingsui_home_connecting">连接中</string>
     <string name="xingsui_home_disconnecting">正在断开</string>
     <string name="xingsui_home_authorizing">正在校验会员与流量</string>
@@ -106,7 +114,7 @@
     <string name="xingsui_profile_traffic_remaining">剩余 %1$s / %2$s</string>
     <string name="xingsui_profile_traffic_vip">会员不限流量</string>
     <string name="xingsui_profile_website">官网</string>
-    <string name="xingsui_profile_website_hint">访问星隧官网</string>
+    <string name="xingsui_profile_website_hint">访问星火官网</string>
     <string name="xingsui_profile_invite">我的邀请码</string>
     <string name="xingsui_profile_update">检查更新</string>
     <string name="xingsui_profile_update_hint">当前版本 %s</string>
@@ -150,7 +158,7 @@
     <string name="xingsui_order_pending_confirm">Payment submitted, waiting for confirmation</string>
     <string name="xingsui_invite_reward">Earn ¥10 cashback after your friend pays first order</string>
     <string name="xingsui_vip_center">VIP</string>
-    <string name="xingsui_auth_title">登录星隧</string>
+    <string name="xingsui_auth_title">登录星火</string>
     <string name="xingsui_auth_subtitle">使用邮箱和密码登录，无需验证码</string>
     <string name="xingsui_email">邮箱</string>
     <string name="xingsui_password">密码</string>
@@ -233,7 +241,7 @@
     <string name="allow_remote_control_intents_summary_on">External apps may toggle tunnels (advanced)</string>
     <string name="allow_remote_control_intents_title">Allow remote control apps</string>
     <string name="allowed_ips">Allowed IPs</string>
-    <string name="app_name" translatable="false">星隧</string>
+    <string name="app_name" translatable="false">星火 VPN</string>
     <string name="bad_config_context">%1$s\'s %2$s</string>
     <string name="bad_config_context_top_level">%s</string>
     <string name="bad_config_error">%1$s in %2$s</string>
@@ -304,14 +312,14 @@
     <string name="interface_title">Interface</string>
     <string name="key_contents_error">Bad characters in key</string>
     <string name="key_length_error">Incorrect key length</string>
-    <string name="key_length_explanation_base64">: 星隧 base64 keys must be 44 characters (32 bytes)</string>
-    <string name="key_length_explanation_binary">: 星隧 keys must be 32 bytes</string>
-    <string name="key_length_explanation_hex">: 星隧 hex keys must be 64 characters (32 bytes)</string>
+    <string name="key_length_explanation_base64">: 星火 base64 keys must be 44 characters (32 bytes)</string>
+    <string name="key_length_explanation_binary">: 星火 keys must be 32 bytes</string>
+    <string name="key_length_explanation_hex">: 星火 hex keys must be 64 characters (32 bytes)</string>
     <string name="latest_handshake">Latest handshake</string>
     <string name="latest_handshake_ago">%s ago</string>
     <string name="listen_port">Listen port</string>
     <string name="log_export_error">Unable to export log: %s</string>
-    <string name="log_export_subject">星隧 Android Log File</string>
+    <string name="log_export_subject">星火 Android Log File</string>
     <string name="log_export_success">Saved to “%s”</string>
     <string name="log_export_title">Export log file</string>
     <string name="log_saver_activity_label">Save log</string>
@@ -360,8 +368,8 @@
     <string name="parse_error_integer">number</string>
     <string name="parse_error_reason">Cannot parse %1$s “%2$s”</string>
     <string name="peer">Peer</string>
-    <string name="permission_description">control 星隧 tunnels, enabling and disabling tunnels at will, potentially misdirecting Internet traffic</string>
-    <string name="permission_label">control 星隧 tunnels</string>
+    <string name="permission_description">control 星火 tunnels, enabling and disabling tunnels at will, potentially misdirecting Internet traffic</string>
+    <string name="permission_label">control 星火 tunnels</string>
     <string name="persistent_keepalive">Persistent keepalive</string>
     <string name="pre_shared_key">Pre-shared key</string>
     <string name="pre_shared_key_enabled">enabled</string>
@@ -383,7 +391,7 @@
     <string name="shell_start_error">Shell failed to start: %d</string>
     <string name="success_application_will_restart">Success. The application will now restart…</string>
     <string name="toggle_all">Toggle All</string>
-    <string name="toggle_error">Error toggling 星隧 tunnel: %s</string>
+    <string name="toggle_error">Error toggling 星火 tunnel: %s</string>
     <string name="tools_installer_already">awg and awg-quick are already installed</string>
     <string name="tools_installer_failure">Unable to install command-line tools (no root?)</string>
     <string name="tools_installer_initial">Install optional tools for scripting</string>
@@ -419,7 +427,7 @@
     <string name="version_summary">%1$s backend %2$s</string>
     <string name="version_summary_checking">Checking %s backend version</string>
     <string name="version_summary_unknown">Unknown %s version</string>
-    <string name="version_title">星隧 for Android v%s</string>
+    <string name="version_title">星火 for Android v%s</string>
     <string name="vpn_not_authorized_error">VPN service not authorized by user</string>
     <string name="vpn_start_error">Unable to start Android VPN service</string>
     <string name="zip_export_error">Unable to export tunnels: %s</string>

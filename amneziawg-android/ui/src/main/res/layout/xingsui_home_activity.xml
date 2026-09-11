@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  星火 VPN 首页：奶油白纸面、黑色大标题、黑金标志、构成主义几何线条。
+  中央的 XingsuiEmblemView 负责全部连接动效（锤镰滑入扣合 → 脉冲 → 圆环闭合转金）。
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -12,10 +16,11 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:paddingStart="20dp"
-        android:paddingTop="40dp"
+        android:paddingTop="36dp"
         android:paddingEnd="20dp"
-        android:paddingBottom="22dp">
+        android:paddingBottom="24dp">
 
+        <!-- ===== 顶部：头像入口 + 充值 ===== -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -24,24 +29,18 @@
 
             <LinearLayout
                 android:id="@+id/account_card"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_marginEnd="12dp"
-                android:background="@drawable/xingsui_home_panel"
                 android:contentDescription="@string/xingsui_profile_open"
                 android:gravity="center"
-                android:orientation="horizontal"
-                android:padding="6dp">
+                android:orientation="horizontal">
 
-                <TextView
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:background="@drawable/xingsui_avatar_bg"
-                    android:gravity="center"
-                    android:text="星"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
+                <ImageView
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:contentDescription="@string/app_name"
+                    android:src="@drawable/ic_xingsui_emblem" />
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -58,7 +57,7 @@
                         android:ellipsize="middle"
                         android:singleLine="true"
                         android:text="@string/xingsui_home_guest"
-                        android:textColor="#EAF0FFFF"
+                        android:textColor="@color/xingsui_ink"
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
@@ -70,7 +69,7 @@
                         android:ellipsize="end"
                         android:singleLine="true"
                         android:text="@string/xingsui_home_login_to_sync"
-                        android:textColor="#93A0B7"
+                        android:textColor="@color/xingsui_muted"
                         android:textSize="12sp" />
                 </LinearLayout>
             </LinearLayout>
@@ -82,23 +81,27 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/vip_button"
-                android:layout_width="76dp"
-                android:layout_height="44dp"
-                android:fontFamily="sans"
+                android:layout_width="wrap_content"
+                android:layout_height="42dp"
+                android:background="@drawable/xingsui_gold_button_bg"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:letterSpacing="0.06"
+                android:minWidth="84dp"
                 android:text="@string/xingsui_home_recharge"
-                android:textColor="#FFFFFFFF"
+                android:textColor="@color/xingsui_ink"
                 android:textSize="13sp"
                 android:textStyle="bold"
                 app:backgroundTint="@null"
-                android:background="@drawable/xingsui_primary_button_bg"
-                app:cornerRadius="12dp" />
+                app:cornerRadius="3dp"
+                app:elevation="0dp" />
         </LinearLayout>
 
-        <!-- 标题贴头像下方、智能模式开关贴充值下方，中部只留连接按钮，视觉更简约。 -->
+        <!-- ===== 品牌标题 + 全局开关 ===== -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="20dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -111,19 +114,20 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/app_name"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="24sp"
+                    android:letterSpacing="0.24"
+                    android:text="@string/xingsui_brand_latin"
+                    android:textColor="@color/xingsui_gold_deep"
+                    android:textSize="11sp"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:id="@+id/connection_state"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:text="@string/xingsui_home_disconnected"
-                    android:textColor="#99A5BC"
-                    android:textSize="13sp" />
+                    android:layout_marginTop="6dp"
+                    android:text="@string/xingsui_home_headline"
+                    android:textColor="@color/xingsui_ink"
+                    android:textSize="30sp"
+                    android:textStyle="bold" />
             </LinearLayout>
 
             <LinearLayout
@@ -132,14 +136,14 @@
                 android:background="@drawable/xingsui_segment_bg"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingStart="10dp"
-                android:paddingEnd="6dp">
+                android:paddingStart="12dp"
+                android:paddingEnd="4dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/xingsui_home_smart_mode"
-                    android:textColor="#D9DEFFFF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="12sp"
                     android:textStyle="bold" />
 
@@ -156,7 +160,7 @@
             android:id="@+id/auth_actions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="16dp"
             android:baselineAligned="false"
             android:orientation="horizontal">
 
@@ -166,12 +170,15 @@
                 android:layout_height="46dp"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
-                android:text="@string/xingsui_login"
-                android:textColor="#FFFFFFFF"
-                android:textStyle="bold"
                 android:background="@drawable/xingsui_primary_button_bg"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="@string/xingsui_login"
+                android:textColor="@color/xingsui_paper_raised"
+                android:textStyle="bold"
                 app:backgroundTint="@null"
-                app:cornerRadius="12dp" />
+                app:cornerRadius="3dp"
+                app:elevation="0dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/register_button"
@@ -179,98 +186,116 @@
                 android:layout_height="46dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:text="@string/xingsui_register"
-                android:textColor="#D9DEFFFF"
-                android:textStyle="bold"
                 android:background="@drawable/xingsui_outline_button_bg"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="@string/xingsui_register"
+                android:textColor="@color/xingsui_ink"
+                android:textStyle="bold"
                 app:backgroundTint="@null"
-                app:cornerRadius="12dp" />
+                app:cornerRadius="3dp"
+                app:elevation="0dp" />
         </LinearLayout>
 
-        <!-- 长屏适配：与连接按钮下方的等权 Space 对称分布多余高度，
-             使连接区块在头部与底部卡片之间居中；小屏上收缩为 0，照常滚动。 -->
+        <!-- 长屏适配：与下方等权 Space 对称分布多余高度，让标志区块居中；小屏收缩为 0。 -->
         <Space
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <FrameLayout
+        <!-- ===== 中央：黑金锤镰连接动效 ===== -->
+        <org.amnezia.awg.xingsui.XingsuiEmblemView
+            android:id="@+id/emblem"
             android:layout_width="match_parent"
-            android:layout_height="296dp"
-            android:layout_marginTop="8dp">
+            android:layout_height="272dp"
+            android:layout_marginTop="10dp"
+            android:contentDescription="@string/xingsui_home_connect" />
 
-            <View
-                android:id="@+id/power_ring"
-                android:layout_width="244dp"
-                android:layout_height="244dp"
-                android:layout_gravity="center"
-                android:background="@drawable/xingsui_power_ring" />
+        <TextView
+            android:id="@+id/connection_state"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="center"
+            android:letterSpacing="0.12"
+            android:text="@string/xingsui_home_disconnected"
+            android:textColor="@color/xingsui_ink"
+            android:textSize="17sp"
+            android:textStyle="bold" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/connect_button"
-                android:layout_width="158dp"
-                android:layout_height="158dp"
-                android:layout_gravity="center"
-                android:background="@drawable/xingsui_connect_button_bg"
-                android:fontFamily="sans"
-                android:insetLeft="0dp"
-                android:insetTop="0dp"
-                android:insetRight="0dp"
-                android:insetBottom="0dp"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:text="@string/xingsui_home_connect"
-                android:textColor="#FFFFFFFF"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                app:backgroundTint="@null"
-                app:cornerRadius="79dp"
-                app:elevation="14dp" />
-        </FrameLayout>
+        <TextView
+            android:id="@+id/connection_detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:gravity="center"
+            android:text="@string/xingsui_home_detail_idle"
+            android:textColor="@color/xingsui_muted"
+            android:textSize="12.5sp" />
 
-        <!-- 与连接按钮上方的 Space 等权，保证连接区块上下留白对称。 -->
         <Space
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/connect_button"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="22dp"
+            android:background="@drawable/xingsui_primary_button_bg"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:letterSpacing="0.08"
+            android:text="@string/xingsui_home_connect"
+            android:textColor="@color/xingsui_paper_raised"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            app:backgroundTint="@null"
+            app:cornerRadius="3dp"
+            app:elevation="0dp" />
+
+        <!-- ===== 当前线路 ===== -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="88dp"
+            android:layout_height="84dp"
+            android:layout_marginTop="12dp"
             android:background="@drawable/xingsui_home_panel"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingStart="16dp"
-            android:paddingEnd="14dp">
+            android:paddingEnd="12dp">
 
             <TextView
-                android:layout_width="10dp"
-                android:layout_height="10dp"
+                android:id="@+id/status_dot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
                 android:background="@drawable/xingsui_status_dot_bg" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
+                android:layout_marginStart="14dp"
                 android:layout_weight="1"
                 android:orientation="vertical">
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:letterSpacing="0.16"
                     android:text="@string/xingsui_home_current_node"
-                    android:textColor="#7E89A3"
-                    android:textSize="11sp" />
+                    android:textColor="@color/xingsui_faint"
+                    android:textSize="10.5sp" />
 
                 <TextView
                     android:id="@+id/node_name"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
+                    android:layout_marginTop="5dp"
                     android:ellipsize="end"
                     android:singleLine="true"
                     android:text="@string/xingsui_home_auto_node"
-                    android:textColor="#FFFFFFFF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="15sp"
                     android:textStyle="bold" />
 
@@ -282,39 +307,46 @@
                     android:ellipsize="end"
                     android:singleLine="true"
                     android:text="@string/xingsui_node_auto_detail"
-                    android:textColor="#A7AEC2"
+                    android:textColor="@color/xingsui_muted"
                     android:textSize="11sp" />
             </LinearLayout>
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/node_manage_button"
-                android:layout_width="48dp"
-                android:layout_height="40dp"
+                android:layout_width="46dp"
+                android:layout_height="38dp"
+                android:background="@drawable/xingsui_outline_button_bg"
                 android:contentDescription="@string/xingsui_node_picker_title"
                 android:insetLeft="0dp"
+                android:insetTop="0dp"
                 android:insetRight="0dp"
+                android:insetBottom="0dp"
                 android:paddingStart="0dp"
                 android:paddingEnd="0dp"
                 android:text="@string/xingsui_home_node_manage"
-                android:textColor="#D9DEFFFF"
-                android:textSize="16sp"
-                android:background="@drawable/xingsui_outline_button_bg"
+                android:textColor="@color/xingsui_ink"
+                android:textSize="15sp"
                 app:backgroundTint="@null"
-                app:cornerRadius="12dp" />
+                app:cornerRadius="3dp"
+                app:elevation="0dp" />
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/refresh_button"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="48dp"
             android:layout_marginTop="12dp"
+            android:background="@drawable/xingsui_outline_button_bg"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
             android:text="@string/xingsui_home_smart_match"
-            android:textColor="#FFFFFFFF"
+            android:textColor="@color/xingsui_ink"
             android:textStyle="bold"
-            android:background="@drawable/xingsui_primary_button_bg"
             app:backgroundTint="@null"
-            app:cornerRadius="14dp" />
+            app:cornerRadius="3dp"
+            app:elevation="0dp" />
 
+        <!-- ===== 会员状态 ===== -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -324,7 +356,7 @@
 
             <LinearLayout
                 android:layout_width="0dp"
-                android:layout_height="90dp"
+                android:layout_height="86dp"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
                 android:background="@drawable/xingsui_home_panel"
@@ -335,9 +367,10 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:letterSpacing="0.16"
                     android:text="@string/xingsui_home_vip_status"
-                    android:textColor="#7E89A3"
-                    android:textSize="11sp" />
+                    android:textColor="@color/xingsui_faint"
+                    android:textSize="10.5sp" />
 
                 <TextView
                     android:id="@+id/vip_status"
@@ -347,14 +380,14 @@
                     android:ellipsize="end"
                     android:singleLine="true"
                     android:text="@string/xingsui_home_vip_inactive"
-                    android:textColor="#FFFFFFFF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="15sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="0dp"
-                android:layout_height="90dp"
+                android:layout_height="86dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 android:background="@drawable/xingsui_home_panel"
@@ -365,9 +398,10 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:letterSpacing="0.16"
                     android:text="@string/xingsui_home_expiry"
-                    android:textColor="#7E89A3"
-                    android:textSize="11sp" />
+                    android:textColor="@color/xingsui_faint"
+                    android:textSize="10.5sp" />
 
                 <TextView
                     android:id="@+id/vip_expiry"
@@ -377,7 +411,7 @@
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:text="@string/xingsui_home_no_expiry"
-                    android:textColor="#FFFFFFFF"
+                    android:textColor="@color/xingsui_ink"
                     android:textSize="15sp"
                     android:textStyle="bold" />
             </LinearLayout>

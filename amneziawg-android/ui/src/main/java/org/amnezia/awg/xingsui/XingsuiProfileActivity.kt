@@ -40,7 +40,7 @@ class XingsuiProfileActivity : AppCompatActivity() {
 
         apiClient = XingsuiApiClient(accessToken = session.accessToken)
         binding.profileEmail.text = session.email
-        binding.profileAvatar.text = session.email.firstOrNull()?.uppercaseChar()?.toString() ?: "星"
+        binding.profileAvatar.text = session.email.firstOrNull()?.uppercaseChar()?.toString() ?: "火"
         binding.profileInviteDetail.text = session.inviteCode
         binding.profileVersionDetail.text = getString(R.string.xingsui_profile_update_hint, BuildConfig.VERSION_NAME)
 
@@ -82,12 +82,12 @@ class XingsuiProfileActivity : AppCompatActivity() {
     private fun renderAccount(user: UserAccount) {
         val isVip = user.vipStatus == VIP_ACTIVE
         binding.profileEmail.text = user.email
-        binding.profileAvatar.text = user.email.firstOrNull()?.uppercaseChar()?.toString() ?: "星"
+        binding.profileAvatar.text = user.email.firstOrNull()?.uppercaseChar()?.toString() ?: "火"
         binding.profileMembership.setText(
             if (isVip) R.string.xingsui_profile_vip else R.string.xingsui_profile_standard
         )
         binding.profileMembership.background = membershipBackground(isVip)
-        binding.profileMembership.setTextColor(if (isVip) 0xFF241B05.toInt() else 0xFFD5D8E6.toInt())
+        binding.profileMembership.setTextColor(if (isVip) 0xFF1A1405.toInt() else 0xFF6B6459.toInt())
         binding.profileExpiry.text = if (isVip) {
             user.vipExpiredAt?.atZone(ZoneId.systemDefault())?.format(DATE_FORMATTER)
                 ?: getString(R.string.xingsui_profile_not_active)
@@ -107,10 +107,10 @@ class XingsuiProfileActivity : AppCompatActivity() {
     }
 
     private fun membershipBackground(isVip: Boolean) = GradientDrawable().apply {
-        cornerRadius = resources.displayMetrics.density * 999f
-        setColor(if (isVip) 0xFFFFD36A.toInt() else 0x1FFFFFFF)
+        cornerRadius = resources.displayMetrics.density * 2f
+        setColor(if (isVip) 0xFFD6B15C.toInt() else 0x00000000)
         if (!isVip) {
-            setStroke(resources.displayMetrics.density.toInt().coerceAtLeast(1), 0x2FFFFFFF)
+            setStroke(resources.displayMetrics.density.toInt().coerceAtLeast(1), 0x4D0D0D0C)
         }
     }
 

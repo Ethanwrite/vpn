@@ -250,7 +250,9 @@ def test_create_session_accepts_bounded_native_app_ttl() -> None:
 
 
 def test_site_routes_selected_plan_to_mobile_payment_page() -> None:
-    assert "location.href = `/payment?${params.toString()}`" in SITE_HTML
+    """选套餐后必须跳去 /payment 并带上 plan_id —— 断言行为而非某一种写法。"""
+    assert "location.href = '/payment?'" in SITE_HTML
+    assert "new URLSearchParams({ plan_id: planId })" in SITE_HTML
 
 
 def test_payment_page_contains_deep_links_and_qr_fallback() -> None:
@@ -353,3 +355,45 @@ def test_node_peer_total_is_zero_without_any_node_health() -> None:
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     db = Session()
     assert node_peer_total(db) == 0
+
+
+def test_unknown_page_returns_branded_html_404_but_api_keeps_json() -> None:
+    """浏览器直接打开不存在的页面要拿到品牌化 404（SPA 渲染「这里暂时没有生产资料」），
+    而 API 客户端仍然拿 JSON —— 新增的 HTML 404 处理器不能把接口错误变成网页。"""
+    import asyncio
+
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from starlette.requests import Request
+
+    from app.main import http_exception_handler
+
+    def request_for(accept: str, path: str = "/no-such-page") -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": path,
+                "raw_path": path.encode(),
+                "query_string": b"",
+                "root_path": "",
+                "scheme": "http",
+                "server": ("testserver", 80),
+                "headers": [(b"accept", accept.encode())],
+            }
+        )
+
+    not_found = StarletteHTTPException(status_code=404, detail="Page not found")
+
+    page = asyncio.run(http_exception_handler(request_for("text/html,*/*"), not_found))
+    assert page.status_code == 404
+    assert "这里暂时没有生产资料" in page.body.decode()
+
+    api = asyncio.run(http_exception_handler(request_for("application/json"), not_found))
+    assert api.status_code == 404
+    assert api.media_type == "application/json"
+
+    # /api 前缀即便声明接受 HTML 也必须保持 JSON，避免前端把网页当成接口响应解析
+    api_path = asyncio.run(
+        http_exception_handler(request_for("text/html,*/*", "/api/does-not-exist"), not_found)
+    )
+    assert api_path.media_type == "application/json"

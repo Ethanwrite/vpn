@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Status colors for dark theme -->
-    <color name="tunnel_status_connected">#66BB6A</color>
-    <color name="tunnel_status_connecting">#FFB74D</color>
-    <color name="tunnel_status_disconnected">#EF5350</color>
+    <!-- 深色模式沿用同一套品牌状态色，保持奶油白基调下的一致观感 -->
+    <color name="tunnel_status_connected">#A8801F</color>
+    <color name="tunnel_status_connecting">#D6B15C</color>
+    <color name="tunnel_status_disconnected">#8E1B13</color>
 </resources>
-

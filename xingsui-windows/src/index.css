@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html,
@@ -14,11 +14,12 @@ body,
 }
 
 body {
-  font-family: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system,
-    sans-serif;
+  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC",
+    "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   background: transparent;
+  color: #0d0d0c;
 }
 
 /* 滚动条极简化 */
@@ -26,26 +27,198 @@ body {
   width: 6px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(124, 58, 237, 0.4);
-  border-radius: 3px;
+  background: rgba(13, 13, 12, 0.22);
+  border-radius: 0;
 }
 
 @layer components {
-  /* 毛玻璃卡片 */
-  .glass {
-    @apply bg-white/5 backdrop-blur-glass border border-white/10 shadow-glass;
+  /* 纸面卡片：方角 + 墨色发丝边，不用毛玻璃 */
+  .card {
+    @apply rounded-brand border border-ink-900/12 bg-paper-raised;
   }
-  .glass-input {
-    @apply w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm
-      text-white placeholder-white/40 outline-none transition
-      focus:border-brand-glow focus:bg-white/10;
+  /* 旧类名保留，避免遗漏的引用样式塌掉 */
+  .glass {
+    @apply card;
+  }
+  .glass-input,
+  .field {
+    @apply w-full rounded-brand border border-ink-900/25 bg-paper px-4 py-3 text-sm
+      text-ink-900 placeholder-ink-300 outline-none transition
+      focus:border-ink-900 focus:shadow-block-gold;
   }
   .btn-primary {
-    @apply rounded-xl bg-brand-gradient px-4 py-3 text-sm font-semibold text-white
-      shadow-glow transition active:scale-[0.98] disabled:opacity-50;
+    @apply rounded-brand bg-ink-900 px-4 py-3 text-sm font-bold tracking-wide text-paper-raised
+      transition hover:shadow-block-gold active:translate-y-px disabled:opacity-45;
+  }
+  .btn-gold {
+    @apply rounded-brand bg-gold-gradient px-4 py-3 text-sm font-bold tracking-wide text-ink-900
+      transition hover:shadow-block active:translate-y-px disabled:opacity-45;
   }
   .btn-ghost {
-    @apply rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/80
-      transition hover:bg-white/10;
+    @apply rounded-brand border border-ink-900/25 bg-transparent px-4 py-2 text-sm font-semibold text-ink-900
+      transition hover:border-ink-900 hover:shadow-block;
+  }
+  /* 全大写的构成主义小标签 */
+  .kicker {
+    @apply text-[10px] font-bold uppercase tracking-[0.24em] text-gold-deep;
+  }
+}
+
+/* ===== 黑金锤镰连接标志 =====
+   与官网 SITE_HTML、Android 的 XingsuiEmblemView 同一套 200×200 轮廓数据。
+   统一线宽的空心线框 + 三层辉光；时序：沿 45° 轴对称分离 → 向中心扣合 →
+   脉冲光环 → 暗红圆环闭合转金 → 放射纹浮现。 */
+.em svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.em-guide {
+  fill: none;
+  stroke: rgba(13, 13, 12, 0.1);
+  stroke-width: 1;
+}
+.em-rays {
+  stroke: rgba(168, 128, 31, 0.24);
+  stroke-width: 1;
+  opacity: 0;
+  transition: opacity 0.9s ease 0.25s;
+}
+.em-disc {
+  fill: #0d0d0c;
+  opacity: 0;
+  transform: scale(0.92);
+  transform-origin: 100px 100px;
+  transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.em-track {
+  fill: none;
+  stroke: rgba(13, 13, 12, 0.12);
+  stroke-width: 2;
+}
+.em-progress {
+  fill: none;
+  stroke: #8e1b13;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-dasharray: 566;
+  stroke-dashoffset: 566;
+  transform: rotate(-90deg);
+  transform-origin: 100px 100px;
+  transition: stroke-dashoffset 1.25s cubic-bezier(0.5, 0, 0.2, 1),
+    stroke 0.5s ease 0.1s;
+}
+.em-pulse {
+  fill: none;
+  stroke: #d6b15c;
+  stroke-width: 2;
+  opacity: 0;
+  transform-origin: 100px 100px;
+}
+
+/* 部件：未连接时沿 45° 轴对称拉开，扣合时归位 */
+.em-part {
+  transition: transform 0.9s cubic-bezier(0.16, 1.02, 0.28, 1);
+  transform-origin: 100px 100px;
+}
+.em-sickle {
+  transform: translate(26px, 26px) rotate(10deg);
+}
+.em-hammer {
+  transform: translate(-26px, -26px) rotate(-10deg);
+}
+
+/* dasharray 取 300 —— 比最长的一条轮廓（刃 ≈282）还长，短轮廓因而先画完，
+   四个部件自然形成先后错落的勾勒节奏。 */
+.em-stroke,
+.em-glow {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 300;
+  stroke-dashoffset: 300;
+  transition: stroke-dashoffset 0.78s cubic-bezier(0.4, 0, 0.2, 1) 0.12s,
+    stroke 0.6s ease, opacity 0.6s ease;
+}
+.em-stroke {
+  stroke: #0d0d0c;
+  opacity: 0;
+}
+/* 未连接时看见的是这一层：轮廓始终画满、但很淡 */
+.em-ghost {
+  fill: none;
+  stroke: #0d0d0c;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.22;
+  transition: opacity 0.45s ease;
+}
+.em.is-busy .em-ghost,
+.em.is-on .em-ghost {
+  opacity: 0;
+}
+.em-glow {
+  stroke: #f0c874;
+  opacity: 0;
+}
+
+.em.is-busy .em-part,
+.em.is-on .em-part {
+  transform: translate(0, 0) rotate(0deg);
+}
+.em.is-busy .em-stroke,
+.em.is-on .em-stroke,
+.em.is-busy .em-glow,
+.em.is-on .em-glow {
+  stroke-dashoffset: 0;
+}
+.em.is-busy .em-stroke,
+.em.is-on .em-stroke {
+  opacity: 1;
+}
+.em.is-on .em-stroke {
+  stroke: #f5d68c;
+}
+.em.is-on .em-glow1 {
+  opacity: 0.16;
+}
+.em.is-on .em-glow2 {
+  opacity: 0.26;
+}
+.em.is-on .em-glow3 {
+  opacity: 0.42;
+}
+.em.is-on .em-progress {
+  stroke: #d6b15c;
+}
+.em.is-busy .em-progress,
+.em.is-on .em-progress {
+  stroke-dashoffset: 0;
+}
+.em.is-on .em-disc {
+  opacity: 1;
+  transform: scale(1);
+}
+.em.is-on .em-rays {
+  opacity: 1;
+}
+.em.is-on .em-pulse {
+  animation: em-pulse 1.15s cubic-bezier(0.2, 0.7, 0.3, 1) 1 both;
+}
+@keyframes em-pulse {
+  0% {
+    opacity: 0.85;
+    transform: scale(0.62);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .em * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }
