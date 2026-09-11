@@ -295,8 +295,15 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
   `VPN_AUTO_PROVISION` 早已不被代码读取，是失效的环境变量。回归测试见
   `tests/test_commercial_logic.py::test_system_health_reads_agent_peer_counts_and_never_touches_local_wg`
   （已验证：还原旧实现时该测试正是以 `503 VPN credential generation failed` 失败）。
-- **新加坡机上残留一套已停止的控制面栈**（2026-09-11 单机重建时建的，`Exited (0)`，含一份基于
-  7-15 转储的 pgdata 卷与固定证书的 Caddyfile）。保留作回滚；确认香港稳定后可 `docker compose down -v` 清掉。
+- ~~新加坡机上残留一套已停止的控制面栈~~ **已于 2026-09-11 清理**（`docker compose down -v` +
+  删除三个镜像，容器/卷/网络/镜像归零；docker 与 containerd 已 `disable`，纯节点不需要）。
+  同时**销毁了本不该存在于节点上的密钥材料**：控制面 `.env`（含 `ADMIN_SESSION_SECRET` ——
+  `SUBSCRIPTION_TOKEN_SECRET` 默认回落到它，读到即可为任意用户伪造订阅 token）、
+  `xingsui.org` 的 TLS 私钥、以及含全部节点 HMAC secret 的 `xingsui-node-agent-secrets.json`
+  （节点只需自己那一个，已在 `/etc/xingsui/agent.env`）。均用 `shred -u`。
+  `/opt/xingsui` 现在只剩正在运行的 `agent.py`。释放磁盘 0.7G、内存约 76MB。
+  ⚠️ **教训：在边缘节点上临时搭控制面，会把控制面的全部机密留在暴露面更大的机器上；
+  拆除时必须把密钥足迹一起清掉，不只是停容器。**
 - **单点**：控制面与节点各只有一台，且节点 VLESS 的 Reality 回落依赖控制面 443。
 
 > 回归建议：非 VIP 真机跑满 60MB（节点实测）应被切断→弹卡片→官网下单→管理员确认→VIP；
