@@ -1604,35 +1604,6 @@ def vpn_control_tool() -> str:
     return "awg" if env_flag("AMNEZIAWG_SERVER_ENABLED", False) else "wg"
 
 
-def vpn_quick_tool() -> str:
-    return "awg-quick" if env_flag("AMNEZIAWG_SERVER_ENABLED", False) else "wg-quick"
-
-
-def ensure_vpn_interface() -> None:
-    """Ensure the WG interface is up and manageable with the selected tool.
-    If 'wg show' fails (e.g. module/tool mismatch after prior awg use), clean and recreate.
-    Safe for both 'wg' and 'awg' control tools. Called before peer ops.
-    """
-    interface = os.getenv("VPN_WG_INTERFACE", "wg0").strip()
-    tool = vpn_control_tool()
-    try:
-        run_vpn_command([tool, "show", interface, "peers"])
-        return
-    except Exception:
-        pass  # not manageable, clean and up
-    # Clean
-    try:
-        run_vpn_command(["ip", "link", "del", "dev", interface])
-    except Exception:
-        pass
-    try:
-        run_vpn_command([vpn_quick_tool(), "down", interface])
-    except Exception:
-        pass
-    # Bring up (will create with correct type for the tool)
-    run_vpn_command([vpn_quick_tool(), "up", interface])
-
-
 def generate_wireguard_keypair() -> tuple[str, str]:
     tool = vpn_control_tool()
     private_key = run_vpn_command([tool, "genkey"])
@@ -2432,14 +2403,22 @@ def read_network_total_bytes(kind: str) -> int:
     return total
 
 
-def wireguard_peer_count() -> int:
-    interface_name = os.getenv("VPN_WG_INTERFACE", "wg0").strip()
-    ensure_vpn_interface()
-    try:
-        output = run_vpn_command([vpn_control_tool(), "show", interface_name, "peers"])
-    except HTTPException:
-        return 0
-    return len([line for line in output.splitlines() if line.strip()])
+def node_peer_total(db: Session) -> int:
+    """Managed peers across enabled edge nodes, as reported by their Agents.
+
+    The control plane runs no tunnel interface of its own (peer operations go to
+    each node's Agent), so the authoritative count is ``vpn_node_health.peer_count``.
+    The previous implementation shelled out to ``wg show`` on the control-plane
+    host and — via ``ensure_vpn_interface()`` — even tried to ``wg-quick up`` a
+    missing interface, which made this read-only metric raise 503 and turned
+    ``/admin/system-health`` into a permanent error.
+    """
+    total = db.scalar(
+        select(func.coalesce(func.sum(VpnNodeHealthRow.peer_count), 0))
+        .join(VpnNodeRow, VpnNodeRow.id == VpnNodeHealthRow.node_id)
+        .where(VpnNodeRow.enabled.is_(True))
+    )
+    return int(total or 0)
 
 
 def to_invitation_record(row: InvitationRow) -> InvitationRecord:
@@ -3453,9 +3432,11 @@ def get_system_health(db: Session = Depends(get_db)) -> SystemHealthSummary:
     active_vpn_devices = db.scalar(
         select(func.count()).select_from(VpnDeviceRow).where(VpnDeviceRow.status == "active")
     ) or 0
-    peers = wireguard_peer_count()
+    peers = node_peer_total(db)
     load_1m = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
-    node_status = "online" if peers >= 0 else "unknown"
+    # Answering this request is itself the control-plane liveness signal;
+    # per-node liveness is exposed by /admin/nodes via vpn_node_health.
+    node_status = "online"
     return SystemHealthSummary(
         cpu_load_1m=round(float(load_1m), 2),
         memory_used_percent=read_memory_used_percent(),

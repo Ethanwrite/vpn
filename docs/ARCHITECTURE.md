@@ -286,10 +286,15 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
 
 ### 遗留 / 待办
 - **后台有 1 笔 `pending_confirm` 订单**待人工确认。
-- **`GET /admin/system-health` 返回 503**（既有缺陷，非本次引入）：`wireguard_peer_count()`
-  （`app/main.py:2435`）在 try 之前调 `ensure_vpn_interface()`，后者结尾的
-  `run_vpn_command([vpn_quick_tool(), "up", interface])`（`app/main.py:1633`）**未被 try 包住**；
-  控制面容器里本就没有 wg 接口（`VPN_AUTO_PROVISION=false`，设计如此）。只影响后台概览健康面板。
+- ~~`GET /admin/system-health` 返回 503~~ **已于 2026-09-11 修复**。根因：`wireguard_peer_count()`
+  在 try 之前调 `ensure_vpn_interface()`，而后者结尾的 `wg-quick up <iface>` 未被 try 包住 ——
+  一个**只读指标函数的副作用是去创建 WireGuard 接口**，而控制面按设计没有隧道接口，于是必然抛 503。
+  修法：peer 数改为读 `vpn_node_health.peer_count`（Agent 上报的权威来源，且只统计 `enabled` 节点）——
+  这也正是后台该字段的标签「节点 Peer」本来的含义；同时删掉随之无引用的 `ensure_vpn_interface()`
+  与 `vpn_quick_tool()`（留着一个无人调用、却会改动系统状态的辅助函数本身就是隐患）。
+  `VPN_AUTO_PROVISION` 早已不被代码读取，是失效的环境变量。回归测试见
+  `tests/test_commercial_logic.py::test_system_health_reads_agent_peer_counts_and_never_touches_local_wg`
+  （已验证：还原旧实现时该测试正是以 `503 VPN credential generation failed` 失败）。
 - **新加坡机上残留一套已停止的控制面栈**（2026-09-11 单机重建时建的，`Exited (0)`，含一份基于
   7-15 转储的 pgdata 卷与固定证书的 Caddyfile）。保留作回滚；确认香港稳定后可 `docker compose down -v` 清掉。
 - **单点**：控制面与节点各只有一台，且节点 VLESS 的 Reality 回落依赖控制面 443。

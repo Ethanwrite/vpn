@@ -276,3 +276,80 @@ def test_payment_page_contains_deep_links_and_qr_fallback() -> None:
     assert "二维码直接使用主服务器图片" not in html
     assert "package=com.tencent.mm" not in html
     assert "__PAYMENT_CONFIG__" not in html
+
+
+def test_system_health_reads_agent_peer_counts_and_never_touches_local_wg() -> None:
+    """Regression: ``/admin/system-health`` used to return 503 on every request.
+
+    ``wireguard_peer_count()`` called ``ensure_vpn_interface()`` *outside* its
+    ``try``, and that helper ended with an unguarded ``wg-quick up <iface>``.
+    The control plane deliberately runs no tunnel interface, so this read-only
+    metric raised ``503 VPN credential generation failed`` and the admin
+    overview's health panel was permanently broken.  The peer total now comes
+    from ``vpn_node_health`` — what each node's Agent reports — and only for
+    enabled nodes.
+    """
+    from app.db_models import VpnDeviceRow, VpnNodeHealthRow
+    from app.main import get_system_health, node_peer_total
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            VpnNodeRow.__table__,
+            VpnNodeHealthRow.__table__,
+            VpnDeviceRow.__table__,
+        ],
+    )
+    Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    db = Session()
+
+    def node(node_id: str, *, enabled: bool) -> VpnNodeRow:
+        return VpnNodeRow(
+            id=node_id,
+            name=node_id,
+            region="Singapore",
+            protocol="dual",
+            endpoint="203.0.113.10:443",
+            agent_host="203.0.113.10",
+            server_public_key="a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=",
+            allowed_ips="0.0.0.0/0, ::/0",
+            params_json="{}",
+            enabled=enabled,
+        )
+
+    db.add_all(
+        [
+            node("live-a", enabled=True),
+            node("live-b", enabled=True),
+            node("retired", enabled=False),
+            VpnNodeHealthRow(node_id="live-a", peer_count=5, cpu_load=0.1),
+            VpnNodeHealthRow(node_id="live-b", peer_count=2, cpu_load=0.2),
+            # A decommissioned node may still carry a stale health row; it must
+            # not inflate the reported total.
+            VpnNodeHealthRow(node_id="retired", peer_count=99, cpu_load=0.0),
+        ]
+    )
+    db.commit()
+
+    assert node_peer_total(db) == 7
+
+    # The endpoint itself must not raise, with or without a local wg interface.
+    summary = get_system_health(db=db)
+    assert summary.wireguard_peers == 7
+    assert summary.node_status == "online"
+    assert summary.active_vpn_devices == 0
+
+
+def test_node_peer_total_is_zero_without_any_node_health() -> None:
+    """A freshly restored control plane has no heartbeats yet -> 0, not an error."""
+    from app.db_models import VpnNodeHealthRow
+    from app.main import node_peer_total
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(
+        bind=engine, tables=[VpnNodeRow.__table__, VpnNodeHealthRow.__table__]
+    )
+    Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    db = Session()
+    assert node_peer_total(db) == 0
