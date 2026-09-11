@@ -57,7 +57,8 @@
         "installMode": "perMachine",
         "languages": [
           "SimpChinese"
-        ]
+        ],
+        "installerHooks": "installer-hooks.nsh"
       },
       "wix": {
         "language": "zh-CN"
