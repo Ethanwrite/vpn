@@ -6,32 +6,30 @@ export default {
       colors: {
         // 星火 VPN：奶油白纸面 / 黑色墨色 / 黑金 / 极少量暗红做状态强调
         paper: {
-          DEFAULT: "#F2EDE3",
-          raised: "#FAF7F0",
-          sunken: "#E8E1D3",
+          DEFAULT: "#F6F4EF",
+          raised: "#FCFBF8",
+          sunken: "#EAE6DF",
         },
         ink: {
-          900: "#0D0D0C",
+          900: "#282825",
           700: "#1E1C19",
           500: "#6B6459",
           300: "#9A9184",
           100: "#DCD4C4",
         },
         gold: {
-          DEFAULT: "#A8801F",
-          light: "#D6B15C",
-          deep: "#6E5210",
+          DEFAULT: "#922D28",
+          light: "#B86C61",
+          deep: "#87342F",
         },
         signal: "#8E1B13",
       },
       backgroundImage: {
-        "gold-gradient": "linear-gradient(135deg, #D6B15C 0%, #A8801F 100%)",
-        "ink-gradient": "linear-gradient(135deg, #1E1C19 0%, #0D0D0C 100%)",
+        "gold-gradient": "linear-gradient(135deg, #B86C61 0%, #922D28 100%)",
+        "ink-gradient": "linear-gradient(135deg, #1E1C19 0%, #282825 100%)",
         // 纸面底纹：顶部一层极淡的暖金光晕 + 构成主义网格（合成一条，避免多个
         // background-image 工具类互相覆盖）
-        "paper-field": `radial-gradient(900px 420px at 50% -12%, rgba(168,128,31,0.16), transparent 62%),
-               linear-gradient(to right, rgba(13,13,12,0.05) 1px, transparent 1px),
-               linear-gradient(to bottom, rgba(13,13,12,0.035) 1px, transparent 1px)`,
+        "paper-field": "none",
       },
       backgroundSize: {
         "paper-field": "100% 100%, 72px 72px, 72px 72px",
@@ -46,12 +44,12 @@ export default {
       },
       boxShadow: {
         // 构成主义：不用柔光，用硬边位移投影
-        block: "6px 6px 0 rgba(13,13,12,0.12)",
-        "block-gold": "6px 6px 0 rgba(168,128,31,0.28)",
+        block: "none",
+        "block-gold": "none",
         hair: "0 1px 0 rgba(13,13,12,0.10)",
       },
       borderRadius: {
-        brand: "3px",
+        brand: "14px",
       },
       keyframes: {
         "pulse-ring": {

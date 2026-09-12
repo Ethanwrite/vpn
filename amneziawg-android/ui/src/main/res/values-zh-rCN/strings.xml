@@ -54,7 +54,7 @@
     <string name="xingsui_home_auto_node">智能节点将自动配置</string>
     <string name="xingsui_home_disconnected">未连接</string>
     <string name="xingsui_home_connected">已连接</string>
-    <string name="xingsui_home_connecting">正在连接...</string>
+    <string name="xingsui_home_connecting">正在连接</string>
     <string name="xingsui_home_disconnecting">正在断开...</string>
     <string name="xingsui_home_authorizing">正在校验流量和会员...</string>
     <string name="xingsui_home_waiting_permission">等待系统 VPN 授权...</string>

@@ -1,26 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  星火 VPN 首页：奶油白纸面、黑色大标题、黑金标志、构成主义几何线条。
-  中央的 XingsuiEmblemView 负责全部连接动效（锤镰滑入扣合 → 脉冲 → 圆环闭合转金）。
--->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/xingsui_home_background"
     android:clipToPadding="false"
-    android:fillViewport="true">
+>
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical"
         android:paddingStart="20dp"
-        android:paddingTop="36dp"
+        android:paddingTop="16dp"
         android:paddingEnd="20dp"
-        android:paddingBottom="24dp">
+        android:paddingBottom="16dp">
 
-        <!-- ===== 顶部：头像入口 + 充值 ===== -->
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -93,11 +90,11 @@
                 android:textSize="13sp"
                 android:textStyle="bold"
                 app:backgroundTint="@null"
-                app:cornerRadius="3dp"
+                app:cornerRadius="16dp"
                 app:elevation="0dp" />
         </LinearLayout>
 
-        <!-- ===== 品牌标题 + 全局开关 ===== -->
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -177,7 +174,7 @@
                 android:textColor="@color/xingsui_paper_raised"
                 android:textStyle="bold"
                 app:backgroundTint="@null"
-                app:cornerRadius="3dp"
+                app:cornerRadius="16dp"
                 app:elevation="0dp" />
 
             <com.google.android.material.button.MaterialButton
@@ -193,21 +190,19 @@
                 android:textColor="@color/xingsui_ink"
                 android:textStyle="bold"
                 app:backgroundTint="@null"
-                app:cornerRadius="3dp"
+                app:cornerRadius="16dp"
                 app:elevation="0dp" />
         </LinearLayout>
 
-        <!-- 长屏适配：与下方等权 Space 对称分布多余高度，让标志区块居中；小屏收缩为 0。 -->
-        <Space
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
 
-        <!-- ===== 中央：黑金锤镰连接动效 ===== -->
+
+
+
         <org.amnezia.awg.xingsui.XingsuiEmblemView
             android:id="@+id/emblem"
             android:layout_width="match_parent"
-            android:layout_height="272dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:layout_marginTop="10dp"
             android:contentDescription="@string/xingsui_home_connect" />
 
@@ -215,7 +210,7 @@
             android:id="@+id/connection_state"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="8dp"
             android:gravity="center"
             android:letterSpacing="0.12"
             android:text="@string/xingsui_home_disconnected"
@@ -233,16 +228,13 @@
             android:textColor="@color/xingsui_muted"
             android:textSize="12.5sp" />
 
-        <Space
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
+
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/connect_button"
             android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="22dp"
+            android:layout_height="60dp"
+            android:layout_marginTop="16dp"
             android:background="@drawable/xingsui_primary_button_bg"
             android:insetTop="0dp"
             android:insetBottom="0dp"
@@ -252,13 +244,13 @@
             android:textSize="15sp"
             android:textStyle="bold"
             app:backgroundTint="@null"
-            app:cornerRadius="3dp"
+            app:cornerRadius="16dp"
             app:elevation="0dp" />
 
-        <!-- ===== 当前线路 ===== -->
+
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="84dp"
+            android:layout_height="76dp"
             android:layout_marginTop="12dp"
             android:background="@drawable/xingsui_home_panel"
             android:gravity="center_vertical"
@@ -327,12 +319,13 @@
                 android:textColor="@color/xingsui_ink"
                 android:textSize="15sp"
                 app:backgroundTint="@null"
-                app:cornerRadius="3dp"
+                app:cornerRadius="16dp"
                 app:elevation="0dp" />
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/refresh_button"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:layout_marginTop="12dp"
@@ -343,79 +336,10 @@
             android:textColor="@color/xingsui_ink"
             android:textStyle="bold"
             app:backgroundTint="@null"
-            app:cornerRadius="3dp"
+            app:cornerRadius="16dp"
             app:elevation="0dp" />
 
-        <!-- ===== 会员状态 ===== -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:baselineAligned="false"
-            android:orientation="horizontal">
 
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="86dp"
-                android:layout_marginEnd="6dp"
-                android:layout_weight="1"
-                android:background="@drawable/xingsui_home_panel"
-                android:gravity="center_vertical"
-                android:orientation="vertical"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:letterSpacing="0.16"
-                    android:text="@string/xingsui_home_vip_status"
-                    android:textColor="@color/xingsui_faint"
-                    android:textSize="10.5sp" />
-
-                <TextView
-                    android:id="@+id/vip_status"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="7dp"
-                    android:ellipsize="end"
-                    android:singleLine="true"
-                    android:text="@string/xingsui_home_vip_inactive"
-                    android:textColor="@color/xingsui_ink"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="86dp"
-                android:layout_marginStart="6dp"
-                android:layout_weight="1"
-                android:background="@drawable/xingsui_home_panel"
-                android:gravity="center_vertical"
-                android:orientation="vertical"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:letterSpacing="0.16"
-                    android:text="@string/xingsui_home_expiry"
-                    android:textColor="@color/xingsui_faint"
-                    android:textSize="10.5sp" />
-
-                <TextView
-                    android:id="@+id/vip_expiry"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="7dp"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:text="@string/xingsui_home_no_expiry"
-                    android:textColor="@color/xingsui_ink"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </LinearLayout>
-
+        <TextView android:id="@+id/connection_metrics" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginTop="8dp" android:gravity="center" android:text="@string/xingsui_connection_metrics_idle" android:textSize="12sp" android:fontFamily="monospace" android:textColor="@color/xingsui_muted" />
     </LinearLayout>
-</ScrollView>
+</FrameLayout>

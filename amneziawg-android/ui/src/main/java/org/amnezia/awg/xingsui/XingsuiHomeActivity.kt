@@ -42,8 +42,6 @@ import org.amnezia.awg.xingsui.api.XingsuiApiClient
 import org.amnezia.awg.xingsui.api.XingsuiHttpException
 import org.amnezia.awg.xingsui.model.UserAccount
 import org.amnezia.awg.xingsui.model.VpnNodeSummary
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 class XingsuiHomeActivity : AppCompatActivity() {
     private lateinit var binding: XingsuiHomeActivityBinding
@@ -59,6 +57,14 @@ class XingsuiHomeActivity : AppCompatActivity() {
     private var statusMonitorJob: Job? = null
     private var shownAnnouncementId: String? = null
     private var connectAttemptId = 0L
+    private var metricSampleAt = 0L
+    private var metricRx = 0L
+    private var metricTx = 0L
+    private var metricTunnel: ObservableTunnel? = null
+    private var latencyMs: Long? = null
+    private var latencySampleAt = 0L
+    private var latencyJob: Job? = null
+    private var metricGeneration = 0L
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (!pendingConnectAfterPermission) {
             setBusy(false)
@@ -220,8 +226,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
     private fun renderSignedOut() {
         binding.accountEmail.setText(R.string.xingsui_home_guest)
-        binding.vipStatus.setText(R.string.xingsui_home_not_logged_in)
-        binding.vipExpiry.setText(R.string.xingsui_home_login_to_sync)
         binding.trafficRemaining.setText(R.string.xingsui_home_login_to_sync)
         selectedNodeId = null
         selectedNodeName = null
@@ -241,8 +245,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
     private fun renderSessionOffline(email: String) {
         binding.accountEmail.text = email
-        binding.vipStatus.setText(R.string.xingsui_home_syncing)
-        binding.vipExpiry.setText(R.string.xingsui_account_sync_failed)
         binding.trafficRemaining.setText(R.string.xingsui_home_login_to_sync)
         binding.authActions.visibility = View.GONE
         binding.connectButton.isEnabled = false
@@ -253,13 +255,6 @@ class XingsuiHomeActivity : AppCompatActivity() {
 
     private fun renderAccount(user: UserAccount) {
         binding.accountEmail.text = user.email
-        binding.vipStatus.text = when (user.vipStatus) {
-            VIP_ACTIVE -> getString(R.string.xingsui_home_vip_active)
-            VIP_EXPIRED -> getString(R.string.xingsui_home_vip_expired)
-            else -> getString(R.string.xingsui_home_vip_inactive)
-        }
-        binding.vipExpiry.text = user.vipExpiredAt?.atZone(ZoneId.systemDefault())?.format(DATE_FORMATTER)
-            ?: getString(R.string.xingsui_home_no_expiry)
         binding.trafficRemaining.text = if (user.vipStatus == VIP_ACTIVE) {
             getString(R.string.xingsui_home_traffic_vip)
         } else {
@@ -402,6 +397,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
                         if (tunnel.state == Tunnel.State.UP) {
                             check(sessionStore.load() != null) { "missing_session" }
                             val statistics = tunnel.getStatisticsAsync()
+                            updateConnectionMetrics(tunnel, statistics.totalRx(), statistics.totalTx())
                             val latestHandshakeAt = statistics.peers().maxOfOrNull { peer ->
                                 statistics.peer(peer)?.latestHandshakeEpochMillis() ?: 0L
                             } ?: 0L
@@ -424,9 +420,54 @@ class XingsuiHomeActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateConnectionMetrics(tunnel: ObservableTunnel, rx: Long, tx: Long) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (metricTunnel !== tunnel) {
+            metricSampleAt = 0L
+            latencyMs = null
+            latencySampleAt = 0L
+            metricGeneration++
+            latencyJob?.cancel()
+            metricTunnel = tunnel
+        }
+        val elapsed = now - metricSampleAt
+        fun rate(current: Long, previous: Long): String {
+            if (metricSampleAt == 0L || elapsed <= 0 || current < previous) return "—"
+            return XingsuiTraffic.formatBytes((current - previous) * 1000 / elapsed) + "/s"
+        }
+        binding.connectionMetrics.text = getString(R.string.xingsui_connection_metrics,
+            latencyMs?.let { "$it ms" } ?: "—", rate(rx, metricRx), rate(tx, metricTx))
+        metricSampleAt = now
+        metricRx = rx
+        metricTx = tx
+        if ((latencySampleAt == 0L || now - latencySampleAt >= 15000L) && latencyJob?.isActive != true) {
+            latencySampleAt = now
+            val generation = metricGeneration
+            latencyJob = lifecycleScope.launch {
+                // Bind explicitly to the VPN network: this app is otherwise excluded from its tunnel.
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val manager = getSystemService(android.net.ConnectivityManager::class.java)
+                        val network = manager.allNetworks.firstOrNull {
+                            manager.getNetworkCapabilities(it)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+                        } ?: return@withContext null
+                        network.socketFactory.createSocket().use { socket ->
+                            val started = android.os.SystemClock.elapsedRealtime()
+                            socket.connect(java.net.InetSocketAddress("1.1.1.1", 443), 2500)
+                            android.os.SystemClock.elapsedRealtime() - started
+                        }
+                    }.getOrNull()
+                }
+                if (metricGeneration == generation && metricTunnel === tunnel) latencyMs = result
+            }
+        }
+    }
+
     private fun stopStatusMonitor() {
         statusMonitorJob?.cancel()
         statusMonitorJob = null
+        latencyJob?.cancel()
+        metricSampleAt = 0L
     }
 
     private suspend fun clearExpiredSession() {
@@ -907,6 +948,13 @@ class XingsuiHomeActivity : AppCompatActivity() {
      */
     private fun renderConnectionCopy(phase: XingsuiEmblemView.Phase) {
         binding.emblem.setPhase(phase)
+        if (phase != XingsuiEmblemView.Phase.CONNECTED) {
+            metricSampleAt = 0L
+            latencyMs = null
+            metricGeneration++
+            latencyJob?.cancel()
+            binding.connectionMetrics.setText(R.string.xingsui_connection_metrics_idle)
+        }
         val (titleRes, detailRes) = when (phase) {
             XingsuiEmblemView.Phase.CONNECTED ->
                 R.string.xingsui_home_connected to R.string.xingsui_home_detail_connected
@@ -956,6 +1004,5 @@ class XingsuiHomeActivity : AppCompatActivity() {
         private const val STATUS_POLL_INTERVAL_MS = 5_000L
         private const val ANNOUNCEMENT_PREFERENCES = "xingsui_announcements"
         private const val LAST_ANNOUNCEMENT_ID = "last_announcement_id"
-        private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     }
 }

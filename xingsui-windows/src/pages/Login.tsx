@@ -35,7 +35,7 @@ export default function Login() {
   };
 
   return (
-    <div className="flex h-full flex-col items-center justify-center px-7">
+    <div className="flex h-full flex-col items-center overflow-y-auto px-7 py-8">
       <div className="mb-7 text-center">
         <BrandMark className="mx-auto mb-4 h-16 w-16" />
         <p className="kicker">MARX VPN</p>
@@ -43,7 +43,7 @@ export default function Login() {
         <p className="mt-1.5 text-xs text-ink-500">连接世界 · 消除网络边界</p>
       </div>
 
-      <div className="card w-full p-5 shadow-block">
+      <div className="card w-full p-6">
         <div className="mb-4 flex border-b border-ink-900/12 text-sm">
           {(["login", "register"] as const).map((m) => (
             <button
@@ -63,6 +63,7 @@ export default function Login() {
         <div className="space-y-3">
           <input
             className="field"
+            aria-label="邮箱" autoComplete="email"
             placeholder="邮箱"
             type="email"
             value={email}
@@ -70,6 +71,7 @@ export default function Login() {
           />
           <input
             className="field"
+            aria-label="密码" autoComplete={mode === "login" ? "current-password" : "new-password"}
             placeholder="密码"
             type="password"
             value={password}
@@ -84,7 +86,7 @@ export default function Login() {
               onChange={(e) => setInvite(e.target.value)}
             />
           )}
-          <button className="btn-primary w-full" disabled={busy} onClick={submit}>
+          <button className="btn-primary h-[60px] w-full" disabled={busy} onClick={submit}>
             {busy ? "处理中…" : mode === "login" ? "登 录" : "注 册"}
           </button>
         </div>

@@ -8,8 +8,8 @@ use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-const VERSION_CODE: &str = "8";
-const VERSION_NAME: &str = "1.0.24";
+const VERSION_CODE: &str = "9";
+const VERSION_NAME: &str = "1.0.25";
 
 /// 供崩溃日志等处引用当前版本名。
 pub fn version_name() -> &'static str {

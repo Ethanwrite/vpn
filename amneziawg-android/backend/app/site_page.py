@@ -1,6 +1,6 @@
 """星火 VPN（MARX VPN）官网单页。
 
-设计基调：奶油白背景 / 黑色大标题 / 黑金 Logo / 巨大无衬线 MARX /
+设计基调：奶油白背景 / 黑色大标题 / 扁平线性 Logo / 巨大无衬线 MARX /
 构成主义几何线条 / 金色网络节点 / 极少量暗红只做状态强调。
 
 页面职责划分：
@@ -22,17 +22,17 @@ SITE_HTML = """<!doctype html>
   <style>
     :root {
       color-scheme: light;
-      --paper: #F2EDE3;
-      --paper-2: #FAF7F0;
-      --paper-3: #E8E1D3;
-      --ink: #0D0D0C;
+      --paper: #F6F4EF;
+      --paper-2: #FCFBF8;
+      --paper-3: #EAE6DF;
+      --ink: #282825;
       --ink-2: #1E1C19;
       --muted: #6B6459;
       --faint: #9A9184;
-      --gold: #A8801F;
-      --gold-2: #D6B15C;
-      --gold-3: #6E5210;
-      --red: #8E1B13;
+      --gold: #922D28;
+      --gold-2: #B86C61;
+      --gold-3: #87342F;
+      --red: #922D28;
       --line: rgba(13, 13, 12, .14);
       --line-2: rgba(13, 13, 12, .30);
       --sans: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -96,17 +96,17 @@ SITE_HTML = """<!doctype html>
     /* ============ 按钮 ============ */
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 9px;
-      min-height: 46px; padding: 0 22px; border-radius: 2px;
+      min-height: 48px; padding: 0 22px; border-radius: 14px;
       font-size: 14.5px; font-weight: 700; letter-spacing: .02em; white-space: nowrap;
       border: 1px solid transparent; transition: transform .2s ease, background .25s ease, color .25s ease, border-color .25s ease, box-shadow .25s ease;
     }
     .btn:active { transform: translateY(1px); }
     .btn-ink { background: var(--ink); color: var(--paper-2); }
-    .btn-ink:hover { background: #000; box-shadow: 6px 6px 0 rgba(168,128,31,.35); }
-    .btn-gold { background: linear-gradient(135deg, var(--gold-2), var(--gold)); color: #1A1405; }
-    .btn-gold:hover { box-shadow: 6px 6px 0 rgba(13,13,12,.18); }
+    .btn-ink:hover { background: #000; box-shadow: none; }
+    .btn-gold { background: var(--red); color: var(--paper-2); }
+    .btn-gold:hover { box-shadow: none; }
     .btn-line { border-color: var(--line-2); color: var(--ink); }
-    .btn-line:hover { border-color: var(--ink); box-shadow: 5px 5px 0 rgba(13,13,12,.12); }
+    .btn-line:hover { border-color: var(--ink); box-shadow: none; }
     .btn-sm { min-height: 38px; padding: 0 15px; font-size: 13.5px; }
     .btn[disabled] { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
 
@@ -118,7 +118,7 @@ SITE_HTML = """<!doctype html>
     }
     .kicker:before { content: ""; width: 34px; height: 1px; background: var(--gold); }
     h1, h2, h3 { margin: 0; color: var(--ink); font-weight: 800; letter-spacing: -.02em; }
-    h1 { font-size: clamp(44px, 6.4vw, 86px); line-height: 1.02; }
+    h1 { font-size: clamp(40px, 5vw, 70px); line-height: 1.02; }
     h2 { font-size: clamp(32px, 4.4vw, 58px); line-height: 1.08; }
     .lead { margin: 0; color: var(--muted); font-size: clamp(15px, 1.35vw, 17px); line-height: 1.9; max-width: 40em; }
     .rule { height: 1px; background: var(--line); border: 0; margin: 0; }
@@ -147,64 +147,18 @@ SITE_HTML = """<!doctype html>
       position: relative; width: min(430px, 100%); aspect-ratio: 1;
       display: grid; place-items: center; cursor: pointer;
     }
+    .emblemBox:focus-visible { outline: 2px solid var(--red); outline-offset: 5px; border-radius: 16px; }
+    .emblemBox:focus:not(:focus-visible) { outline: none; }
     .emblemBox svg { width: 100%; height: 100%; display: block; overflow: visible; }
-    .emStatic { stroke: rgba(13,13,12,.10); fill: none; stroke-width: 1; }
-    .emRays { stroke: rgba(168,128,31,.22); stroke-width: 1; opacity: 0; transition: opacity .9s ease .25s; }
-    .is-locked .emRays { opacity: 1; }
-    .emDisc { fill: var(--ink); opacity: 0; transform: scale(.9); transform-origin: 100px 100px; transition: opacity .7s ease, transform .7s cubic-bezier(.16,1,.3,1); }
-    .is-locked .emDisc { opacity: 1; transform: scale(1); }
-
-    .emTrack { fill: none; stroke: rgba(13,13,12,.12); stroke-width: 2; }
-    .emProgress {
-      fill: none; stroke: var(--red); stroke-width: 2.6; stroke-linecap: round;
-      stroke-dasharray: 566; stroke-dashoffset: 566;
-      transform: rotate(-90deg); transform-origin: 100px 100px;
-      transition: stroke-dashoffset 1.45s cubic-bezier(.5,0,.2,1), stroke .5s ease .1s, opacity .5s ease;
-    }
-    .is-connecting .emProgress, .is-locked .emProgress { stroke-dashoffset: 0; }
-    .is-locked .emProgress { stroke: var(--gold); }
-
-    .emPulse {
-      fill: none; stroke: var(--gold-2); stroke-width: 2; opacity: 0;
-      transform-origin: 100px 100px;
-    }
-    .is-locked .emPulse { animation: emPulse 1.15s cubic-bezier(.2,.7,.3,1) .05s 1 both; }
-    @keyframes emPulse {
-      0% { opacity: .9; transform: scale(.62); }
-      100% { opacity: 0; transform: scale(1.55); }
-    }
-
-    .emPart { transition: transform 1.05s cubic-bezier(.16, 1.02, .28, 1); }
-    .emSickle { transform: translate(26px, 26px) rotate(10deg); transform-origin: 100px 100px; }
-    .emHammer { transform: translate(-26px, -26px) rotate(-10deg); transform-origin: 100px 100px; }
-    .is-connecting .emSickle, .is-locked .emSickle,
-    .is-connecting .emHammer, .is-locked .emHammer { transform: translate(0, 0) rotate(0deg); }
-
-    /* 空心线框：统一线宽，形体靠轮廓自身的宽窄变化区分；连接后线条转金并浮出辉光。
-       dasharray 取 300 —— 比最长的一条轮廓（刃 ≈282）还长，短轮廓因而先画完，
-       四个部件自然形成先后错落的勾勒节奏。 */
-    .emStroke, .emGlow {
-      fill: none; stroke-linecap: round; stroke-linejoin: round;
-      stroke-dasharray: 300; stroke-dashoffset: 300;
-      transition: stroke-dashoffset .95s cubic-bezier(.4,0,.2,1) .12s, stroke .6s ease, opacity .6s ease;
-    }
-    .emStroke { stroke: var(--ink); opacity: 0; }
-    .emGlow { stroke: #F0C874; opacity: 0; }
-    /* 未连接时看见的是这一层：轮廓始终画满、但很淡，扣合开始后淡出，
-       把画面交给正在逐段勾勒的实色描边。 */
-    .emGhost {
-      fill: none; stroke: var(--ink); stroke-linecap: round; stroke-linejoin: round;
-      opacity: .22; transition: opacity .45s ease;
-    }
-    .is-connecting .emGhost, .is-locked .emGhost { opacity: 0; }
-    .is-connecting .emStroke, .is-locked .emStroke { opacity: 1; }
-    .is-connecting .emStroke, .is-locked .emStroke,
-    .is-connecting .emGlow, .is-locked .emGlow { stroke-dashoffset: 0; }
-    .is-locked .emStroke { stroke: #F5D68C; }
-
-    .is-locked .emGlow1 { opacity: .16; }
-    .is-locked .emGlow2 { opacity: .26; }
-    .is-locked .emGlow3 { opacity: .42; }
+    mask .emPart { animation: none !important; }
+    .emPart { transform-origin: 100px 100px; transition: transform .7s ease, opacity .4s ease; }
+    .emSickle { transform: translate(5px, 4px); }
+    .emHammer { transform: translate(-7px, -5px); }
+    .is-connecting .emPart, .is-locked .emPart { transform: none; }
+    .is-connecting .emPart { animation: emLoading 1.4s ease-in-out infinite alternate; }
+    @keyframes emLoading { from { opacity: .45; } to { opacity: 1; } }
+    .emStage-locked b:before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 9px; border-radius: 50%; background: #287853; }
+    @media (prefers-reduced-motion: reduce) { .emPart { animation: none !important; transition: none !important; } }
 
     .emReadout {
       display: grid; gap: 7px; justify-items: center; text-align: center; min-height: 62px;
@@ -246,7 +200,7 @@ SITE_HTML = """<!doctype html>
     .nodeCard {
       position: absolute; z-index: 5; min-width: 196px; padding: 14px 16px;
       background: var(--ink); color: var(--paper-2); border-radius: 2px;
-      box-shadow: 8px 8px 0 rgba(168,128,31,.28);
+      box-shadow: none;
       opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity .22s ease, transform .22s ease;
     }
     .nodeCard.show { opacity: 1; transform: translateY(0); }
@@ -293,7 +247,7 @@ SITE_HTML = """<!doctype html>
       border: 1px solid var(--line-2); background: var(--paper-2); padding: 32px 30px 30px;
       transition: transform .3s ease, box-shadow .3s ease, border-color .3s ease;
     }
-    .plan:hover { transform: translateY(-4px); box-shadow: 10px 10px 0 rgba(13,13,12,.10); }
+    .plan:hover { transform: translateY(-4px); box-shadow: none; }
     .plan .tag {
       position: absolute; top: -1px; right: -1px; padding: 6px 12px;
       background: var(--ink); color: var(--paper-2); font-size: 11.5px; font-weight: 700; letter-spacing: .14em;
@@ -316,7 +270,7 @@ SITE_HTML = """<!doctype html>
     .plan.featured .tag { background: var(--gold-2); color: #1A1405; }
     .plan.featured li:before { color: var(--gold-2); }
     .plan.gold { border-color: var(--gold); }
-    .plan.gold .tag { background: linear-gradient(135deg, var(--gold-2), var(--gold)); color: #1A1405; }
+    .plan.gold .tag { background: var(--red); color: var(--paper-2); }
     .planFoot { margin: 26px 0 0; color: var(--faint); font-size: 13px; line-height: 1.9; }
 
     /* ============ 第六屏 步骤 ============ */
@@ -366,7 +320,7 @@ SITE_HTML = """<!doctype html>
       border: 1px solid var(--line-2); background: var(--paper); outline: none;
       transition: border-color .2s ease, box-shadow .2s ease;
     }
-    input:focus, select:focus { border-color: var(--ink); box-shadow: 3px 3px 0 rgba(168,128,31,.3); }
+    input:focus, select:focus { border-color: var(--ink); box-shadow: none; }
     .authBox .btn { width: 100%; margin-top: 24px; }
     .status { min-height: 22px; margin: 14px 0 0; font-size: 13.5px; line-height: 1.7; color: var(--muted); }
     .status.err { color: var(--red); }
@@ -441,22 +395,9 @@ SITE_HTML = """<!doctype html>
   <header class="topbar" id="topbar">
     <div class="shell nav">
       <a class="brand" href="/" data-route="home" aria-label="星火 VPN 首页">
-        <svg class="brandMark" viewBox="0 0 200 200" aria-hidden="true">
-          <defs>
-            <linearGradient id="bmGold" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#E6C87C"/><stop offset="1" stop-color="#A8801F"/>
-            </linearGradient>
-          </defs>
-          <circle cx="100" cy="100" r="96" fill="#0D0D0C"/>
-          <circle cx="100" cy="100" r="86" fill="none" stroke="url(#bmGold)" stroke-width="2.5"/>
-          <g fill="url(#bmGold)">
-            <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
-            <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
-            <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
-            <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
-            <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
-          </g>
-        </svg>
+        <svg class="brandMark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" stroke="#922D28" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+<defs><mask id="nav-cutout" maskUnits="userSpaceOnUse" x="-20" y="-20" width="240" height="240"><rect x="-20" y="-20" width="240" height="240" fill="white" stroke="none"/><g fill="black" stroke="black"><path d="M72 82L157 172Q164 179 171 172Q178 165 169 157L84 70Z"/><path d="M38 79L76 41L101 45Q106 46 102 51L55 99Q52 102 49 99L37 87Q34 84 38 79Z"/></g></mask></defs>
+<g mask="url(#nav-cutout)"><g><path d="M116 24C159 43 181 78 174 115C168 149 143 172 109 174C86 176 64 168 49 155L30 175Q23 182 18 175Q14 170 21 163L39 144Q37 137 43 136L49 131Q52 129 56 134C77 155 109 160 137 143C158 130 165 107 158 82C152 59 137 40 116 24Z"/></g></g><g><path d="M72 82L157 172Q164 179 171 172Q178 165 169 157L84 70Z"/><path d="M38 79L76 41L101 45Q106 46 102 51L55 99Q52 102 49 99L37 87Q34 84 38 79Z"/></g></svg>
         <span class="brandName">MARX VPN</span>
       </a>
 
@@ -497,97 +438,21 @@ SITE_HTML = """<!doctype html>
               <a class="btn btn-line" href="/#clients" data-route="home" data-anchor="clients">下载客户端</a>
             </div>
             <p class="heroMeta">
-              <span>不限流量</span><i></i><span>智能路由</span><i></i><span>多端同步</span><i></i><span>全球节点</span>
+              <span>不限流量</span><i></i><span>智能选线</span><i></i><span>多端同步</span><i></i><span>全球节点</span>
             </p>
           </div>
 
           <div class="emblemStage">
-            <div class="emblemBox" id="emblemBox" role="img" aria-label="星火 VPN 黑金锤镰标志：锤子与镰刀扣合表示连接建立">
-              <svg viewBox="0 0 200 200" id="emblemSvg">
-                <defs>
-                  <linearGradient id="emGold" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stop-color="#E6C87C"/><stop offset="1" stop-color="#A8801F"/>
-                  </linearGradient>
-                </defs>
-
-                <!-- 淡淡的圆环 + 构成主义参考线 -->
-                <circle class="emStatic" cx="100" cy="100" r="96"/>
-                <circle class="emStatic" cx="100" cy="100" r="68" stroke-dasharray="1 5"/>
-                <line class="emStatic" x1="4" y1="100" x2="196" y2="100"/>
-                <line class="emStatic" x1="100" y1="4" x2="100" y2="196"/>
-
-                <!-- 放射纹（连接后浮现） -->
-                <g class="emRays" id="emRays"></g>
-
-                <!-- 黑色圆盘（连接后浮现） -->
-                <circle class="emDisc" cx="100" cy="100" r="84"/>
-
-                <!-- 进度环：暗红慢慢闭合 → 连接后转金 -->
-                <circle class="emTrack" cx="100" cy="100" r="90"/>
-                <circle class="emProgress" id="emProgress" cx="100" cy="100" r="90"/>
-
-                <!-- 扣合瞬间的脉冲光环 -->
-                <circle class="emPulse" id="emPulse" cx="100" cy="100" r="76"/>
-
-                <!-- 镰刀：与锤子沿 45° 轴对称分离，连接时向中心扣合 -->
-                <g class="emPart emSickle" id="emSickle" transform-origin="100 100">
-                    <g class="emGlow emGlow1" stroke-width="16.4">
-                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
-                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
-                    </g>
-                    <g class="emGlow emGlow2" stroke-width="12.4">
-                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
-                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
-                    </g>
-                    <g class="emGlow emGlow3" stroke-width="8.8">
-                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
-                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
-                    </g>
-                    <g class="emGhost" stroke-width="5.4">
-                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
-                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
-                    </g>
-                    <g class="emStroke" stroke-width="5.4">
-                      <path d="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z"/>
-                      <path d="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z"/>
-                    </g>
-                  </g>
-
-                <!-- 锤子：与镰刀沿 45° 轴对称分离，连接时向中心扣合 -->
-                <g class="emPart emHammer" id="emHammer" transform-origin="100 100">
-                    <g class="emGlow emGlow1" stroke-width="16.4">
-                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
-                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
-                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
-                    </g>
-                    <g class="emGlow emGlow2" stroke-width="12.4">
-                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
-                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
-                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
-                    </g>
-                    <g class="emGlow emGlow3" stroke-width="8.8">
-                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
-                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
-                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
-                    </g>
-                    <g class="emGhost" stroke-width="5.4">
-                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
-                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
-                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
-                    </g>
-                    <g class="emStroke" stroke-width="5.4">
-                      <path d="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z"/>
-                      <path d="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z"/>
-                      <path d="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z"/>
-                    </g>
-                  </g>
-              </svg>
+            <div class="emblemBox" id="emblemBox" role="button" aria-label="播放连接动画演示">
+              <svg id="emblemSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" stroke="#922D28" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+<defs><mask id="hero-cutout" maskUnits="userSpaceOnUse" x="-20" y="-20" width="240" height="240"><rect x="-20" y="-20" width="240" height="240" fill="white" stroke="none"/><g class="emPart emHammer" fill="black" stroke="black"><path d="M72 82L157 172Q164 179 171 172Q178 165 169 157L84 70Z"/><path d="M38 79L76 41L101 45Q106 46 102 51L55 99Q52 102 49 99L37 87Q34 84 38 79Z"/></g></mask></defs>
+<g mask="url(#hero-cutout)"><g class="emPart emSickle"><path d="M116 24C159 43 181 78 174 115C168 149 143 172 109 174C86 176 64 168 49 155L30 175Q23 182 18 175Q14 170 21 163L39 144Q37 137 43 136L49 131Q52 129 56 134C77 155 109 160 137 143C158 130 165 107 158 82C152 59 137 40 116 24Z"/></g></g><g class="emPart emHammer"><path d="M72 82L157 172Q164 179 171 172Q178 165 169 157L84 70Z"/><path d="M38 79L76 41L101 45Q106 46 102 51L55 99Q52 102 49 99L37 87Q34 84 38 79Z"/></g></svg>
             </div>
 
             <div class="emReadout" id="emReadout">
-              <b id="emState">NETWORK IDLE</b>
-              <span id="emDetail">将指针移入标志 · 建立连接</span>
-              <span class="emHint" id="emHint">HAMMER + SICKLE = CONNECTED</span>
+              <b id="emState" aria-live="polite">未连接</b>
+              <span id="emDetail">当前网络处于空闲状态</span>
+              <span class="emHint" id="emHint">连接状态演示</span>
             </div>
           </div>
         </div>
@@ -610,7 +475,7 @@ SITE_HTML = """<!doctype html>
                 <dl>
                   <dt>延迟</dt><dd id="ncPing">38 ms</dd>
                   <dt>负载</dt><dd id="ncLoad">21%</dd>
-                  <dt>协议</dt><dd id="ncProto">AWG / VLESS</dd>
+                  <dt>服务</dt><dd id="ncProto">智能连接</dd>
                 </dl>
                 <span class="go">立即连接 →</span>
               </div>
@@ -638,7 +503,7 @@ SITE_HTML = """<!doctype html>
             <article class="mCard">
               <span class="no">01 / 智能调度</span>
               <p class="slogan">不选择线路。<br/>让线路选择你。</p>
-              <p>实时根据延迟、负载与可用性自动调度。握手失败会自动换线重连，不需要你手动比较节点。</p>
+              <p>实时根据延迟、负载与可用性自动调度。连接遇到问题会自动尝试恢复，不需要你手动比较节点。</p>
               <span class="mLine"></span>
             </article>
             <article class="mCard">
@@ -650,7 +515,7 @@ SITE_HTML = """<!doctype html>
             <article class="mCard">
               <span class="no">03 / 隐私</span>
               <p class="slogan">你的通信，<br/>只属于你。</p>
-              <p>加密传输、短期配置下发、设备状态保护。配置不写死在客户端里，每次连接单独签发、到期自动回收。</p>
+              <p>保护每一次连接，让你专注于阅读、工作与探索。账户中的设备可以随时查看与管理。</p>
               <span class="mLine"></span>
             </article>
           </div>
@@ -666,19 +531,19 @@ SITE_HTML = """<!doctype html>
             <div class="clientCard">
               <span class="os">ANDROID</span>
               <h3>星火 VPN for Android</h3>
-              <p>AmneziaWG 协议，一键连接即智能选路。后台休眠、切换网络都能保持隧道不断。</p>
-              <a class="btn btn-ink" href="/download/android">下载 APK</a>
+              <p>轻点连接，自动选择合适线路。从日常浏览到移动办公，随时从容开启。</p>
+              <a class="btn btn-ink" href="/download/android">下载 Android 版</a>
             </div>
             <div class="clientCard">
               <span class="os">WINDOWS</span>
               <h3>星火 VPN for Windows</h3>
-              <p>内置 sing-box，VLESS + Reality + Vision。安装后用同一邮箱登录即可连接。</p>
+              <p>为桌面工作准备的简洁连接工具。安装后，用同一邮箱登录即可开始。</p>
               <a class="btn btn-ink" href="/download/windows">下载安装包</a>
             </div>
             <div class="clientCard">
               <span class="os">THIRD PARTY</span>
               <h3>订阅链接</h3>
-              <p>会员可在用户中心导出专属订阅链接，导入 Clash / sing-box 等开源客户端；泄露可随时重置。</p>
+              <p>会员可在用户中心导出专属订阅链接，导入 兼容的客户端；泄露可随时重置。</p>
               <a class="btn btn-line" href="/dashboard" data-route="dashboard">前往用户中心</a>
             </div>
           </div>
@@ -705,14 +570,14 @@ SITE_HTML = """<!doctype html>
             <div class="step"><span class="no">01</span><h3>注册账号</h3><p>邮箱加密码即可注册，无需验证码。有邀请码可一并填写。</p></div>
             <div class="step"><span class="no">02</span><h3>选择计划</h3><p>火种 / 燎原 / 远征，按周期选择，微信或支付宝付款。</p></div>
             <div class="step"><span class="no">03</span><h3>下载客户端</h3><p>Android、Windows 或第三方客户端导入订阅链接，任选其一。</p></div>
-            <div class="step"><span class="no">04</span><h3>开始连接</h3><p>用同一邮箱登录，点击连接。线路由服务端实时选择。</p></div>
+            <div class="step"><span class="no">04</span><h3>开始连接</h3><p>用同一邮箱登录，点击连接。自动为你选择合适线路。</p></div>
           </div>
 
           <div class="faqWrap">
             <details class="faq"><summary>会员在客户端和官网通用吗？</summary><p>通用。官网注册的邮箱账号可以直接在 Android、Windows 客户端登录，会员状态与到期时间自动同步，不需要额外绑定。</p></details>
             <details class="faq"><summary>付款后多久开通？</summary><p>提交付款后进入待确认队列，由人工核对到账，通常几分钟内完成。开通后客户端下次刷新即可看到会员状态。</p></details>
             <details class="faq"><summary>可以在几台设备上同时使用？</summary><p>同一账号支持手机与电脑同时在线。会员还可以导出订阅链接，在第三方开源客户端里使用；订阅链接与账号绑定，请勿分享。</p></details>
-            <details class="faq"><summary>新账号有免费额度吗？</summary><p>新注册账号有一份免费体验流量，用完后需要开通会员继续使用。免费额度按服务端实测流量计算。</p></details>
+            <details class="faq"><summary>新账号有免费额度吗？</summary><p>新注册账号有一份免费体验流量，用完后需要开通会员继续使用。免费额度按实际使用流量计算。</p></details>
           </div>
         </div>
       </section>
@@ -811,7 +676,7 @@ SITE_HTML = """<!doctype html>
 
             <div class="card" id="subscriptionCard">
               <h3>订阅链接</h3>
-              <p>会员可导出专属订阅链接，导入 Clash、sing-box 等第三方开源客户端。链接与账号绑定，请勿分享；如已泄露，点击“重置”即可让旧链接立即失效。</p>
+              <p>会员可导出专属订阅链接，导入 兼容的客户端。链接与账号绑定，请勿分享；如已泄露，点击“重置”即可让旧链接立即失效。</p>
               <p class="status" id="subscriptionStatus"></p>
               <div class="rowActions">
                 <button class="btn btn-ink btn-sm" id="exportSubscription" type="button">导出订阅链接</button>
@@ -995,8 +860,7 @@ SITE_HTML = """<!doctype html>
     window.addEventListener('popstate', () => bootRoute());
 
     /* ================= 首屏锤镰动画 ================= */
-    // 时序：圆环淡出现 → 锤镰两侧滑入（带轻微旋转与吸附）→ 中心扣合脉冲 →
-    //       暗红圆环闭合转金 → 放射纹浮现 → CONNECTED。总时长约 1.6s。
+    // 演示：锤镰平移扣合，连接中轻微明暗变化，成功由绿点与文字表达。
     const emblem = (function initEmblem() {
       const box = $('emblemBox');
       if (!box) return null;
@@ -1004,19 +868,6 @@ SITE_HTML = """<!doctype html>
       const stateText = $('emState');
       const detailText = $('emDetail');
       const hintText = $('emHint');
-      const rays = $('emRays');
-
-      if (rays) {
-        let markup = '';
-        for (let i = 0; i < 36; i += 1) {
-          const angle = (i * 10) * Math.PI / 180;
-          const r1 = 92, r2 = i % 3 === 0 ? 116 : 104;
-          markup += '<line x1="' + (100 + Math.cos(angle) * r1).toFixed(2) + '" y1="' + (100 + Math.sin(angle) * r1).toFixed(2) +
-                    '" x2="' + (100 + Math.cos(angle) * r2).toFixed(2) + '" y2="' + (100 + Math.sin(angle) * r2).toFixed(2) + '"/>';
-        }
-        rays.innerHTML = markup;
-      }
-
       let timer = null;
       let phase = 'idle';
 
@@ -1026,20 +877,20 @@ SITE_HTML = """<!doctype html>
         box.classList.toggle('is-locked', next === 'locked');
         readout.classList.toggle('emStage-locked', next === 'locked');
         if (next === 'connecting') {
-          stateText.textContent = 'ESTABLISHING…';
-          detailText.textContent = '锤子与镰刀正在扣合';
+          stateText.textContent = '正在连接';
+          detailText.textContent = '正在建立安全连接';
           detailText.classList.remove('lost');
-          hintText.textContent = 'HANDSHAKE IN PROGRESS';
+          hintText.textContent = '连接状态演示';
         } else if (next === 'locked') {
-          stateText.textContent = 'NETWORK CONNECTED';
-          detailText.textContent = 'Beijing → Singapore · 42 ms';
+          stateText.textContent = '已连接';
+          detailText.textContent = '连接动画演示 · 请在客户端建立实际连接';
           detailText.classList.remove('lost');
-          hintText.textContent = '世界已经接通。';
+          hintText.textContent = '连接状态演示';
         } else {
-          stateText.textContent = 'CONNECTION LOST';
+          stateText.textContent = '连接已断开';
           detailText.textContent = '重新建立连接 →';
           detailText.classList.add('lost');
-          hintText.textContent = 'HAMMER + SICKLE = CONNECTED';
+          hintText.textContent = '连接状态演示';
         }
       }
 
@@ -1055,10 +906,10 @@ SITE_HTML = """<!doctype html>
         box.classList.remove('is-connecting', 'is-locked');
         readout.classList.remove('emStage-locked');
         phase = 'idle';
-        stateText.textContent = 'NETWORK IDLE';
-        detailText.textContent = '将指针移入标志 · 建立连接';
+        stateText.textContent = '未连接';
+        detailText.textContent = '当前网络处于空闲状态';
         detailText.classList.remove('lost');
-        hintText.textContent = 'HAMMER + SICKLE = CONNECTED';
+        hintText.textContent = '连接状态演示';
       }
 
       box.addEventListener('mouseenter', connect);
@@ -1110,12 +961,12 @@ SITE_HTML = """<!doctype html>
     // 展示用节点（真实节点列表需要登录态，见 /vpn/nodes）
     const WORLD_NODES = [
       { id: 'beijing',   name: 'BEIJING 01',    cn: '北京',     lat: 39.9,  lon: 116.4, ping: '12 ms', load: '34%', proto: '智能接入', anchor: true },
-      { id: 'tokyo',     name: 'TOKYO 01',      cn: '东京',     lat: 35.7,  lon: 139.7, ping: '31 ms', load: '18%', proto: 'AWG / VLESS' },
-      { id: 'hongkong',  name: 'HONG KONG 01',  cn: '香港',     lat: 22.3,  lon: 114.2, ping: '26 ms', load: '42%', proto: 'AWG / VLESS' },
-      { id: 'singapore', name: 'SINGAPORE 01',  cn: '新加坡',   lat: 1.35,  lon: 103.8, ping: '38 ms', load: '21%', proto: 'AWG / VLESS' },
-      { id: 'frankfurt', name: 'FRANKFURT 01',  cn: '法兰克福', lat: 50.1,  lon: 8.7,   ping: '164 ms', load: '12%', proto: 'VLESS' },
-      { id: 'losangeles',name: 'LOS ANGELES 01',cn: '洛杉矶',   lat: 34.05, lon: -118.2,ping: '148 ms', load: '27%', proto: 'VLESS' },
-      { id: 'sydney',    name: 'SYDNEY 01',     cn: '悉尼',     lat: -33.9, lon: 151.2, ping: '119 ms', load: '9%',  proto: 'VLESS' },
+      { id: 'tokyo',     name: 'TOKYO 01',      cn: '东京',     lat: 35.7,  lon: 139.7, ping: '31 ms', load: '18%', proto: '智能连接' },
+      { id: 'hongkong',  name: 'HONG KONG 01',  cn: '香港',     lat: 22.3,  lon: 114.2, ping: '26 ms', load: '42%', proto: '智能连接' },
+      { id: 'singapore', name: 'SINGAPORE 01',  cn: '新加坡',   lat: 1.35,  lon: 103.8, ping: '38 ms', load: '21%', proto: '智能连接' },
+      { id: 'frankfurt', name: 'FRANKFURT 01',  cn: '法兰克福', lat: 50.1,  lon: 8.7,   ping: '164 ms', load: '12%', proto: '智能连接' },
+      { id: 'losangeles',name: 'LOS ANGELES 01',cn: '洛杉矶',   lat: 34.05, lon: -118.2,ping: '148 ms', load: '27%', proto: '智能连接' },
+      { id: 'sydney',    name: 'SYDNEY 01',     cn: '悉尼',     lat: -33.9, lon: 151.2, ping: '119 ms', load: '9%',  proto: '智能连接' },
     ];
 
     const ROUTES_PAIRS = [
@@ -1342,7 +1193,7 @@ SITE_HTML = """<!doctype html>
         $('meInvite').textContent = me.invite_code;
         $('sessionState').textContent = '当前浏览器已登录，账号 ID：' + me.id + '。';
         $('trafficState').textContent = me.vip_status === 'active'
-          ? '会员有效，不限流量。客户端每次连接前由服务端签发短期配置。'
+          ? '会员有效，不限流量。登录客户端即可开始使用。'
           : '当前为免费额度，用完后需要开通会员继续连接。';
         $('balanceState').textContent = '返现余额：' + money(me.cash_balance_cents) + ' 元';
         renderSubscriptionCard();

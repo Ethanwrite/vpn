@@ -259,3 +259,38 @@ mod tests {
         assert!(!valid_node_id(""));
     }
 }
+
+/// End-to-end response time through the active local proxy. Observation only.
+#[tauri::command]
+pub async fn get_latency(app: AppHandle) -> Option<u64> {
+    let state = app.state::<AppState>();
+    let (port, generation) = {
+        let rt = state.conn.lock();
+        if rt.state != ConnState::Connected {
+            return None;
+        }
+        (rt.proxy_port, rt.generation)
+    };
+    let proxy = reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).ok()?;
+    let client = reqwest::Client::builder()
+        .proxy(proxy)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+    let start = std::time::Instant::now();
+    let response = client
+        .get("https://cp.cloudflare.com/generate_204")
+        .send()
+        .await
+        .ok()?;
+    let elapsed = start.elapsed().as_millis() as u64;
+    let rt = state.conn.lock();
+    if rt.state != ConnState::Connected
+        || rt.generation != generation
+        || response.status() != reqwest::StatusCode::NO_CONTENT
+    {
+        return None;
+    }
+    Some(elapsed)
+}

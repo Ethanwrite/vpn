@@ -36,7 +36,7 @@ export default function Home({ onProfile }: Props) {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const selectNode = useStore((s) => s.selectNode);
   const conn = useStore((s) => s.conn);
-  const connNodeName = useStore((s) => s.connNodeName);
+
   const mode = useStore((s) => s.mode);
   const setMode = useStore((s) => s.setMode);
   const pushToast = useStore((s) => s.pushToast);
@@ -105,7 +105,7 @@ export default function Home({ onProfile }: Props) {
   };
 
   return (
-    <div className="relative flex h-full flex-col px-6 pb-6">
+    <div className="relative flex h-full min-h-0 flex-col px-6 pb-5">
       <div className="flex items-center justify-between py-2">
         <button
           onClick={onProfile}
@@ -135,15 +135,9 @@ export default function Home({ onProfile }: Props) {
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-4">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center py-4">
         <ConnectButton conn={conn} onClick={onConnectToggle} />
-        <div className="text-center text-[13px] text-ink-500">
-          {conn === "connected" && connNodeName
-            ? `世界已经接通 · ${connNodeName}`
-            : conn === "connecting"
-            ? "锤子与镰刀正在扣合"
-            : "锤子与镰刀分离 · 等待连接"}
-        </div>
+
       </div>
 
       <div className="space-y-3">
@@ -154,7 +148,7 @@ export default function Home({ onProfile }: Props) {
           <div className="flex items-center gap-3">
             <span
               className={`h-2.5 w-2.5 rounded-full ${
-                selected?.status === "online" ? "bg-gold" : "bg-ink-300"
+                conn === "connected" ? "bg-[#287853]" : "bg-ink-300"
               }`}
             />
             <div>

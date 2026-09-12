@@ -1,36 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  星火 VPN 黑金标志（实心版，用于 ≤48dp 的小尺寸场景）。
-  轮廓数据与官网 SVG、XingsuiEmblemView 完全同源；大尺寸场景改为空心描边 + 辉光。
--->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp"
-    android:height="48dp"
-    android:viewportWidth="200"
-    android:viewportHeight="200">
-
-    <path
-        android:fillColor="#0D0D0C"
-        android:pathData="M4,100 a96,96 0 1 0 192,0 a96,96 0 1 0 -192,0z" />
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M14,100 a86,86 0 1 0 172,0 a86,86 0 1 0 -172,0z"
-        android:strokeColor="#C69A2E"
-        android:strokeWidth="2.5" />
-
-    <path
-        android:fillColor="#D6B15C"
-        android:pathData="M126 38A57.29 57.29 0 0 1 136 150A80.78 80.78 0 0 0 126 38Z" />
-    <path
-        android:fillColor="#D6B15C"
-        android:pathData="M68.72 159.97L130.54 155.48A7.5 7.5 0 0 0 130.06 140.5L68.08 140A10 10 0 1 0 68.72 159.97Z" />
-    <path
-        android:fillColor="#D6B15C"
-        android:pathData="M75.51 88.82L135.2 145.09A7 7 0 0 0 144.92 135.03L86.63 77.31L75.51 88.82Z" />
-    <path
-        android:fillColor="#D6B15C"
-        android:pathData="M94.27 53.64L102.77 68.36A2 2 0 0 1 102.03 71.09L60.47 95.09A2 2 0 0 1 57.73 94.36L49.23 79.64A2 2 0 0 1 49.97 76.91L91.53 52.91A2 2 0 0 1 94.27 53.64Z" />
-    <path
-        android:fillColor="#D6B15C"
-        android:pathData="M47.5 86A4.5 4.5 0 1 0 56.5 86A4.5 4.5 0 1 0 47.5 86Z" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="200" android:viewportHeight="200">
+<group android:pivotX="100" android:pivotY="100" android:scaleX="1" android:scaleY="1">
+<group><clip-path android:fillType="evenOdd" android:pathData="M-20 -20H220V220H-20Z M72 82L157 172Q164 179 171 172Q178 165 169 157L84 70Z M38 79L76 41L101 45Q106 46 102 51L55 99Q52 102 49 99L37 87Q34 84 38 79Z"/><path android:fillColor="#00000000" android:strokeColor="#922D28" android:strokeWidth="4.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M116 24C159 43 181 78 174 115C168 149 143 172 109 174C86 176 64 168 49 155L30 175Q23 182 18 175Q14 170 21 163L39 144Q37 137 43 136L49 131Q52 129 56 134C77 155 109 160 137 143C158 130 165 107 158 82C152 59 137 40 116 24Z"/></group>
+<path android:fillColor="#00000000" android:strokeColor="#922D28" android:strokeWidth="4.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M72 82L157 172Q164 179 171 172Q178 165 169 157L84 70Z"/>
+<path android:fillColor="#00000000" android:strokeColor="#922D28" android:strokeWidth="4.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M38 79L76 41L101 45Q106 46 102 51L55 99Q52 102 49 99L37 87Q34 84 38 79Z"/>
+</group>
 </vector>

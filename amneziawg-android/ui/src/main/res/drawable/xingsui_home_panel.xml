@@ -1,9 +1,1 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 构成主义卡片：几乎不圆角的纸面 + 墨色发丝边。 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="@color/xingsui_paper_raised" />
-    <stroke
-        android:width="1dp"
-        android:color="@color/xingsui_line" />
-    <corners android:radius="3dp" />
-</shape>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"><solid android:color="@color/xingsui_paper_raised"/><corners android:radius="16dp"/><stroke android:width="1dp" android:color="@color/xingsui_line"/></shape>

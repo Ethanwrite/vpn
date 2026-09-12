@@ -119,6 +119,7 @@ fn start_with_config(
             rt.child = Some(child);
             rt.config_path = Some(config_file.disarm());
             rt.clash_port = clash_port;
+            rt.proxy_port = proxy_port;
             rt.mode = mode;
             rt.node_id = Some(node_id);
             rt.node_name = Some(node_name);

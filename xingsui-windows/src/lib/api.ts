@@ -35,6 +35,8 @@ export const api = {
 
   switchMode: (mode: NetMode) => invoke<void>("switch_mode", { mode }),
 
+  getLatency: () => invoke<number | null>("get_latency"),
+
   getStatus: () => invoke<StatusPayload>("get_status"),
 };
 

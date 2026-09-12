@@ -20,6 +20,7 @@ pub struct ConnRuntime {
     pub config_path: Option<PathBuf>,
     /// clash api 端口，用于轮询流量。
     pub clash_port: u16,
+    pub proxy_port: u16,
     /// 系统代理模式下备份的原注册表值，用于恢复。
     pub proxy_backup: Option<ProxyBackup>,
     /// 流量轮询任务的停止信号代际；每次连接自增使旧任务退出。

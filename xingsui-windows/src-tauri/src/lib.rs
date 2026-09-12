@@ -90,6 +90,7 @@ pub fn run() {
             commands::disconnect,
             commands::switch_mode,
             commands::get_status,
+            commands::get_latency,
         ])
         .on_window_event(|window, event| {
             // 关闭窗口时先清理内核与系统代理，防止断网。
