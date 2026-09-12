@@ -45,7 +45,7 @@
 
 **后端子模块**（`backend/app/`）：`main.py`（全部路由/鉴权中间件/节点调度/租约签发）、`site_page.py`（官网 SPA）、`payment_page.py`（支付页）、`admin_page.py`（管理后台）、`payment_config.py`（收款码/深链）、`node_service.py`（节点评分与配置渲染）、`db_models.py`/`database.py`（ORM）。
 
-**Agent 关键函数**：`add_peer/remove_peer`（awg）、`add_vless_user/remove_vless_user`（sing-box）、`register_lease`（本地租约，`expires_at`）、`reconcile_*`（清理不在租约表里的 user/peer）、`static_vless_uuids()`（保留订阅永久 user）、`peer_usage()`（`wg show dump` 每-peer 实测 rx+tx，供后端计费）。
+**Agent 关键函数**：`add_peer/remove_peer`（awg）、`add_vless_user/remove_vless_user`（sing-box）、`register_lease`（本地租约，`expires_at`）、`reconcile_*`（清理不在租约表里的 user/peer）、`static_vless_uuids()`（保留订阅永久 user）、`peer_usage()`（`wg show dump` 每-peer 实测 rx+tx，供后端计费）、`registered_subscription_users()`（registry ∩ sing-box 实际 user，供控制面对账）、`register_subscriptions()`（成批注册订阅 user，一次写配置一次 reload）。
 
 ---
 
@@ -125,6 +125,13 @@ uptime 26 天、sshd 正常，只是**从本机白名单外的源看不见**。
 - **按 UUID 计量（源 IP 审计）**：XTLS-vision 握手后 splice 到内核，sing-box 的 v2ray_api（本二进制未编译）/clash_api 都拿不到逐-user 字节。改用**节点 sing-box `info` 日志**：每条有效连接打印 `[u-{user_id}] inbound connection to ...` 与源 IP，Agent `/vless/usage` 按 UUID 聚合**不同源 IP 数/连接数**，后端 `audit_subscription_usage()` 循环（`SUBSCRIPTION_AUDIT_SWEEP_SECONDS`，默认 300s）拉取并写入 `subscription_credentials.last_distinct_source_ips` 及**当日峰值** `daily_peak_source_ips`，超 `SUBSCRIPTION_SHARING_ALERT_IPS`（默认 5）告警——**一个 UUID 多源 IP = 共享/泄漏信号**。字节级配额对不计费的 VIP 无意义，故不做。
 - **共享自动撤销**（`enforce_subscription_sharing_revocation`）：某用户单节点源 IP 峰值 ≥ `SUBSCRIPTION_REVOKE_SOURCE_IPS`（默认 10，远高于告警 5）**连续 2 次审计**（strike 防抖，回落即清零）→ 自动 `revoke_subscription_credentials`+`reset_subscription_token`（version+1 杀旧链接）+ 写 `auto_revoke_share` 审计日志。开关 `SUBSCRIPTION_AUTO_REVOKE_ENABLED`（默认 on）。
 - **发放容错**：`provision_subscription_credentials` 遍历节点时单个节点 Agent 不可达（如带宽耗尽）会**跳过该节点**、用其余节点照常出配置，不再整单 503（212 下线时验证）。
+- **节点侧凭证漂移自愈（2026-09-12 新增，见 §5.1 事件四）**：`subscription_credentials` 只是「控制面推过什么」的记录，
+  真正能握手的是节点 sing-box 的 user 列表；两者会因重建节点/Agent 状态文件路径变更/手改配置而分叉。
+  ①**渲染时校验**：`/sub` 对「看起来已是最新」的行先调 Agent `POST /vless/subscription/list` 确认节点真的认识这个 UUID，
+  不认识就**用同一个 UUID 重推**（已导入的客户端配置无需改动）；探测失败（不可达/旧版 Agent）则退回信任 DB 行，不让 `/sub` 挂掉。
+  ②**后台对账**：`reconcile_subscription_credentials()` 在启动时立即跑一次、之后随订阅审计循环（默认 300s）跑，
+  把节点丢失的未过期凭证成批补回（`POST /vless/subscription/sync`，每批 ≤50，节点侧一次写配置一次 reload）——
+  第三方客户端会缓存已导入的配置、可能好几天不拉取，只靠渲染时自愈救不回这些人。仅补 `users.status='active'` 且未过期的凭证。
 - 非 VIP 点导出 → 友好提示「开通 VIP 后即可导出订阅链接」；`/sub` 对无效 token 返回 401，非 VIP 返回对应 code。**撤销 VIP（`revoke-vip`）与删除用户（`DELETE /admin/users/{id}`）均会撤销其节点侧订阅 UUID。**
 
 ### 4.6 管理后台
@@ -163,6 +170,25 @@ uptime 26 天、sshd 正常，只是**从本机白名单外的源看不见**。
 - **线上证据**：节点与 Agent 持续健康、2.0.27 的 `/usage/report` 全部 200；同时观察到健康空闲 peer 的握手年龄超过 180s，证明“历史握手 >180s 即判死”会误杀。旧版本控制面请求仍从 VPN 出口发出，说明 2.0.23 以前客户端没有 App 排除，必须强制升级。
 - **复合根因**：①Android Doze 会暂停普通 10s 协程，原 5 分钟租约在休眠中被 Agent 删除；②首页 `/me`、状态统计或连续 3 次上报的瞬时失败均会删除隧道；③网络回调先 DOWN 再拉新配置，取消窗口可永久留下 DOWN；④重复 `GET /vpn/config` 覆盖同一设备行的 `lease_id`，旧连接下一次上报立刻 403；⑤GoBackend 热切换先 `stopSelf()`，排队的 `onDestroy()` 会关掉刚创建的新 handle；⑥native Go 的全局 tunnel handle map 无锁，状态读取/上报与热切换并发时可直接触发 `concurrent map read and map write` 杀进程；⑦旧 Android token 仅 24 小时且无刷新，活跃用户到点被 401 断开；⑧控制面重启错误地只恢复 VIP peer，误撤仍有免费流量的用户；⑨多 Uvicorn worker 的启动迁移、节点心跳、租约清理与实测计费缺少完整事务栅栏。
 - **2.0.28 修复**：配置先取后切、连接/断开统一 Mutex、backend+lease 元数据不可取消原子提交；热切换保留前台 VpnService，仅最终 DOWN 才停止，Service generation/future 与激活/销毁统一加锁；native handle map 用 RWMutex 保护且读锁覆盖整个 handle 使用周期；网络候选稳定去抖并保留最新切换事件；Service 被系统重启后按用户已连接意图拉新短租约；瞬时控制面/统计错误不再断，租约过期透明重签；只用“真实 peer 连接 60s 仍从未握手”触发一次智能换线，空统计与陈旧历史握手不判死。服务端同一 AWG 连接重取配置保留 `lease_id`，Android 短租约放宽至 1 小时并在最后 10 分钟续租；新登录 token 为 30 天，旧活跃 Android token 一次性提升到其创建时间+30天（非滑动）；启动迁移/心跳使用同一 PostgreSQL 事务级共享/独占栅栏，清理/计费另加 advisory/row lock；免费授权、MTU 1280、keepalive 25 与安全端口成为硬约束。
+
+**事件四：订阅链接的节点连不上（2026-09-12）**
+- **现象**：VIP 的订阅配置导入第三方客户端后，节点看起来能连但完全跑不动流量。当时只剩新加坡一台节点、
+  DB 里 6 个未过期的 `subscription_credentials` 行一切正常，`/sub` 也照常出配置。
+- **根因**：9-11 单机重建后节点 Agent 用 `XS_SUBSCRIPTION_STATE_PATH=/var/lib/xingsui-agent/subscriptions.json`，
+  而重建前的状态在 `/var/lib/xingsui-agent/subscription-users.json`（8-17 最后写入）。新状态文件从空开始，
+  reconcile 随即把 6 个订阅 user 从 sing-box 清掉。控制面这边 `provision_subscription_credentials` 的快路径
+  「`token_version` 与 `expires_at` 都对得上 → 直接渲染、不调 Agent」**把 DB 行当成了节点已注册的证据**，
+  于是永远不会重推：VLESS 用未注册的 UUID 握手会落到 Reality 回落目标（真站点），客户端显示连上但代理不通。
+  只有用户手动「重置订阅」（version+1）才会重新发放 —— 极具迷惑性。
+- **修复**：节点 Agent 2.2.0 新增 `/vless/subscription/list`（报告 registry ∩ sing-box 实际 user，只有交集才算「能认证」）
+  与 `/vless/subscription/sync`（成批注册、一次 reload）；控制面渲染时校验 + 后台对账自愈（见 §4.5）。
+- **教训一**：**「我们记录过」不等于「对端还持有」**。凡是把状态推给外部系统的地方，都要有一条读回对端真实状态的路，
+  否则任何一次对端状态丢失都会变成静默且永久的故障。「未知」也不能当成「空」——探测失败必须退回信任本地记录，
+  不然一次网络抖动就会把健康节点全部重写。
+- **教训二（部署时踩的）**：后台对账第一版在**同一个事务里**持 `vpn_nodes` 的 AccessShareLock 跨越 Agent HTTP 调用，
+  与另一个 uvicorn worker 启动时的 `alter table vpn_nodes ...` 撞成 **deadlock**（`users` 与 `vpn_nodes` 反向加锁）。
+  现改为「先快照、关事务、再做网络 I/O」，并在快照事务开头取 `acquire_database_schema_read_lock()`（与心跳同一道栅栏）。
+  **任何在启动期就跑的后台循环都必须取这道共享栅栏，且不得把事务开着做慢 I/O。**
 
 **客户端弹性（Android 2.0.28 起）**：①App 自身排除出隧道，配置 API 双域名故障转移；②仅 401/明确 entitlement 拒绝立即断，I/O/超时/5xx 无限重试且不拆数据面；③真实 peer 连接 60s 从未握手才提示并自动带 `exclude_node` 换节点一次，**陈旧历史握手不再判死**；④网络切换原子换配置，失败保留原隧道；⑤Doze/Service 重启后透明重签恢复。
 
@@ -231,7 +257,10 @@ Agent 代码部署到每个节点 `/opt/xingsui/agent.py`，systemd 服务 `xing
 scp deploy/edge-node/agent.py root@<节点>:/opt/xingsui/agent.py
 ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口，现有 peer 不掉
 ```
-改 Agent 须部署到**所有节点**（2026-09-11 起只有 `61.13.236.31`，其余节点主机均已下线），否则漏部署的节点上免费用户不计费、订阅端点缺失（见 §9）。部署前 `diff` 服务器现有 `agent.py` 与仓库版本确认一致。**当前 Agent 版本 2.1.2**（AWG 状态/用量失败时 fail-closed；1 小时租约允许与签名窗口一致的 90s 时钟偏差；含 `/vless/subscription/{add,remove}`、`/vless/usage` 源 IP 审计）；订阅计量依赖各节点 **sing-box 日志级别 = `info`**（`/vless/usage` 解析日志），新建/重装节点须确认。新建 VLESS 节点的 sing-box service **必须有 `ExecReload=/bin/kill -HUP $MAINPID`**，否则 Agent 的 `systemctl reload` 失败、`/vless/add` 报 "Node agent unavailable"。
+改 Agent 须部署到**所有节点**（2026-09-11 起只有 `61.13.236.31`，其余节点主机均已下线），否则漏部署的节点上免费用户不计费、订阅端点缺失（见 §9）。部署前 `diff` 服务器现有 `agent.py` 与仓库版本确认一致。**当前 Agent 版本 2.2.0**（AWG 状态/用量失败时 fail-closed；1 小时租约允许与签名窗口一致的 90s 时钟偏差；含 `/vless/subscription/{add,remove,list,sync}`、`/vless/usage` 源 IP 审计）；订阅计量依赖各节点 **sing-box 日志级别 = `info`**（`/vless/usage` 解析日志），新建/重装节点须确认。新建 VLESS 节点的 sing-box service **必须有 `ExecReload=/bin/kill -HUP $MAINPID`**，否则 Agent 的 `systemctl reload` 失败、`/vless/add` 报 "Node agent unavailable"。
+⚠️ **`XS_SUBSCRIPTION_STATE_PATH` 是节点上唯一记着「谁有长期订阅 user」的文件**（默认 `/var/lib/xingsui-agent/subscriptions.json`）。
+重装/迁移节点时改了这个路径（或没带上旧文件）就等于清空全部订阅 user —— 2026-09-12 的故障正是这样来的（§5.1 事件四）。
+现在控制面会自动对账补回，但**重建节点后仍应主动确认** `POST /vless/subscription/list` 的条数与 DB `subscription_credentials` 对得上。
 
 ---
 
@@ -254,6 +283,24 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 - **收款码用相对路径**：`PAYMENT_WECHAT_QR_URL`/`PAYMENT_ALIPAY_QR_URL` 与 DB `payment_settings.qr_url` 一律用**站内相对** `/pay/*.jpg`（勿写死绝对域名，否则镜像页在主域名被封时二维码挂）；`/pay/` 由 API 提供，两域名都生效。
 - **免费流量按节点实测计费（勿退回自报）**：awg 计费依赖各节点 Agent 的 `/peer/usage` + 后端 `reconcile_node_usage()` 循环 + `vpn_devices.measured_bytes` 列。**所有 awg 节点 Agent 必须同步含 `/peer/usage`**（见 §7.4），漏部署的节点上 awg 免费用户**不计费也无 floor 兜底**。`measured_bytes` 列缺失会导致后端启动/查询报错——新库或重建库须确认已 `ALTER TABLE`。VLESS 仍靠 `FREE_TRAFFIC_MIN_BYTES_PER_SEC` 时间下限兜底。
 - **订阅节点文件权限**：`/opt/xingsui/download/subscription-links.txt` 必须能被 API 容器用户（`appuser` gid 999）读取，否则 `/sub` 返回 500。设为 `640 root:999`。**手动改该文件后重新 `chown root:999 && chmod 640`**。
+- **订阅凭证以节点为准、不能只信 DB**：`subscription_credentials` 行存在 ≠ 节点能认证该 UUID。改动 `/sub` 发放逻辑时
+  不要为了省一次 Agent 调用而去掉 `agent_list_subscription_users` 校验（探测失败仍必须退回信任 DB 行），
+  也不要删掉 `reconcile_subscription_credentials()` 循环 —— 这两条是节点状态丢失后唯一的自愈路径（§5.1 事件四）。
+- **后台循环的两条硬规矩（2026-09-12 全面加固）**：uvicorn 多 worker 各自跑 `init_database()` 的 DDL，
+  所以每个后台 sweep 都必须
+  ①**在每个事务开头调 `acquire_database_schema_read_lock(db)`**（共享栅栏，与心跳/启动 DDL 同一把锁）；
+  ②**不要把事务开着做网络 I/O**，写成「先快照 → 关事务 → 调 Agent → 再开事务落库」。
+  四个 sweep 现在都遵守：`sweep_expired_vpn_leases`、`reconcile_node_usage`、`reconcile_subscription_credentials`、
+  `audit_subscription_usage`。⚠️ **栅栏是事务级的**：`enforce_subscription_sharing_revocation` 每个用户 commit 一次，
+  所以它在每轮循环里都要重新取一次，不能只在函数开头取。
+  违反①会与另一个 worker 的 `alter table` 形成反向加锁直接 deadlock（9-12 实际踩到）；违反②会把
+  `vpn_nodes`/`vpn_devices`/`users` 的 AccessShareLock 一直握到 Agent 应答（每节点最多 3~6s），阻塞启动迁移。
+- **`reconcile_node_usage` 的乐观校验不能删**：采样在事务外取，落库时必须先确认
+  `device.measured_bytes` 仍等于采样时的基线，不等就**整条丢弃**。否则并发 sweep 的过期样本会
+  ①比基线大 → 重复计费；②比基线小 → 走「计数器重置」分支把基线回退，已计费的字节被再收一次。
+  `revoke_vpn_device()` 的 Agent 调用是唯一留在事务内的网络调用（只在免费用户被切断时触发，且必须与那次扣费同事务）。
+- **`revoke_vpn_device()` 会查 `vpn_nodes`**：在它前面先把节点加载进 session（`select(VpnNodeRow)`），
+  否则它会在已持有 `vpn_devices`/`users` 写锁的情况下再去取 `vpn_nodes` 的读锁 —— 正是反向加锁顺序。
 
 ### VLESS / Reality（最容易踩坑）
 - **DB 的 pbk/sid 必须与 sing-box 实际密钥一致**：任何一次 Reality 密钥轮换，必须**同时**更新 sing-box 配置和 DB 的 `VlessPublicKey`/`VlessShortId`/`VlessHost`，否则动态客户端（Windows/App）握手失败报「账户状态同步失败」，而订阅（链接里硬编码正确密钥）却仍正常——极具迷惑性。验证方法：对该节点 `/vpn/nodes/{id}/config` 取配置，在美国机器起 sing-box 客户端跑通。
@@ -279,7 +326,7 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 | 端 | 版本 / 状态 |
 |---|---|
 | 控制面 | **`64.90.24.84`（香港）**。`db`(postgres:16-alpine) / `api`(xingsui-backend:latest) / `caddy`(caddy:2-alpine) 三容器已拉起。**数据是原 `xingsui-control-plane_pgdata` 卷，不是任何转储** —— 310 用户 / 660 订单 / 88 条 `vip_status=active`（后台口径 46 未过期）/ 最新注册 2026-08-24。构建源 `/opt/xingsui/backend` 已与仓库对齐（`main.py` md5 `0c609d21668207d40efba353aff1f0cc`；恢复前服务器上那份只是 docstring 中英文差异，功能一致）。回滚点：`/opt/xingsui/backups/pre-restore-20260911T093734Z/`（pgdata 冷备 + caddy_data + .env + secrets + 逻辑转储）、镜像 `xingsui-backend:pre-restore-20260911`。 |
-| 新加坡节点 | `node-singapore` → **`61.13.236.31`**，权重 220（唯一在池），protocol=dual，`client_network 10.70.0.0/24`，MTU 1280，keepalive 25。awg 服务端公钥、VLESS Reality pbk / sid 见 `markdown/a.markdown`（不入库；本文遵循「凭证与密钥一律不写入」的约定，公开仓库里也不放节点指纹）；SNI `xingsui.org` / flow `xtls-rprx-vision` / Reality 回落 `xingsui.org:443`。Agent **2.1.2**，sing-box `1.13.13-lx.7`，日志级 `info`，`xingsui-vless.service` 带 `ExecReload=/bin/kill -HUP $MAINPID`。 |
+| 新加坡节点 | `node-singapore` → **`61.13.236.31`**，权重 220（唯一在池），protocol=dual，`client_network 10.70.0.0/24`，MTU 1280，keepalive 25。awg 服务端公钥、VLESS Reality pbk / sid 见 `markdown/a.markdown`（不入库；本文遵循「凭证与密钥一律不写入」的约定，公开仓库里也不放节点指纹）；SNI `xingsui.org` / flow `xtls-rprx-vision` / Reality 回落 `xingsui.org:443`。Agent **2.2.0**，sing-box `1.13.13-lx.7`，日志级 `info`，`xingsui-vless.service` 带 `ExecReload=/bin/kill -HUP $MAINPID`。 |
 | Android | **线上 `2.0.31 (41)`**（2026-09-12）。扁平线性锤镰、固定首页、统一登录和充值页、实时连接指标。Release 签名与生产证书一致，11 项单元测试通过。APK sha256 `1b9bdd052209e8a5135ddf0aa19ff6f9a018a44fa8cb9d308a8de6abede05f56`，`MIN_SUPPORTED=19` 保持不变。上版 2.0.30 保存在本次回滚目录。 |
 | Windows | **线上 `1.0.25`**（2026-09-12）。GitHub Actions run `34685811686` 成功，提交 `c0b6885dcdda9f133ed6ab9a781050ba4e886165`；NSIS/MSI 均生成。官网分发 NSIS（15350539B），sha256 `0aec75cf31ee933e1a93c3882cf6aee19fd297214d40a14ac20841a81f39d2ba`。保留 WebView2 bootstrapper 与旧品牌卸载钩子。 |
 | 个人静态订阅 | `https://xingsui.org/sub-static/<random>.yaml`（控制面 Caddy `handle_path` + 挂载 `/srv/personal-subscription`）。节点侧对应 `/etc/xingsui/static-vless-uuids.txt` 的常驻 UUID，Agent reconcile 会保留。 |
@@ -318,12 +365,50 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
   `/opt/xingsui` 现在只剩正在运行的 `agent.py`。释放磁盘 0.7G、内存约 76MB。
   ⚠️ **教训：在边缘节点上临时搭控制面，会把控制面的全部机密留在暴露面更大的机器上；
   拆除时必须把密钥足迹一起清掉，不只是停容器。**
+- ~~订阅链接的节点连不上~~ **已于 2026-09-12 修复**。根因与修法见 §5.1 事件四、§4.5「节点侧凭证漂移自愈」。
+  当时节点 sing-box 只剩 2 个 VLESS user，DB 里 6 个未过期订阅凭证全部不在节点上；上线后一次成批补回，
+  节点 user 数 2 → 8。回归测试：`tests/test_subscription_links.py` 的 `test_subscription_repushes_a_credential_the_node_lost`
+  / `test_subscription_render_trusts_the_row_when_the_node_cannot_be_probed`
+  / `test_reconcile_restores_subscription_credentials_the_node_lost` / `test_reconcile_skips_offline_nodes`
+  / `test_reconcile_holds_no_transaction_while_calling_the_agents` / `test_reconcile_fences_against_concurrent_startup_migrations`，
+  以及 `deploy/edge-node/tests/test_agent.py` 的
+  `test_registered_subscription_users_reports_only_what_sing_box_can_authenticate` / `test_subscription_sync_registers_a_batch_with_one_reload`
+  （均已验证：还原旧实现时对应测试失败）。
+- ~~另外三个后台 sweep 也是「持事务跨 Agent I/O」且没取 schema 栅栏~~ **已于 2026-09-12 一并加固**。
+  它们至今没爆只是因为都先 `sleep` 再干活、错开了启动期 DDL 窗口 —— 下次有人把某个循环改成启动即跑就会重演。
+  现 `sweep_expired_vpn_leases` / `reconcile_node_usage` / `audit_subscription_usage` 都取栅栏，后两者改成
+  「快照 → 关事务 → 调 Agent → 落库」；`reconcile_node_usage` 因此新增乐观基线校验防重复计费（见 §9）。
+  回归测试：`test_node_usage_reconcile_never_polls_agents_inside_a_transaction`
+  / `test_node_usage_reconcile_drops_a_sample_whose_baseline_moved`
+  / `test_subscription_audit_never_polls_agents_inside_a_transaction`
+  / `test_lease_sweep_takes_the_schema_fence_before_locking_device_rows`
+  / `test_sharing_revocation_retakes_the_fence_for_each_committed_user`（均已验证：去掉对应加固后失败）。
+- **VLESS 订阅仍无字节级计量**：`/vless/usage` 只有源 IP / 连接数（XTLS-vision splice 到内核后拿不到逐-user 字节）。
 - **单点**：控制面与节点各只有一台，且节点 VLESS 的 Reality 回落依赖控制面 443。
 
 > 回归建议：非 VIP 真机跑满 60MB（节点实测）应被切断→弹卡片→官网下单→管理员确认→VIP；
 > VIP 连接确认 `used` 不增长；订阅导入 Clash 确认「到期节点 + 星隧-新加坡」两项，重置后旧配置立即失效；
 > 一键连接 Endpoint 应为 `61.13.236.31:443`；**控制面 Caddy 重启后要复查节点 VLESS 是否仍能握手**（回落依赖）；
-> 节点上下线/权重调整后查健康表 peer 分布。
+> 节点上下线/权重调整后查健康表 peer 分布；**重建/迁移节点后核对 `POST /vless/subscription/list` 的条数
+> 与 DB `subscription_credentials`（未过期部分）一致**。
+
+
+### 2026-09-12 订阅凭证漂移修复发布点
+
+只改后端 `app/main.py`、`app/node_service.py` 与节点 `agent.py`（2.1.2 → 2.2.0）。未动数据库结构、Caddy、
+节点隧道进程与客户端安装包。
+
+- 节点回滚点：`61.13.236.31:/root/agent.py.pre-2.2.0-20260912T141448Z`（`systemctl restart xingsui-agent` 即可回退，
+  重启不动 awg 接口）。
+- 控制面回滚点：`/opt/xingsui/backups/sub-credential-repair-20260912T141534Z/`（旧 `main.py` / `node_service.py`）；
+  镜像 `xingsui-backend:pre-sub-repair-20260912`。
+同批还加固了另外三个后台 sweep 的加锁顺序（回滚点 `/opt/xingsui/backups/loop-hardening-20260912T154556Z/`、
+镜像 `xingsui-backend:pre-loop-hardening-20260912`）。上线后在 api 容器里直接跑过四个 sweep，全部 OK。
+
+- 上线验证：Agent `/healthz` 报 2.2.0；启动即对账，一次补回 6 个凭证（节点 user 2 → 8），无 deadlock；
+  测试 VIP 账号拉 `/sub` 出「到期节点 + 星火-新加坡」；**人为从节点摘掉该 UUID 后，一次 `/sub` 拉取即用同一 UUID 重推成功；
+  完全不拉取的情况下后台对账也在一个循环周期内补回**；5 个域名 `/health` 均 200。验证用测试账号已按精确邮箱删除
+  （306 用户不变），节点上的临时签名脚本已 `shred -u`。
 
 
 ### 2026-09-12 UI 发布回滚点

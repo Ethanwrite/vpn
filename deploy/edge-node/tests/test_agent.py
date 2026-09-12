@@ -169,3 +169,77 @@ def test_production_rejects_plaintext_agent(monkeypatch) -> None:
     monkeypatch.delenv("XS_AGENT_TLS_KEY", raising=False)
     with pytest.raises(SystemExit):
         agent.validate_startup_configuration()
+
+
+def test_registered_subscription_users_reports_only_what_sing_box_can_authenticate(
+    monkeypatch, tmp_path
+) -> None:
+    """The control plane repairs drift from this listing, so a registry entry alone must
+    not count: only UUIDs present in the live sing-box config complete a handshake."""
+    config_path = tmp_path / "sing-box.json"
+    config_path.write_text(
+        json.dumps({"inbounds": [{"type": "vless", "tag": "vless-in", "users": []}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XS_VLESS_CONFIG", str(config_path))
+    monkeypatch.setenv("XS_VLESS_INBOUND_TAG", "vless-in")
+    monkeypatch.setenv("XS_SUBSCRIPTION_STATE_PATH", str(tmp_path / "subscriptions.json"))
+    monkeypatch.setattr(agent, "run", lambda args, input_text=None: "")
+    monkeypatch.setattr(agent, "reload_vless_service", lambda: None)
+    agent.SUBSCRIPTIONS.clear()
+
+    live = "11111111-1111-4111-8111-111111111111"
+    forgotten = "22222222-2222-4222-8222-222222222222"
+    expired = "33333333-3333-4333-8333-333333333333"
+    future = datetime.now(UTC) + timedelta(days=30)
+
+    assert agent.registered_subscription_users() == {}
+
+    agent.add_vless_user(live, "u-live")
+    agent.register_subscription(live, "u-live", future)
+    # Registered with the control plane, but the node lost its sing-box user.
+    agent.register_subscription(forgotten, "u-forgotten", future)
+    # Present in sing-box but past its VIP expiry: reconcile is about to drop it.
+    agent.add_vless_user(expired, "u-expired")
+    agent.register_subscription(expired, "u-expired", datetime.now(UTC) - timedelta(minutes=1))
+
+    assert agent.registered_subscription_users() == {live: "u-live"}
+
+    # Re-asserting an unchanged registration must not rewrite state or reload sing-box.
+    state_path = tmp_path / "subscriptions.json"
+    before = state_path.stat().st_mtime_ns
+    agent.register_subscription(live, "u-live", future)
+    assert state_path.stat().st_mtime_ns == before
+
+    agent.SUBSCRIPTIONS.clear()
+
+
+def test_subscription_sync_registers_a_batch_with_one_reload(monkeypatch, tmp_path) -> None:
+    """Repairing a node touches every credential at once; one reload per user would
+    drop live VLESS connections dozens of times over."""
+    config_path = tmp_path / "sing-box.json"
+    config_path.write_text(
+        json.dumps({"inbounds": [{"type": "vless", "tag": "vless-in", "users": []}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XS_VLESS_CONFIG", str(config_path))
+    monkeypatch.setenv("XS_VLESS_INBOUND_TAG", "vless-in")
+    monkeypatch.setenv("XS_SUBSCRIPTION_STATE_PATH", str(tmp_path / "subscriptions.json"))
+    monkeypatch.setattr(agent, "run", lambda args, input_text=None: "")
+    reloads = []
+    monkeypatch.setattr(agent, "reload_vless_service", lambda: reloads.append(1))
+    agent.SUBSCRIPTIONS.clear()
+
+    future = datetime.now(UTC) + timedelta(days=30)
+    batch = [
+        (f"{n:08d}-1111-4111-8111-111111111111", f"u-{n}", future) for n in range(1, 6)
+    ]
+
+    assert agent.register_subscriptions(batch) == 5
+    assert len(reloads) == 1
+    assert agent.registered_subscription_users() == {user_uuid: name for user_uuid, name, _ in batch}
+
+    # Re-syncing the same batch changes nothing and must not reload sing-box.
+    assert agent.register_subscriptions(batch) == 0
+    assert len(reloads) == 1
+    agent.SUBSCRIPTIONS.clear()

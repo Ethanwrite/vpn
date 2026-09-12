@@ -605,6 +605,51 @@ def agent_remove_subscription_user(node: Any, user_uuid: str, *, timeout: float 
     return agent_request(node, "/vless/subscription/remove", {"uuid": user_uuid}, timeout=timeout)
 
 
+def agent_sync_subscription_users(
+    node: Any,
+    users: list[tuple[str, str, datetime]],
+    *,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """Register a batch of subscription users in one node-side write.
+
+    Repairing a node that lost its subscription users would otherwise reload
+    sing-box once per credential, dropping every live VLESS connection each time.
+    """
+    return agent_request(
+        node,
+        "/vless/subscription/sync",
+        {
+            "users": [
+                {
+                    "uuid": user_uuid,
+                    "name": name,
+                    "expires_at": expires_at.astimezone(UTC).isoformat(),
+                }
+                for user_uuid, name, expires_at in users
+            ]
+        },
+        timeout=timeout,
+    )
+
+
+def agent_list_subscription_users(node: Any, *, timeout: float | None = None) -> set[str]:
+    """Subscription UUIDs the node can actually authenticate right now.
+
+    Node-side state can be lost independently of the control-plane database (node
+    rebuild, agent state reset, hand-edited sing-box config). This is the only way
+    to tell a credential we merely *recorded* from one the node will really accept.
+    Raises RuntimeError when the node cannot answer (unreachable, or an agent too
+    old to expose the endpoint) — callers must not read that as "nothing is
+    registered", or they would rewrite healthy nodes on every failed probe.
+    """
+    result = agent_request(node, "/vless/subscription/list", {}, timeout=timeout)
+    users = result.get("users")
+    if not isinstance(users, dict):
+        raise RuntimeError("invalid node agent response")
+    return {str(user_uuid) for user_uuid in users}
+
+
 def agent_vless_usage(node: Any, *, timeout: float | None = None) -> dict[str, dict[str, Any]]:
     """Per-user (by name) connection/source-IP audit from the node's sing-box logs."""
     result = agent_request(node, "/vless/usage", {}, timeout=timeout)

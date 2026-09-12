@@ -757,6 +757,9 @@ SUBSCRIPTION_AUTO_REVOKE_ENABLED = os.getenv("SUBSCRIPTION_AUTO_REVOKE_ENABLED",
 SUBSCRIPTION_REVOKE_SOURCE_IPS = max(3, int(os.getenv("SUBSCRIPTION_REVOKE_SOURCE_IPS", "10")))
 # user_id -> consecutive audit cycles seen over the revoke threshold (in-memory strike count).
 SUBSCRIPTION_SHARING_STRIKES: dict[str, int] = {}
+# Credentials re-pushed per node call when repairing node-side state loss. Must not
+# exceed the Agent's MAX_SYNC_USERS (100).
+SUBSCRIPTION_SYNC_BATCH_SIZE = 50
 SUPPORTED_VPN_PLATFORMS = {"android": "awg", "windows": "vless"}
 ONLINE_WINDOW_SECONDS = 5 * 60
 EXPIRING_SOON_DAYS = 7
@@ -1225,10 +1228,27 @@ def subscription_proxy_dict(node: VpnNodeRow, vless_uuid: str, used_names: set[s
     return proxy
 
 
+def node_registered_subscription_uuids(node: VpnNodeRow, cache: dict[str, set[str] | None]) -> set[str] | None:
+    """Subscription UUIDs the node will authenticate, or None when it cannot be asked.
+
+    Cached per call so one render probes each node at most once.
+    """
+    if node.id not in cache:
+        try:
+            cache[node.id] = node_service.agent_list_subscription_users(node)
+        except Exception:
+            # Unreachable, or an agent too old to expose the endpoint. Unknown is not
+            # "empty": callers keep trusting the database row rather than re-pushing.
+            logger.warning("subscription registry probe failed node=%s", node.id)
+            cache[node.id] = None
+    return cache[node.id]
+
+
 def provision_subscription_credentials(db: Session, user: UserRow) -> list[tuple[VpnNodeRow, str]]:
     """Ensure this user holds a per-node VLESS UUID (bound to their VIP expiry) on every
     eligible node, registered with the node agent. Idempotent: only calls the agent when
-    a credential is newly issued, rotated (token version bumped) or its expiry changed."""
+    a credential is newly issued, rotated (token version bumped), its expiry changed, or
+    the node has lost its copy."""
     expires_at = coerce_utc(user.vip_expired_at)
     if expires_at is None:
         raise SubscriptionApiException(403, "VIP_REQUIRED", "开通 VIP 后即可导出订阅链接。")
@@ -1241,12 +1261,25 @@ def provision_subscription_credentials(db: Session, user: UserRow) -> list[tuple
         ).all()
     }
     issued: list[tuple[VpnNodeRow, str]] = []
+    registry_cache: dict[str, set[str] | None] = {}
     for node in eligible_subscription_nodes(db):
         row = existing.get(node.id)
-        # Already provisioned and current for this node: render it without re-pushing.
+        # Already provisioned and current for this node — but a database row is only a
+        # record of what we pushed, not proof the node still holds it. Node-side state
+        # is lost by rebuilds, agent state resets and manual sing-box edits, and the
+        # row keeps matching, so the old fast path handed every existing subscriber a
+        # UUID the node rejects forever (only a token reset ever re-pushed). Confirm
+        # with the node, and fall through to re-push the same UUID when it is missing.
         if row is not None and row.token_version == version and coerce_utc(row.expires_at) == expires_at:
-            issued.append((node, row.vless_uuid))
-            continue
+            registered = node_registered_subscription_uuids(node, registry_cache)
+            if registered is None or row.vless_uuid in registered:
+                issued.append((node, row.vless_uuid))
+                continue
+            logger.warning(
+                "subscription credential missing on node — re-pushing user_id=%s node=%s",
+                user.id,
+                node.id,
+            )
         rotating = row is not None and row.token_version != version
         target_uuid = str(uuid4()) if (row is None or rotating) else row.vless_uuid
         try:
@@ -1731,6 +1764,7 @@ def restore_active_vpn_peers() -> None:
 def sweep_expired_vpn_leases() -> None:
     now = datetime.now(UTC)
     with SessionLocal() as db:
+        acquire_database_schema_read_lock(db)
         is_postgresql = db.get_bind().dialect.name == "postgresql"
         if is_postgresql:
             acquired = db.scalar(
@@ -1739,6 +1773,10 @@ def sweep_expired_vpn_leases() -> None:
             )
             if not acquired:
                 return
+        # Load the nodes before the FOR UPDATE below takes row locks, so the per-row
+        # revoke resolves its node from the identity map rather than querying
+        # vpn_nodes while holding write locks on vpn_devices (the reverse lock order).
+        db.scalars(select(VpnNodeRow)).all()
         statement = (
             select(VpnDeviceRow)
             .where(VpnDeviceRow.status.in_(("active", "pending_revoke")))
@@ -1770,15 +1808,15 @@ def reconcile_node_usage() -> None:
     and charges exactly what each peer forwarded. VIP users are never charged; honest
     free users are billed their real usage (no floor/no artificial cap), and a client
     that under-reports (or reports 0) is still cut off at the real 60MB.
+
+    Structured as snapshot → node I/O → apply. Polling every node inside the charging
+    transaction used to hold AccessShareLock on vpn_devices/vpn_nodes/users for as long
+    as the agents took to answer, which both stalls a concurrent startup migration and
+    is the lock ordering that deadlocked the subscription sweep (2026-09-12).
     """
+    # Snapshot: which peers to ask about, and the baseline each sample is measured from.
     with SessionLocal() as db:
-        if db.get_bind().dialect.name == "postgresql":
-            acquired = db.scalar(
-                text("select pg_try_advisory_xact_lock(hashtext(:lock_key))"),
-                {"lock_key": "reconcile-node-usage"},
-            )
-            if not acquired:
-                return
+        acquire_database_schema_read_lock(db)
         devices = db.scalars(
             select(VpnDeviceRow)
             .where(VpnDeviceRow.status == "active")
@@ -1786,45 +1824,75 @@ def reconcile_node_usage() -> None:
         ).all()
         if not devices:
             return
-        by_node: dict[str, list[VpnDeviceRow]] = {}
-        for device in devices:
-            by_node.setdefault(device.node_id, []).append(device)
+        baselines = {device.id: int(device.measured_bytes or 0) for device in devices}
+        node_ids = {device.node_id for device in devices if device.node_id}
+        nodes = list(db.scalars(select(VpnNodeRow).where(VpnNodeRow.id.in_(node_ids))).all())
+    # No transaction is open while the agents are polled.
+    samples: dict[str, dict[str, int]] = {}
+    for node in nodes:
+        try:
+            samples[node.id] = node_service.agent_peer_usage(node, timeout=3.0)
+        except Exception:
+            # Agent unreachable this round; cumulative counters mean the usage is
+            # simply charged on a later successful poll — nothing is lost.
+            continue
+    if not samples:
+        return
+    with SessionLocal() as db:
+        acquire_database_schema_read_lock(db)
+        if db.get_bind().dialect.name == "postgresql":
+            acquired = db.scalar(
+                text("select pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": "reconcile-node-usage"},
+            )
+            if not acquired:
+                return
+        # Load the nodes before locking any device row, so the revoke below resolves
+        # its node from the identity map instead of querying vpn_nodes while holding
+        # write locks on vpn_devices/users (the reverse lock order).
+        db.scalars(select(VpnNodeRow).where(VpnNodeRow.id.in_(samples.keys()))).all()
+        fresh = {
+            device.id: device
+            for device in db.scalars(
+                select(VpnDeviceRow).where(VpnDeviceRow.id.in_(baselines.keys()))
+            ).all()
+        }
         changed = False
-        for node_id, node_devices in by_node.items():
-            node = db.get(VpnNodeRow, node_id)
-            if node is None:
+        for device_id, baseline in baselines.items():
+            device = fresh.get(device_id)
+            if device is None or device.status != "active":
                 continue
-            try:
-                usage = node_service.agent_peer_usage(node, timeout=3.0)
-            except Exception:
-                # Agent unreachable this round; cumulative counters mean the usage is
-                # simply charged on a later successful poll — nothing is lost.
+            current = samples.get(device.node_id, {}).get((device.client_public_key or "").strip())
+            if current is None:
                 continue
-            for device in node_devices:
-                public_key = (device.client_public_key or "").strip()
-                current = usage.get(public_key)
-                if current is None:
-                    continue
-                baseline = int(device.measured_bytes or 0)
-                if current < baseline:
-                    # Peer counters reset (re-added); rebase without charging.
-                    device.measured_bytes = current
-                    changed = True
-                    continue
-                delta = current - baseline
-                if delta <= 0:
-                    continue
+            # Optimistic guard: the sample was taken before this transaction, so a
+            # concurrent sweep (or a peer re-issue) that moved the baseline in the
+            # meantime makes it stale. Charging it anyway would double-bill, and
+            # rebasing on it would hand back bytes already charged.
+            if int(device.measured_bytes or 0) != baseline:
+                continue
+            if current < baseline:
+                # Peer counters reset (re-added); rebase without charging.
                 device.measured_bytes = current
                 changed = True
-                user = db.get(UserRow, device.user_id)
-                if user is None:
-                    continue
-                if effective_vip_status(user.vip_status, user.vip_expired_at) == "active":
-                    continue
-                ensure_free_traffic_quota(user)
-                user.free_traffic_used_bytes = int(user.free_traffic_used_bytes or 0) + delta
-                if not build_vpn_entitlement(user).allowed:
-                    revoke_vpn_device(db, device)
+                continue
+            delta = current - baseline
+            if delta <= 0:
+                continue
+            device.measured_bytes = current
+            changed = True
+            user = db.get(UserRow, device.user_id)
+            if user is None:
+                continue
+            if effective_vip_status(user.vip_status, user.vip_expired_at) == "active":
+                continue
+            ensure_free_traffic_quota(user)
+            user.free_traffic_used_bytes = int(user.free_traffic_used_bytes or 0) + delta
+            if not build_vpn_entitlement(user).allowed:
+                # The only agent call left inside the transaction, and it only fires
+                # when a free user is actually being cut off — rare, and it must stay
+                # atomic with the charge that triggered it.
+                revoke_vpn_device(db, device)
         if changed:
             db.commit()
 
@@ -1838,11 +1906,30 @@ async def node_usage_reconcile_loop() -> None:
             security_logger.error("Node usage reconciliation failed")
 
 
-def audit_subscription_usage() -> None:
-    """Pull each node's per-user VLESS connection audit and record how many distinct
-    source IPs each subscription credential is seen from. A single credential used from
-    many source IPs is the signature of a shared/leaked subscription config."""
+def reconcile_subscription_credentials() -> None:
+    """Re-push subscription credentials that the nodes no longer hold.
+
+    `subscription_credentials` records what the control plane pushed; the node's
+    sing-box user list is what actually authenticates. The two drift whenever node
+    state is lost (rebuild, agent state reset, hand-edited config) and nothing
+    brought them back: rendering a feed found the row current and skipped the agent,
+    so every existing subscriber's config stayed dead until they reset their token.
+    Third-party clients cache the imported config and may not re-pull for days, so
+    repairing on render alone is not enough — this sweep restores service without
+    the subscriber touching anything.
+    """
+    # Snapshot first, then talk to the nodes. Keeping the read transaction open across
+    # agent HTTP calls holds an AccessShareLock on vpn_nodes for seconds, which
+    # deadlocks a concurrently starting worker's `alter table vpn_nodes ...` migration
+    # (observed on deploy, 2026-09-12). No advisory lock around the sweep either: the
+    # repair is idempotent, so a second worker repeating the probe is cheaper than the
+    # lock forcing the transaction to stay open for the whole sweep.
+    now = datetime.now(UTC)
+    plan: list[tuple[VpnNodeRow, list[tuple[str, str, datetime]]]] = []
     with SessionLocal() as db:
+        # This sweep runs immediately at startup, i.e. exactly while a sibling worker
+        # may still own DDL table locks. Same fence the node heartbeat uses.
+        acquire_database_schema_read_lock(db)
         nodes = list(
             db.scalars(
                 select(VpnNodeRow)
@@ -1850,16 +1937,93 @@ def audit_subscription_usage() -> None:
                 .where(VpnNodeRow.protocol.in_(("vless", "dual")))
             ).all()
         )
-        now = datetime.now(UTC)
-        today = now.date().isoformat()
-        changed = False
-        # Peak distinct source IPs seen for each user on any single node this cycle.
-        user_peak_ips: dict[str, int] = {}
+        if not nodes:
+            return
+        health = node_health_map(db)
         for node in nodes:
-            try:
-                usage = node_service.agent_vless_usage(node)
-            except Exception:
+            # An offline node cannot be repaired, and probing it just burns the timeout.
+            if not node_service.node_is_online(
+                getattr(health.get(node.id), "last_heartbeat_at", None), now
+            ):
                 continue
+            candidates = [
+                (row.vless_uuid, row.user_name, expires_at)
+                for row in db.scalars(
+                    select(SubscriptionCredentialRow)
+                    .join(UserRow, UserRow.id == SubscriptionCredentialRow.user_id)
+                    .where(SubscriptionCredentialRow.node_id == node.id)
+                    .where(UserRow.status == "active")
+                ).all()
+                # Expired credentials are supposed to be gone from the node.
+                if (expires_at := coerce_utc(row.expires_at)) is not None and expires_at > now
+            ]
+            if candidates:
+                plan.append((node, candidates))
+    # The session is closed: node rows are detached but fully loaded, and no table
+    # lock is held while the agent calls run.
+    for node, candidates in plan:
+        try:
+            registered = node_service.agent_list_subscription_users(node)
+        except Exception:
+            logger.warning("subscription registry probe failed node=%s", node.id)
+            continue
+        missing = [item for item in candidates if item[0] not in registered]
+        # Batched: one sing-box write per chunk instead of one per credential,
+        # so repairing a whole node does not drop live connections repeatedly.
+        for start in range(0, len(missing), SUBSCRIPTION_SYNC_BATCH_SIZE):
+            batch = missing[start : start + SUBSCRIPTION_SYNC_BATCH_SIZE]
+            try:
+                node_service.agent_sync_subscription_users(node, batch)
+            except Exception:
+                security_logger.error(
+                    "subscription credential repair failed node=%s credentials=%s",
+                    node.id,
+                    len(batch),
+                )
+                continue
+            security_logger.warning(
+                "subscription credentials restored on node node=%s credentials=%s",
+                node.id,
+                len(batch),
+            )
+
+
+def audit_subscription_usage() -> None:
+    """Pull each node's per-user VLESS connection audit and record how many distinct
+    source IPs each subscription credential is seen from. A single credential used from
+    many source IPs is the signature of a shared/leaked subscription config.
+
+    Snapshot → node I/O → apply, for the same reason as reconcile_node_usage: the
+    audit must not hold table locks while it waits on the node agents.
+    """
+    with SessionLocal() as db:
+        acquire_database_schema_read_lock(db)
+        nodes = list(
+            db.scalars(
+                select(VpnNodeRow)
+                .where(VpnNodeRow.enabled.is_(True))
+                .where(VpnNodeRow.protocol.in_(("vless", "dual")))
+            ).all()
+        )
+    if not nodes:
+        return
+    # No transaction is open while the agents are polled.
+    samples: list[tuple[str, dict[str, dict[str, object]]]] = []
+    for node in nodes:
+        try:
+            samples.append((node.id, node_service.agent_vless_usage(node)))
+        except Exception:
+            continue
+    if not samples:
+        return
+    now = datetime.now(UTC)
+    today = now.date().isoformat()
+    # Peak distinct source IPs seen for each user on any single node this cycle.
+    user_peak_ips: dict[str, int] = {}
+    with SessionLocal() as db:
+        acquire_database_schema_read_lock(db)
+        changed = False
+        for node_id, usage in samples:
             for name, stats in usage.items():
                 if not name.startswith("u-"):
                     continue
@@ -1867,7 +2031,7 @@ def audit_subscription_usage() -> None:
                 row = db.scalar(
                     select(SubscriptionCredentialRow)
                     .where(SubscriptionCredentialRow.user_id == user_id)
-                    .where(SubscriptionCredentialRow.node_id == node.id)
+                    .where(SubscriptionCredentialRow.node_id == node_id)
                 )
                 if row is None:
                     continue
@@ -1885,7 +2049,7 @@ def audit_subscription_usage() -> None:
                     security_logger.warning(
                         "subscription sharing suspected user_id=%s node=%s distinct_source_ips=%s",
                         user_id,
-                        node.id,
+                        node_id,
                         distinct,
                     )
         if changed:
@@ -1896,7 +2060,12 @@ def audit_subscription_usage() -> None:
 def enforce_subscription_sharing_revocation(db: Session, user_peak_ips: dict[str, int]) -> None:
     """Auto-revoke a subscription whose UUID is used from too many distinct source IPs
     for two consecutive audits (shared/leaked config). Revocation pulls the per-node
-    UUIDs and rotates the token so the shared config dies; the user must re-export."""
+    UUIDs and rotates the token so the shared config dies; the user must re-export.
+
+    Commits per user, so each revocation is its own transaction and has to take the
+    schema fence again — the caller's is transaction-scoped and gone after the first
+    commit.
+    """
     # Clear strikes for users who are back under the threshold this cycle.
     for tracked_id in list(SUBSCRIPTION_SHARING_STRIKES):
         if user_peak_ips.get(tracked_id, 0) < SUBSCRIPTION_REVOKE_SOURCE_IPS:
@@ -1916,6 +2085,7 @@ def enforce_subscription_sharing_revocation(db: Session, user_peak_ips: dict[str
                 peak,
             )
             continue
+        acquire_database_schema_read_lock(db)
         user = db.get(UserRow, user_id)
         if user is None:
             SUBSCRIPTION_SHARING_STRIKES.pop(user_id, None)
@@ -1945,7 +2115,15 @@ def enforce_subscription_sharing_revocation(db: Session, user_peak_ips: dict[str
 
 
 async def subscription_usage_audit_loop() -> None:
+    # Repair node-side credential drift before the first audit: a node that came back
+    # without its subscription users must not wait a full sweep to serve VIPs again.
     while True:
+        try:
+            await asyncio.to_thread(reconcile_subscription_credentials)
+        except Exception:
+            # With the cause: a bare "failed" line here cost a deploy's worth of
+            # guesswork when a lock ordering bug first surfaced.
+            security_logger.error("Subscription credential reconciliation failed", exc_info=True)
         await asyncio.sleep(SUBSCRIPTION_AUDIT_SWEEP_SECONDS)
         try:
             await asyncio.to_thread(audit_subscription_usage)
