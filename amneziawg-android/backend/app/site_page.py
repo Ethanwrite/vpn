@@ -496,7 +496,6 @@ SITE_HTML = """<!doctype html>
         <div class="shell">
           <div class="manifestoHead">
             <div class="manifestoTitle">NETWORK<br/>MANIFESTO</div>
-            <p class="lead" style="max-width:26em;">三件事决定一条连接的好坏：谁来选路、能去哪里、谁看得到你。</p>
           </div>
 
           <div class="manifestoGrid">
@@ -1155,6 +1154,11 @@ SITE_HTML = """<!doctype html>
       localStorage.setItem('xingsui_token', state.token);
       localStorage.setItem('xingsui_user', JSON.stringify(state.user));
       renderAuthState();
+      const checkoutPlan = sessionStorage.getItem('xingsui_checkout_plan');
+      sessionStorage.removeItem('xingsui_checkout_plan');
+      if (checkoutPlan && /^[A-Za-z0-9_-]{1,80}$/.test(checkoutPlan)) {
+        location.href = '/payment?' + new URLSearchParams({ plan_id: checkoutPlan }).toString();
+      }
     }
 
     function clearAuth() {

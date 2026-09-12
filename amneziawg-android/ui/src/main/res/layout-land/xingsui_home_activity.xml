@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@drawable/xingsui_home_background" android:clipToPadding="false">
-  <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal" android:padding="12dp">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal" android:padding="12dp" android:paddingTop="18dp">
     <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:layout_marginEnd="20dp">
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
         <LinearLayout android:id="@+id/account_card" android:layout_width="48dp" android:layout_height="48dp" android:layout_marginEnd="12dp" android:contentDescription="@string/xingsui_profile_open" android:gravity="center" android:orientation="horizontal">
@@ -23,10 +23,8 @@
     </LinearLayout>
     <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical">
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="0dp" android:gravity="center_vertical" android:orientation="horizontal">
-        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-          <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:letterSpacing="0.24" android:text="@string/xingsui_brand_latin" android:textColor="@color/xingsui_gold_deep" android:textSize="11sp" android:textStyle="bold" android:visibility="gone" />
-          <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="@string/xingsui_home_headline" android:textColor="@color/xingsui_ink" android:textSize="20sp" android:textStyle="bold" />
-        </LinearLayout>
+        <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1">
+          </Space>
         <LinearLayout android:layout_width="wrap_content" android:layout_height="38dp" android:background="@drawable/xingsui_segment_bg" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="12dp" android:paddingEnd="4dp">
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/xingsui_home_smart_mode" android:textColor="@color/xingsui_ink" android:textSize="12sp" android:textStyle="bold" />
           <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/smart_mode_switch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" android:minWidth="48dp" />

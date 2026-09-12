@@ -1,331 +1,56 @@
-<?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/xingsui_paper"
-    android:fillViewport="true">
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="24dp">
-
-        <TextView
-            android:id="@+id/offer_badge"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@drawable/xingsui_offer_badge_background"
-            android:paddingLeft="12dp"
-            android:paddingTop="6dp"
-            android:paddingRight="12dp"
-            android:paddingBottom="6dp"
-            android:text="@string/xingsui_limited_offer"
-            android:textColor="@color/xingsui_deep_space"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/xingsui_vip_center"
-            android:textAppearance="?attr/textAppearanceHeadlineMedium"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/xingsui_vip_subtitle"
-            android:textAppearance="?attr/textAppearanceBodyMedium" />
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            app:cardBackgroundColor="@color/xingsui_paper_raised"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:strokeColor="@color/xingsui_line_strong"
-            app:strokeWidth="1dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/xingsui_plan_month"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/countdown"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:textAppearance="?attr/textAppearanceBodyMedium" />
-
-                <TextView
-                    android:id="@+id/original_price"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="@string/xingsui_monthly_original_price"
-                    android:textAppearance="?attr/textAppearanceBodyMedium" />
-
-                <TextView
-                    android:id="@+id/monthly_sale_price"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/xingsui_monthly_sale_price"
-                    android:textAppearance="?attr/textAppearanceHeadlineSmall"
-                    android:textColor="@color/xingsui_gold_deep"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/discount_summary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="@string/xingsui_order_discount" />
+<?xml version='1.0' encoding='utf-8'?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@color/xingsui_paper">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="64dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="24dp">
+    <com.google.android.material.button.MaterialButton android:id="@+id/back_button" android:layout_width="48dp" android:layout_height="48dp" android:minWidth="0dp" android:insetLeft="0dp" android:insetRight="0dp" android:padding="0dp" android:text="‹" android:textSize="28sp" android:contentDescription="@string/xingsui_back" app:backgroundTint="@android:color/transparent" android:textColor="@color/xingsui_ink" app:cornerRadius="24dp" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="会员计划" android:textSize="22sp" android:textColor="@color/xingsui_ink" android:layout_marginStart="10dp" android:textStyle="bold" />
+  </LinearLayout>
+  <androidx.core.widget.NestedScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true" android:clipToPadding="false">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="28dp">
+      <androidx.recyclerview.widget.RecyclerView android:id="@+id/plan_carousel" android:layout_width="match_parent" android:layout_height="370dp" android:clipToPadding="false" android:clipChildren="false" android:overScrollMode="never" android:scrollbars="none" android:paddingTop="8dp" android:paddingBottom="12dp" android:contentDescription="会员套餐，左右滑动选择" />
+      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="正在加载套餐" android:textSize="12sp" android:textColor="@color/xingsui_muted" android:id="@+id/plan_position" android:gravity="center" android:textColorHint="@color/xingsui_muted" android:layout_marginTop="2dp" />
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="24dp" android:paddingEnd="24dp" android:paddingTop="16dp">
+        <com.google.android.material.button.MaterialButton android:id="@+id/submit_paid" android:layout_width="match_parent" android:layout_height="56dp" android:text="前往官网开通" android:textAllCaps="false" app:cornerRadius="20dp" android:insetTop="0dp" android:insetBottom="0dp" android:enabled="false" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="最终优惠以确认页为准 · 支持微信 / 支付宝" android:textSize="11sp" android:textColor="@color/xingsui_muted" android:id="@+id/order_status" android:gravity="center" android:layout_marginTop="10dp" android:lineSpacingExtra="3dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/retry_plans" android:layout_width="match_parent" android:layout_height="56dp" android:text="重新加载套餐" android:textAllCaps="false" app:cornerRadius="20dp" android:insetTop="0dp" android:insetBottom="0dp" android:visibility="gone" android:layout_marginTop="8dp" style="?attr/materialButtonOutlinedStyle" />
+        <com.google.android.material.card.MaterialCardView android:layout_width="match_parent" android:layout_height="wrap_content" app:cardCornerRadius="32dp" app:cardElevation="1dp" app:cardBackgroundColor="@color/xingsui_paper_raised" app:strokeColor="#12282825" app:strokeWidth="1dp" app:contentPadding="0dp" android:layout_marginTop="28dp">
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="24dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="邀请同行" android:textSize="22sp" android:textColor="@color/xingsui_ink" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/xingsui_invite_reward" android:textSize="12sp" android:textColor="@color/xingsui_muted" android:layout_marginTop="8dp" android:lineSpacingExtra="4dp" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="18dp" android:layout_marginTop="20dp" android:background="@drawable/xingsui_invite_code_surface">
+              <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="你的专属邀请码" android:textSize="11sp" android:textColor="@color/xingsui_muted" />
+              <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textSize="26sp" android:textColor="@color/xingsui_ink" android:id="@+id/invite_code" android:layout_marginTop="8dp" android:fontFamily="monospace" android:letterSpacing="0.12" android:textStyle="bold" android:textIsSelectable="true" />
+              <com.google.android.material.button.MaterialButton android:id="@+id/copy_invite" android:layout_width="match_parent" android:layout_height="56dp" android:text="复制邀请码" android:textAllCaps="false" app:cornerRadius="20dp" android:insetTop="0dp" android:insetBottom="0dp" android:layout_marginTop="12dp" style="?attr/materialButtonOutlinedStyle" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:orientation="horizontal">
-
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="0dp"
-                android:layout_height="92dp"
-                android:layout_marginEnd="6dp"
-                android:layout_weight="1"
-                app:cardCornerRadius="16dp" app:cardBackgroundColor="@color/xingsui_paper_raised" app:cardElevation="0dp" app:strokeColor="@color/xingsui_line" app:strokeWidth="1dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:gravity="center"
-                    android:text="@string/xingsui_plan_quarter_price"
-                    android:textStyle="bold" />
-            </com.google.android.material.card.MaterialCardView>
-
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="0dp"
-                android:layout_height="92dp"
-                android:layout_marginStart="6dp"
-                android:layout_weight="1"
-                app:cardCornerRadius="16dp" app:cardBackgroundColor="@color/xingsui_paper_raised" app:cardElevation="0dp" app:strokeColor="@color/xingsui_line" app:strokeWidth="1dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:gravity="center"
-                    android:text="@string/xingsui_plan_year_price"
-                    android:textStyle="bold" />
-            </com.google.android.material.card.MaterialCardView>
-        </LinearLayout>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            app:cardBackgroundColor="@color/xingsui_paper_raised"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:strokeColor="@color/xingsui_line_strong"
-            app:strokeWidth="1dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/xingsui_website_recharge_title"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="@string/xingsui_website_recharge_hint"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
-                    android:textColor="@color/xingsui_muted" />
-
-                <com.google.android.material.button.MaterialButtonToggleGroup
-                    android:id="@+id/pay_channel_group"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:visibility="gone"
-                    app:singleSelection="true">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/pay_wechat"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="0dp"
-                        android:layout_height="60dp"
-                        android:layout_weight="1"
-                        android:text="@string/xingsui_select_wechat" app:cornerRadius="16dp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/pay_alipay"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="0dp"
-                        android:layout_height="60dp"
-                        android:layout_weight="1"
-                        android:text="@string/xingsui_select_alipay" app:cornerRadius="16dp" />
-                </com.google.android.material.button.MaterialButtonToggleGroup>
-
-                <ImageView
-                    android:id="@+id/payment_qr"
-                    android:layout_width="160dp"
-                    android:layout_height="160dp"
-                    android:layout_marginTop="16dp"
-                    android:contentDescription="@string/xingsui_payment_qr_placeholder"
-                    android:src="@drawable/xingsui_qr_placeholder"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/order_amount"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:text="@string/xingsui_order_amount"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/payment_qr_hint"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:text="@string/xingsui_payment_qr_placeholder" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/submit_paid"
-                    android:layout_width="match_parent"
-                    android:layout_height="60dp"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/xingsui_go_website_recharge"
-                    app:cornerRadius="16dp" />
-
-                <TextView
-                    android:id="@+id/order_status"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:text="@string/xingsui_trust_note" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="22dp" android:baselineAligned="false">
+              <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:orientation="vertical" android:layout_weight="1">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textSize="26sp" android:textColor="@color/xingsui_ink" android:id="@+id/invited_count" android:textStyle="bold" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="已邀请" android:textSize="11sp" android:textColor="@color/xingsui_muted" android:layout_marginTop="5dp" />
+              </LinearLayout>
+              <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:orientation="vertical" android:layout_weight="1">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textSize="26sp" android:textColor="@color/xingsui_ink" android:id="@+id/paid_count" android:textStyle="bold" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="已开通" android:textSize="11sp" android:textColor="@color/xingsui_muted" android:layout_marginTop="5dp" />
+              </LinearLayout>
             </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="邀请数据加载中" android:textSize="11sp" android:textColor="@color/xingsui_muted" android:id="@+id/invitation_status" android:layout_marginTop="16dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/retry_invitation" android:layout_width="match_parent" android:layout_height="56dp" android:text="重新加载邀请数据" android:textAllCaps="false" app:cornerRadius="20dp" android:insetTop="0dp" android:insetBottom="0dp" android:visibility="gone" android:layout_marginTop="8dp" style="?attr/materialButtonOutlinedStyle" />
+          </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:layout_marginBottom="24dp"
-            app:cardBackgroundColor="@color/xingsui_paper_raised"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:strokeColor="@color/xingsui_line_strong"
-            app:strokeWidth="1dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/xingsui_my_invitation"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/invite_code"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:background="@color/xingsui_paper_raised"
-                    android:contentDescription="@string/xingsui_copy_invite"
-                    android:padding="12dp"
-                    android:text="@string/xingsui_invite_code_label"
-                    android:textIsSelectable="true" />
-
-                <TextView
-                    android:id="@+id/invite_stats"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/xingsui_invite_stats" />
-
-                <TextView
-                    android:id="@+id/withdraw_balance"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="@string/xingsui_withdraw_balance" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="@string/xingsui_invite_reward" />
-
-                <com.google.android.material.textfield.TextInputLayout
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-            app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp" app:boxCornerRadiusBottomStart="12dp" app:boxCornerRadiusBottomEnd="12dp"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:hint="@string/xingsui_alipay_account">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/alipay_account"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:inputType="textEmailAddress"
-                        android:singleLine="true" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/submit_alipay_withdrawal"
-                    android:layout_width="match_parent"
-                    android:layout_height="60dp"
-                    android:layout_marginTop="10dp"
-                    android:text="@string/xingsui_submit_alipay_withdrawal" app:cornerRadius="16dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/copy_withdraw_wechat"
-                    style="?attr/materialButtonOutlinedStyle"
-                    android:layout_width="match_parent"
-                    android:layout_height="60dp"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/xingsui_copy_withdraw_wechat" app:cornerRadius="16dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/copy_invite"
-                    style="?attr/materialButtonOutlinedStyle"
-                    android:layout_width="match_parent"
-                    android:layout_height="60dp"
-                    android:layout_marginTop="10dp"
-                    android:text="@string/xingsui_copy_invite" app:cornerRadius="16dp" />
+        <com.google.android.material.card.MaterialCardView android:layout_width="match_parent" android:layout_height="wrap_content" app:cardCornerRadius="32dp" app:cardElevation="1dp" app:cardBackgroundColor="@color/xingsui_paper_raised" app:strokeColor="#12282825" app:strokeWidth="1dp" app:contentPadding="0dp" android:layout_marginTop="16dp">
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="24dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="我的奖励" android:textSize="18sp" android:textColor="@color/xingsui_ink" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textSize="34sp" android:textColor="@color/xingsui_ink" android:id="@+id/withdraw_balance" android:layout_marginTop="14dp" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="可提现余额" android:textSize="11sp" android:textColor="@color/xingsui_muted" android:layout_marginTop="4dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/toggle_withdrawal" android:layout_width="match_parent" android:layout_height="56dp" android:text="提现与帮助  ›" android:textAllCaps="false" app:cornerRadius="20dp" android:insetTop="0dp" android:insetBottom="0dp" android:layout_marginTop="18dp" style="?attr/materialButtonOutlinedStyle" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:id="@+id/withdrawal_form" android:visibility="gone" android:paddingTop="8dp">
+              <com.google.android.material.textfield.TextInputLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/xingsui_alipay_account" app:boxCornerRadiusTopStart="16dp" app:boxCornerRadiusTopEnd="16dp" app:boxCornerRadiusBottomStart="16dp" app:boxCornerRadiusBottomEnd="16dp" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+                <com.google.android.material.textfield.TextInputEditText android:id="@+id/alipay_account" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textEmailAddress" android:singleLine="true" />
+              </com.google.android.material.textfield.TextInputLayout>
+              <com.google.android.material.button.MaterialButton android:id="@+id/submit_alipay_withdrawal" android:layout_width="match_parent" android:layout_height="56dp" android:text="@string/xingsui_submit_alipay_withdrawal" android:textAllCaps="false" app:cornerRadius="20dp" android:insetTop="0dp" android:insetBottom="0dp" android:enabled="false" android:layout_marginTop="12dp" />
+              <com.google.android.material.button.MaterialButton android:id="@+id/copy_withdraw_wechat" android:layout_width="match_parent" android:layout_height="56dp" android:text="@string/xingsui_copy_withdraw_wechat" android:textAllCaps="false" app:cornerRadius="20dp" android:insetTop="0dp" android:insetBottom="0dp" android:layout_marginTop="8dp" style="?attr/materialButtonOutlinedStyle" />
             </LinearLayout>
+          </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
+      </LinearLayout>
     </LinearLayout>
-</ScrollView>
+  </androidx.core.widget.NestedScrollView>
+</LinearLayout>

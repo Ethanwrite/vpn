@@ -174,8 +174,8 @@ PAYMENT_HTML_TEMPLATE = """<!doctype html>
       }, 1800);
     }
     function startPayment(channel) {
-      if (!token) { location.href = '/dashboard'; return; }
       if (!selectedPlan) return;
+      if (!token) { sessionStorage.setItem('xingsui_checkout_plan', selectedPlan.id); location.href = '/dashboard'; return; }
       const target = paymentTarget(channel);
       if (!target) { setStatus('支付跳转暂未配置，请使用下方二维码完成付款。', 'error'); return; }
       currentOrder = null;

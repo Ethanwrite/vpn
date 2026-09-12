@@ -88,6 +88,7 @@ class XingsuiHomeActivity : AppCompatActivity() {
         sessionStore = XingsuiSessionStore(this)
         setContentView(binding.root)
         supportActionBar?.hide()
+        applyXingsuiSystemInsets(binding.root)
 
         binding.loginButton.setOnClickListener { startActivity(Intent(this, XingsuiAuthActivity::class.java)) }
         binding.registerButton.setOnClickListener { startActivity(Intent(this, XingsuiAuthActivity::class.java)) }
