@@ -327,7 +327,7 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 |---|---|
 | 控制面 | **`64.90.24.84`（香港）**。`db`(postgres:16-alpine) / `api`(xingsui-backend:latest) / `caddy`(caddy:2-alpine) 三容器已拉起。**数据是原 `xingsui-control-plane_pgdata` 卷，不是任何转储** —— 310 用户 / 660 订单 / 88 条 `vip_status=active`（后台口径 46 未过期）/ 最新注册 2026-08-24。构建源 `/opt/xingsui/backend` 已与仓库对齐（`main.py` md5 `0c609d21668207d40efba353aff1f0cc`；恢复前服务器上那份只是 docstring 中英文差异，功能一致）。回滚点：`/opt/xingsui/backups/pre-restore-20260911T093734Z/`（pgdata 冷备 + caddy_data + .env + secrets + 逻辑转储）、镜像 `xingsui-backend:pre-restore-20260911`。 |
 | 新加坡节点 | `node-singapore` → **`61.13.236.31`**，权重 220（唯一在池），protocol=dual，`client_network 10.70.0.0/24`，MTU 1280，keepalive 25。awg 服务端公钥、VLESS Reality pbk / sid 见 `markdown/a.markdown`（不入库；本文遵循「凭证与密钥一律不写入」的约定，公开仓库里也不放节点指纹）；SNI `xingsui.org` / flow `xtls-rprx-vision` / Reality 回落 `xingsui.org:443`。Agent **2.2.0**，sing-box `1.13.13-lx.7`，日志级 `info`，`xingsui-vless.service` 带 `ExecReload=/bin/kill -HUP $MAINPID`。 |
-| Android | **线上 `2.0.31 (41)`**（2026-09-12）。扁平线性锤镰、固定首页、统一登录和充值页、实时连接指标。Release 签名与生产证书一致，11 项单元测试通过。APK sha256 `1b9bdd052209e8a5135ddf0aa19ff6f9a018a44fa8cb9d308a8de6abede05f56`，`MIN_SUPPORTED=19` 保持不变。上版 2.0.30 保存在本次回滚目录。 |
+| Android | **线上 `2.0.32 (42)`**（2026-09-12）。首页移除品牌字样，并按系统栏/刘海安全区留白；充值页为 84% 宽、居中吸附的套餐 Carousel，邀请和奖励区域分层。Release 生产签名一致，13 项 Android 测试通过。APK sha256 `0c5e27d1d8b09c5a412c39ef2aad351f13112dc6ed966ca316b7595f99255017`，最低兼容版本保持 19。 |
 | Windows | **线上 `1.0.25`**（2026-09-12）。GitHub Actions run `34685811686` 成功，提交 `c0b6885dcdda9f133ed6ab9a781050ba4e886165`；NSIS/MSI 均生成。官网分发 NSIS（15350539B），sha256 `0aec75cf31ee933e1a93c3882cf6aee19fd297214d40a14ac20841a81f39d2ba`。保留 WebView2 bootstrapper 与旧品牌卸载钩子。 |
 | 个人静态订阅 | `https://xingsui.org/sub-static/<random>.yaml`（控制面 Caddy `handle_path` + 挂载 `/srv/personal-subscription`）。节点侧对应 `/etc/xingsui/static-vless-uuids.txt` 的常驻 UUID，Agent reconcile 会保留。 |
 
@@ -421,3 +421,15 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
 - 本机 DNS 启用 TUN fake-IP（198.18.0.0/15）。使用 `curl --interface en0` 时须为目标域名显式指定已核实的真实 IP（`--resolve`），否则会将 fake-IP 发往物理接口导致超时。SSH 使用真实 IP 与 `-B en0`。GitHub 产物本机下载慢时，用短效 artifact URL 在控制面下载，校验 GitHub archive digest 后再核对安装包 SHA256。
 
 发布后核对：5 个域名 `/health` 均 200；主站与镜像站的首页、用户中心、支付页、套餐接口与更新接口通过检查；两个域名完整下载的 Android/Windows 安装包 SHA256 均与本次构建产物一致。`/promotions/active` 返回既有语义 `404 No active promotion`（当前无活动，官网正常回退）。
+
+
+### 2026-09-12 Android 2.0.32 会员页更新
+
+源码提交 `6025b23`。本次发布 Android 与官网；Windows 继续使用 1.0.25。
+
+- 首页：移除中文/英文品牌文字，顶部内边距再增加 6dp；统一使用 systemBars/displayCutout Insets，底部同时考虑系统导航与键盘，维持固定首页。
+- 充值页：独立「会员计划」标题，RecyclerView + PagerSnapHelper 横向套餐；卡片宽 84%，常见手机露出下一张约 20–35dp，首尾均可居中。32dp 圆角、2dp 淡阴影、轻微纸面颗粒；大字体扩展卡片高度。
+- 套餐和邀请分别从真实接口读取。套餐失败显示重试，不使用虚构价格或倒计时；选中卡片与开通按钮价格同步。邀请码/邀请人数/已开通人数/累计奖励/可提现余额分层；提现表单可展开。
+- 官网删除指定的「三件事决定……」文案。App 选择的套餐通过 `/payment?plan_id=...` 传入；未登录时用同源 sessionStorage 保留套餐，登录后一次性返回，限制为合法套餐 ID，避免任意跳转。
+- 验证：13 项 Android JUnit 测试（含 Carousel 比例、露出宽度、首尾居中），Node checkout-return 回归覆盖月/季/年套餐、空数据和非法返回目标，Release 构建及签名验证通过。无已连接 Android 真机，未验证实际滑动手感。
+- 回滚：`/opt/xingsui/backups/membership-carousel-2.0.32-20260912/` 保存旧 Android 2.0.31、官网/支付页和环境文件；旧镜像为 `xingsui-backend:pre-membership-2.0.32`，候选为 `xingsui-backend:membership-2.0.32`。
