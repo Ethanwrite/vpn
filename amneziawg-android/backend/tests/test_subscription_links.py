@@ -709,3 +709,477 @@ def test_eligible_subscription_nodes_skips_offline(Session) -> None:
     db.commit()
     assert sorted(n.id for n in eligible_subscription_nodes(db)) == ["dead", "live"]
     db.close()
+
+
+class FakeNodeRegistry:
+    """Stand-in for a node's live sing-box subscription user list."""
+
+    def __init__(self, *, reachable: bool = True) -> None:
+        self.registered: set[str] = set()
+        self.reachable = reachable
+        self.pushes: list[str] = []
+        self.syncs: list[list[str]] = []
+        # Called on every agent round trip, to assert on the caller's DB state.
+        self.on_call = lambda: None
+
+    def install(self, monkeypatch) -> "FakeNodeRegistry":
+        def listing(node, **kwargs):
+            self.on_call()
+            if not self.reachable:
+                raise RuntimeError("node agent request failed")
+            return set(self.registered)
+
+        def add(node, user_uuid, name, expires_at, **kwargs):
+            if not self.reachable:
+                raise RuntimeError("node agent request failed")
+            self.pushes.append(user_uuid)
+            self.registered.add(user_uuid)
+            return {"status": "added"}
+
+        def sync(node, users, **kwargs):
+            self.on_call()
+            if not self.reachable:
+                raise RuntimeError("node agent request failed")
+            self.syncs.append([user_uuid for user_uuid, _name, _expires in users])
+            for user_uuid, _name, _expires in users:
+                self.pushes.append(user_uuid)
+                self.registered.add(user_uuid)
+            return {"status": "synced", "changed": len(users)}
+
+        monkeypatch.setattr("app.node_service.agent_list_subscription_users", listing)
+        monkeypatch.setattr("app.node_service.agent_add_subscription_user", add)
+        monkeypatch.setattr("app.node_service.agent_sync_subscription_users", sync)
+        return self
+
+
+def install_session_tracker(Session, monkeypatch) -> list[object]:
+    """Patch app.main.SessionLocal and return the list of currently-open sessions.
+
+    Background sweeps must close their snapshot transaction before calling a node
+    agent; an assertion on this list is how that invariant is checked.
+    """
+    live: list[object] = []
+
+    def factory():
+        session = Session()
+        live.append(session)
+        original_close = session.close
+
+        def close() -> None:
+            if session in live:
+                live.remove(session)
+            original_close()
+
+        session.close = close
+        return session
+
+    monkeypatch.setattr("app.main.SessionLocal", factory)
+    return live
+
+
+def record_schema_fence(monkeypatch) -> list[str]:
+    """Record every acquire_database_schema_read_lock() call made by the code."""
+    fences: list[str] = []
+    monkeypatch.setattr(
+        "app.main.acquire_database_schema_read_lock", lambda db: fences.append("fence")
+    )
+    return fences
+
+
+def online_vless_node(db, node_id: str = "vless-1") -> VpnNodeRow:
+    from app.db_models import VpnNodeHealthRow
+
+    node = vless_node(node_id)
+    db.add(node)
+    db.add(
+        VpnNodeHealthRow(
+            node_id=node_id, last_heartbeat_at=datetime.now(UTC), peer_count=0, cpu_load=0.0
+        )
+    )
+    db.commit()
+    return node
+
+
+def test_subscription_repushes_a_credential_the_node_lost(Session, monkeypatch) -> None:
+    """A database row records what we pushed, not what the node still holds.
+
+    Node-side state is lost by rebuilds, agent state resets and manual sing-box edits
+    while the row keeps matching. Rendering the feed must confirm with the node and
+    re-push the SAME uuid, or every existing subscriber keeps a config sing-box rejects.
+    """
+    from app.main import provision_subscription_credentials
+
+    token = make_user(Session, user_id="vip")
+    db = Session()
+    online_vless_node(db)
+    registry = FakeNodeRegistry().install(monkeypatch)
+    user = db.scalar(select(UserRow).where(UserRow.id == "vip"))
+
+    issued = provision_subscription_credentials(db, user)
+    db.commit()
+    uuid = issued[0][1]
+    assert registry.pushes == [uuid]
+
+    # Unchanged node state: the credential is confirmed, not pushed again.
+    assert [u for _, u in provision_subscription_credentials(db, user)] == [uuid]
+    assert registry.pushes == [uuid]
+
+    # The node forgets its subscription users (e.g. rebuilt / agent state reset).
+    registry.registered.clear()
+    assert [u for _, u in provision_subscription_credentials(db, user)] == [uuid]
+    assert registry.pushes == [uuid, uuid]
+    assert registry.registered == {uuid}
+    db.close()
+
+
+def test_subscription_render_trusts_the_row_when_the_node_cannot_be_probed(
+    Session, monkeypatch
+) -> None:
+    """An unreachable node (or an agent too old to answer) is not evidence the
+    credential is gone: keep serving the recorded uuid instead of failing the feed."""
+    from app.main import provision_subscription_credentials
+
+    make_user(Session, user_id="vip")
+    db = Session()
+    online_vless_node(db)
+    user = db.scalar(select(UserRow).where(UserRow.id == "vip"))
+    registry = FakeNodeRegistry().install(monkeypatch)
+    issued_uuid = provision_subscription_credentials(db, user)[0][1]
+    db.commit()
+
+    registry.reachable = False
+    assert [u for _, u in provision_subscription_credentials(db, user)] == [issued_uuid]
+    assert registry.pushes == [issued_uuid]
+    db.close()
+
+
+def test_reconcile_restores_subscription_credentials_the_node_lost(Session, monkeypatch) -> None:
+    """Third-party clients cache the imported config and may not re-pull for days, so
+    the sweep must repair node-side drift without the subscriber doing anything —
+    while leaving expired credentials and frozen accounts off the node."""
+    from app.db_models import SubscriptionCredentialRow
+    from app.main import reconcile_subscription_credentials
+
+    make_user(Session, user_id="vip")
+    make_user(Session, user_id="lapsed", expires_at=datetime.now(UTC) - timedelta(days=1))
+    make_user(Session, user_id="frozen", status="frozen")
+    db = Session()
+    online_vless_node(db)
+    for user_id, expires_at in (
+        ("vip", datetime.now(UTC) + timedelta(days=30)),
+        ("lapsed", datetime.now(UTC) - timedelta(days=1)),
+        ("frozen", datetime.now(UTC) + timedelta(days=30)),
+    ):
+        db.add(
+            SubscriptionCredentialRow(
+                id=f"cred-{user_id}",
+                user_id=user_id,
+                node_id="vless-1",
+                vless_uuid=f"uuid-{user_id}",
+                user_name=f"u-{user_id}",
+                token_version=1,
+                expires_at=expires_at,
+            )
+        )
+    db.commit()
+    db.close()
+
+    registry = FakeNodeRegistry().install(monkeypatch)
+    monkeypatch.setattr("app.main.SessionLocal", Session)
+    reconcile_subscription_credentials()
+
+    # One batched write, not one sing-box reload per credential.
+    assert registry.syncs == [["uuid-vip"]]
+
+    # Already-registered credentials are left alone on the next sweep.
+    reconcile_subscription_credentials()
+    assert registry.syncs == [["uuid-vip"]]
+
+
+def test_reconcile_skips_offline_nodes(Session, monkeypatch) -> None:
+    """An offline node cannot be repaired; probing it only burns the agent timeout."""
+    from app.db_models import SubscriptionCredentialRow, VpnNodeHealthRow
+    from app.main import reconcile_subscription_credentials
+
+    make_user(Session, user_id="vip")
+    db = Session()
+    db.add(vless_node("vless-1"))
+    db.add(
+        VpnNodeHealthRow(
+            node_id="vless-1",
+            last_heartbeat_at=datetime.now(UTC) - timedelta(days=2),
+            peer_count=0,
+            cpu_load=0.0,
+        )
+    )
+    db.add(
+        SubscriptionCredentialRow(
+            id="cred-vip",
+            user_id="vip",
+            node_id="vless-1",
+            vless_uuid="uuid-vip",
+            user_name="u-vip",
+            token_version=1,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+    )
+    db.commit()
+    db.close()
+
+    monkeypatch.setattr(
+        "app.node_service.agent_list_subscription_users",
+        lambda *args, **kwargs: pytest.fail("offline node must not be probed"),
+    )
+    monkeypatch.setattr("app.main.SessionLocal", Session)
+    reconcile_subscription_credentials()
+
+
+def test_reconcile_holds_no_transaction_while_calling_the_agents(Session, monkeypatch) -> None:
+    """Node calls take seconds. Holding the snapshot transaction open across them keeps
+    an AccessShareLock on vpn_nodes and deadlocks a sibling worker's startup
+    `alter table vpn_nodes ...` (a real deploy failure, 2026-09-12)."""
+    from app.db_models import SubscriptionCredentialRow
+    from app.main import reconcile_subscription_credentials
+
+    make_user(Session, user_id="vip")
+    db = Session()
+    online_vless_node(db)
+    db.add(
+        SubscriptionCredentialRow(
+            id="cred-vip",
+            user_id="vip",
+            node_id="vless-1",
+            vless_uuid="uuid-vip",
+            user_name="u-vip",
+            token_version=1,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+    )
+    db.commit()
+    db.close()
+
+    live = install_session_tracker(Session, monkeypatch)
+
+    registry = FakeNodeRegistry().install(monkeypatch)
+    registry.on_call = lambda: live and pytest.fail("agent called with a session still open")
+
+    reconcile_subscription_credentials()
+
+    assert registry.syncs == [["uuid-vip"]]
+    assert live == []
+
+
+def test_reconcile_fences_against_concurrent_startup_migrations(Session, monkeypatch) -> None:
+    """The sweep fires immediately at startup, while a sibling worker may still own DDL
+    table locks, so it must take the shared schema fence before touching any table."""
+    from app.main import reconcile_subscription_credentials
+
+    fences = record_schema_fence(monkeypatch)
+    monkeypatch.setattr("app.main.SessionLocal", Session)
+    FakeNodeRegistry().install(monkeypatch)
+
+    reconcile_subscription_credentials()
+    assert fences == ["fence"]
+
+
+def awg_device(
+    *,
+    device_id: str = "device-1",
+    user_id: str = "vip",
+    node_id: str = "awg-1",
+    public_key: str = "peer-public",
+    measured_bytes: int = 0,
+    status: str = "active",
+) -> VpnDeviceRow:
+    return VpnDeviceRow(
+        id=device_id,
+        user_id=user_id,
+        node_id=node_id,
+        protocol="awg",
+        session_token_hash=f"hash-{device_id}",
+        lease_id=f"lease-{device_id}",
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        tunnel_name="xingsui",
+        client_private_key="private",
+        client_public_key=public_key,
+        client_address="10.66.66.2/32",
+        config_text="config",
+        status=status,
+        measured_bytes=measured_bytes,
+    )
+
+
+def test_node_usage_reconcile_never_polls_agents_inside_a_transaction(Session, monkeypatch) -> None:
+    """Polling every node from inside the charging transaction held AccessShareLock on
+    vpn_devices/vpn_nodes/users for as long as the agents took, stalling startup DDL."""
+    from app.main import reconcile_node_usage
+
+    make_user(Session, user_id="free", vip_status="inactive")
+    db = Session()
+    db.add(awg_node())
+    db.add(awg_device(user_id="free"))
+    db.commit()
+    db.close()
+
+    live = install_session_tracker(Session, monkeypatch)
+    fences = record_schema_fence(monkeypatch)
+    polls: list[str] = []
+
+    def peer_usage(node, **kwargs):
+        if live:
+            pytest.fail("agent polled with a session still open")
+        polls.append(node.id)
+        return {"peer-public": 4096}
+
+    monkeypatch.setattr("app.node_service.agent_peer_usage", peer_usage)
+
+    reconcile_node_usage()
+
+    assert polls == ["awg-1"]
+    assert live == []
+    # Snapshot transaction and apply transaction each take the fence.
+    assert fences == ["fence", "fence"]
+
+    db = Session()
+    assert db.get(VpnDeviceRow, "device-1").measured_bytes == 4096
+    assert db.get(UserRow, "free").free_traffic_used_bytes == 4096
+    db.close()
+
+
+def test_node_usage_reconcile_drops_a_sample_whose_baseline_moved(Session, monkeypatch) -> None:
+    """The sample is taken outside the charging transaction, so a baseline that moved in
+    between means another sweep already charged those bytes — charging again double-bills,
+    and rebasing on the stale value hands back bytes already charged."""
+    from app.main import reconcile_node_usage
+
+    make_user(Session, user_id="free", vip_status="inactive")
+    db = Session()
+    db.add(awg_node())
+    db.add(awg_device(user_id="free", measured_bytes=1000))
+    db.commit()
+    db.close()
+
+    monkeypatch.setattr("app.main.acquire_database_schema_read_lock", lambda db: None)
+
+    def peer_usage(node, **kwargs):
+        # Simulate a concurrent sweep committing a newer sample while we hold none.
+        other = Session()
+        other.get(VpnDeviceRow, "device-1").measured_bytes = 5000
+        other.commit()
+        other.close()
+        return {"peer-public": 2000}
+
+    monkeypatch.setattr("app.node_service.agent_peer_usage", peer_usage)
+    monkeypatch.setattr("app.main.SessionLocal", Session)
+
+    reconcile_node_usage()
+
+    db = Session()
+    # Neither charged (2000 - 1000) nor rebased down to 2000.
+    assert db.get(VpnDeviceRow, "device-1").measured_bytes == 5000
+    assert db.get(UserRow, "free").free_traffic_used_bytes == 0
+    db.close()
+
+
+def test_subscription_audit_never_polls_agents_inside_a_transaction(Session, monkeypatch) -> None:
+    """Same invariant for the source-IP audit; it writes subscription_credentials."""
+    from app.db_models import SubscriptionCredentialRow
+    from app.main import audit_subscription_usage
+
+    make_user(Session, user_id="vip")
+    db = Session()
+    online_vless_node(db)
+    db.add(
+        SubscriptionCredentialRow(
+            id="cred-vip",
+            user_id="vip",
+            node_id="vless-1",
+            vless_uuid="uuid-vip",
+            user_name="u-vip",
+            token_version=1,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+    )
+    db.commit()
+    db.close()
+
+    live = install_session_tracker(Session, monkeypatch)
+    fences = record_schema_fence(monkeypatch)
+
+    def vless_usage(node, **kwargs):
+        if live:
+            pytest.fail("agent polled with a session still open")
+        return {"u-vip": {"distinct_source_ips": 3}}
+
+    monkeypatch.setattr("app.node_service.agent_vless_usage", vless_usage)
+
+    audit_subscription_usage()
+
+    assert live == []
+    assert fences == ["fence", "fence"]
+
+    db = Session()
+    row = db.get(SubscriptionCredentialRow, "cred-vip")
+    assert row.last_distinct_source_ips == 3
+    assert row.daily_peak_source_ips == 3
+    db.close()
+
+
+def test_lease_sweep_takes_the_schema_fence_before_locking_device_rows(
+    Session, monkeypatch
+) -> None:
+    """`select ... for update` on vpn_devices followed by a vpn_nodes lookup inside
+    revoke is the reverse lock order; the shared fence keeps it out of startup DDL."""
+    from app.main import sweep_expired_vpn_leases
+
+    make_user(Session, user_id="vip")
+    db = Session()
+    db.add(awg_node())
+    expired = awg_device(user_id="vip")
+    expired.lease_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    db.add(expired)
+    db.commit()
+    db.close()
+
+    fences = record_schema_fence(monkeypatch)
+    monkeypatch.setattr("app.main.SessionLocal", Session)
+    removed: list[str] = []
+    monkeypatch.setattr(
+        "app.node_service.agent_remove_peer",
+        lambda node, public_key, **kwargs: removed.append(public_key) or {"status": "removed"},
+    )
+
+    sweep_expired_vpn_leases()
+
+    assert fences == ["fence"]
+    assert removed == ["peer-public"]
+
+    db = Session()
+    assert db.get(VpnDeviceRow, "device-1").status == "revoked"
+    db.close()
+
+
+def test_sharing_revocation_retakes_the_fence_for_each_committed_user(
+    Session, monkeypatch
+) -> None:
+    """It commits per user, so the caller's transaction-scoped fence is gone after the
+    first commit; every subsequent revocation transaction must take it again."""
+    from app.main import enforce_subscription_sharing_revocation, SUBSCRIPTION_SHARING_STRIKES
+
+    for user_id in ("share-a", "share-b"):
+        make_user(Session, user_id=user_id)
+    fences = record_schema_fence(monkeypatch)
+    monkeypatch.setattr("app.main.SUBSCRIPTION_REVOKE_SOURCE_IPS", 10)
+    monkeypatch.setattr("app.main.SUBSCRIPTION_AUTO_REVOKE_ENABLED", True)
+    SUBSCRIPTION_SHARING_STRIKES.clear()
+    # One prior strike each, so this cycle is the second and triggers revocation.
+    SUBSCRIPTION_SHARING_STRIKES.update({"share-a": 1, "share-b": 1})
+
+    db = Session()
+    try:
+        enforce_subscription_sharing_revocation(db, {"share-a": 12, "share-b": 12})
+    finally:
+        db.close()
+        SUBSCRIPTION_SHARING_STRIKES.clear()
+
+    assert fences == ["fence", "fence"]

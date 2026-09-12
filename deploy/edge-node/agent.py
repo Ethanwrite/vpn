@@ -22,7 +22,7 @@ import time
 import urllib.request
 from uuid import UUID
 
-AGENT_VERSION = "2.1.2"
+AGENT_VERSION = "2.2.0"
 MAX_REQUEST_BYTES = 64 * 1024
 SIGNATURE_WINDOW_SECONDS = 90
 MAX_LEASE_SECONDS = 60 * 60
@@ -35,6 +35,9 @@ LEASE_CLOCK_SKEW_SECONDS = SIGNATURE_WINDOW_SECONDS
 # lease. Cap keeps a compromised control plane from minting effectively-permanent
 # credentials; 400 days comfortably covers an annual VIP plan plus slack.
 MAX_SUBSCRIPTION_SECONDS = 400 * 24 * 60 * 60
+# Users accepted by one /vless/subscription/sync call. Bounded so a batch stays
+# well inside MAX_REQUEST_BYTES.
+MAX_SYNC_USERS = 100
 NONCES: dict[str, int] = {}
 NONCE_LOCK = threading.Lock()
 LEASE_LOCK = threading.RLock()
@@ -503,9 +506,51 @@ def save_subscriptions() -> None:
 
 
 def register_subscription(user_uuid: str, name: str, expires_at: datetime) -> None:
+    entry = {"name": name, "expires_at": expires_at.astimezone(UTC).isoformat()}
     with SUBSCRIPTION_LOCK:
-        SUBSCRIPTIONS[user_uuid] = {"name": name, "expires_at": expires_at.astimezone(UTC).isoformat()}
+        # The control plane re-asserts existing credentials to repair drift, so an
+        # unchanged registration must not rewrite the state file on every call.
+        if SUBSCRIPTIONS.get(user_uuid) == entry:
+            return
+        SUBSCRIPTIONS[user_uuid] = entry
         save_subscriptions()
+
+
+def register_subscriptions(users: list[tuple[str, str, datetime]]) -> int:
+    """Register several subscription users with ONE sing-box config write.
+
+    Repairing a node that lost its subscription users touches every credential at
+    once. One reload per user would drop every live VLESS connection dozens of
+    times over, so the whole batch lands in a single write-and-reload.
+    Returns the number of users that were not already registered as requested.
+    """
+    if not users:
+        return 0
+    entries = {user_uuid: build_vless_user_entry(user_uuid, name) for user_uuid, name, _ in users}
+    with VLESS_LOCK:
+        path = vless_config_path()
+        config = json.loads(path.read_text(encoding="utf-8"))
+        current = vless_users(config)
+        desired = list(current)
+        for user_uuid, entry in entries.items():
+            matching = [item for item in desired if isinstance(item, dict) and item.get("uuid") == user_uuid]
+            if len(matching) == 1 and matching[0] == entry:
+                continue
+            desired = [item for item in desired if not isinstance(item, dict) or item.get("uuid") != user_uuid]
+            desired.append(entry)
+        if desired != current:
+            current[:] = desired
+            write_vless_config(config)
+    # Only record credentials sing-box has accepted, so a failed write leaves no
+    # registry entry claiming the node can authenticate them.
+    changed = 0
+    with SUBSCRIPTION_LOCK:
+        for user_uuid, name, expires_at in users:
+            before = SUBSCRIPTIONS.get(user_uuid)
+            register_subscription(user_uuid, name, expires_at)
+            if SUBSCRIPTIONS.get(user_uuid) != before:
+                changed += 1
+    return changed
 
 
 def remove_subscription(user_uuid: str) -> None:
@@ -538,6 +583,28 @@ def active_subscriptions(now: datetime | None = None) -> dict[str, str]:
         if changed:
             save_subscriptions()
     return active
+
+
+def registered_subscription_users() -> dict[str, str]:
+    """{uuid: name} for subscription users this node will actually authenticate.
+
+    A registry entry alone is not enough: only UUIDs present in the live sing-box
+    config can complete a VLESS handshake. Reporting the intersection lets the
+    control plane detect node-side state loss (rebuild, agent state reset, manual
+    config edit) and re-push the credentials it believes are already provisioned,
+    instead of handing subscribers a UUID sing-box rejects.
+    """
+    subscriptions = active_subscriptions()
+    if not subscriptions:
+        return {}
+    with VLESS_LOCK:
+        config = json.loads(vless_config_path().read_text(encoding="utf-8"))
+        present = {
+            str(entry.get("uuid"))
+            for entry in vless_users(config)
+            if isinstance(entry, dict) and entry.get("uuid")
+        }
+    return {user_uuid: name for user_uuid, name in subscriptions.items() if user_uuid in present}
 
 
 def reconcile_vless_users() -> None:
@@ -850,6 +917,30 @@ class Handler(BaseHTTPRequestHandler):
                     remove_vless_user(user_uuid)
                     remove_subscription(user_uuid)
                 self._send(200, {"status": "removed"})
+            elif path == "/vless/subscription/sync":
+                # Batch form of /vless/subscription/add, used to repair node-side
+                # state loss without one sing-box reload per credential.
+                raw_users = payload.get("users")
+                if not isinstance(raw_users, list) or not 0 < len(raw_users) <= MAX_SYNC_USERS:
+                    raise ValueError("invalid users")
+                requested: list[tuple[str, str, datetime]] = []
+                for item in raw_users:
+                    if not isinstance(item, dict):
+                        raise ValueError("invalid users")
+                    requested.append(
+                        (
+                            validate_uuid(item.get("uuid")),
+                            validate_user_name(item.get("name")),
+                            parse_subscription_expiry(item.get("expires_at")),
+                        )
+                    )
+                with LEASE_LOCK:
+                    changed = register_subscriptions(requested)
+                self._send(200, {"status": "synced", "changed": changed})
+            elif path == "/vless/subscription/list":
+                # Read-only: which subscription UUIDs this node can actually
+                # authenticate, so the control plane can repair drift.
+                self._send(200, {"users": registered_subscription_users()})
             elif path == "/vless/usage":
                 # Read-only per-user connection/source-IP audit (see vless_usage).
                 self._send(200, {"users": vless_usage()})
