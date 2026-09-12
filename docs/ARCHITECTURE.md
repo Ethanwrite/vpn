@@ -210,6 +210,21 @@ ssh -B en0 -i ~/.ssh/id_ed25519 root@64.90.24.84 'cd /opt/xingsui/deploy/control
 推送 `xingsui-windows/**` 触发工作流 → 产出 NSIS/MSI artifact → 下载 → `scripts/upload-windows-installer.sh` 部署到 `/opt/xingsui/download/xingsui-windows-setup.exe`。当前 CI 工作流是 `windows-client.yml`（更严格的 `build.yml` 在 `backup/local-main-b0d584e` 分支，启用需带 `workflow` scope 的 token）。版本改 `src-tauri/{tauri.conf.json,Cargo.toml,Cargo.lock}` 与 `api.rs` 的 `VERSION_*`。**macOS 上无法本地 `cargo build`**（externalBin 只提供 Windows 版 sing-box，tauri-build 会因缺 `binaries/sing-box-<mac-triple>` 报错）——Windows 端只能靠 CI 构建验证。
 - ⚠️ **`tauri.conf.json` 的 `bundle.windows.webviewInstallMode` 必须是 `downloadBootstrapper`，切勿改回 `skip`**：skip 时安装包不保证目标机有 WebView2 运行时，纯净 Windows（LTSC/精简装机/移除过 Edge 的系统）下应用一启动即闪退（2026-07-24 事故根因）。
 - **崩溃排查**：客户端 panic 会写 `%LOCALAPPDATA%\com.xingsui.vpn.desktop\crash.log`，向用户索取此文件即可定位 Rust 侧崩溃。
+- ⚠️ **`productName` 决定卸载注册表键与安装目录，改名必须配套清理钩子**。Tauri 的 NSIS 模板里
+  `!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCTNAME}"`，
+  安装目录同样是 `$PROGRAMFILES64\${PRODUCTNAME}`。1.0.24 把 productName 由「星隧VPN」改为
+  「星火VPN」，新版因此**认不出**老版：不处理的话老用户会多出一条「添加或删除程序」记录，
+  外加一个含旧 sing-box / wintun.dll 的孤儿目录。
+  现由 `src-tauri/installer-hooks.nsh`（挂在 `bundle.windows.nsis.installerHooks`）的
+  `NSIS_HOOK_PREINSTALL` 处理：读 HKLM/HKCU 的旧 `UninstallString`，用 `/S _?=<dir>` 就地静默
+  卸载并清残留目录、注册表键与快捷方式；卸载失败只打日志不阻断安装。
+  **该文件必须存为 UTF-8 with BOM** —— `installer.nsi` 是 `Unicode true`，没有 BOM 时 NSIS
+  可能按 ANSI 解析，里面的中文旧产品名就会和注册表键对不上，钩子静默失效。
+  再次改名时记得同步 `XF_LEGACY_NAME`。
+- ⚠️ **release 签名缺失时 `ui/build.gradle.kts` 会静默回落成未签名**（`releaseSigningReady`），
+  `BUILD SUCCESSFUL` 却只产出 `ui-release-unsigned.apk`。keystore 路径经 `rootProject.file()`
+  解析（rootDir = `amneziawg-android/`），传相对路径极易指错 —— **一律用绝对路径**，并在构建后
+  确认 `ui-release.apk` 确实存在、`apksigner verify --print-certs` 的指纹等于生产证书。
 
 ### 7.4 节点 Agent（手动 scp + 重启）
 Agent 代码部署到每个节点 `/opt/xingsui/agent.py`，systemd 服务 `xingsui-agent.service`：
@@ -266,8 +281,8 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 |---|---|
 | 控制面 | **`64.90.24.84`（香港）**。`db`(postgres:16-alpine) / `api`(xingsui-backend:latest) / `caddy`(caddy:2-alpine) 三容器已拉起。**数据是原 `xingsui-control-plane_pgdata` 卷，不是任何转储** —— 310 用户 / 660 订单 / 88 条 `vip_status=active`（后台口径 46 未过期）/ 最新注册 2026-08-24。构建源 `/opt/xingsui/backend` 已与仓库对齐（`main.py` md5 `0c609d21668207d40efba353aff1f0cc`；恢复前服务器上那份只是 docstring 中英文差异，功能一致）。回滚点：`/opt/xingsui/backups/pre-restore-20260911T093734Z/`（pgdata 冷备 + caddy_data + .env + secrets + 逻辑转储）、镜像 `xingsui-backend:pre-restore-20260911`。 |
 | 新加坡节点 | `node-singapore` → **`61.13.236.31`**，权重 220（唯一在池），protocol=dual，`client_network 10.70.0.0/24`，MTU 1280，keepalive 25。awg 服务端公钥、VLESS Reality pbk / sid 见 `markdown/a.markdown`（不入库；本文遵循「凭证与密钥一律不写入」的约定，公开仓库里也不放节点指纹）；SNI `xingsui.org` / flow `xtls-rprx-vision` / Reality 回落 `xingsui.org:443`。Agent **2.1.2**，sing-box `1.13.13-lx.7`，日志级 `info`，`xingsui-vless.service` 带 `ExecReload=/bin/kill -HUP $MAINPID`。 |
-| Android | **线上 `2.0.29 (39)`**。包来自本机既有 release 产物 `amneziawg-android/ui/build/outputs/apk/release/ui-release.apk`（2026-08-14 构建，17807231B，sha256 `661cce8e59c4d63b2ae219c5f552eb26c95e55788fe2f3e1e380282ead3d1c4e`）。**签名证书 SHA-256 `CC:17:45:CA:6E:6D:D7:37:02:B2:0F:15:EB:E4:E7:6A:01:1B:91:E4:36:9B:AC:57:97:A2:BF:89:A5:7E:5A:04` 与生产 keystore 一致**，可覆盖安装。内置 API 域名 `https://xingsui.org` + `https://xingsuico.com`。`APP_VERSION_CODE=39`、`MIN_SUPPORTED=19`。 |
-| Windows | **线上 `1.0.23`**。取自 GitHub Actions run `31815956470`（2026-08-14）的 `xingsui-windows-nsis` artifact（`星隧VPN_1.0.23_x64-setup.exe`，15378314B，sha256 `9f522d1ca0502c13f948353da57e51ebacddef7114a1b06d32e505bd2ab2560b`），含 `webviewInstallMode: downloadBootstrapper` 闪退修复（§7.3）。artifact 未过期，无需重跑 CI。 |
+| Android | **线上 `2.0.30 (40)`**（2026-09-11 星火品牌重构随包发布）。产物 `amneziawg-android/ui/build/outputs/apk/release/ui-release.apk`，17800654B，sha256 `3b9d79d9d36e886c451c2d88c31e5462e938e01254661a4947663ba6518dbe45`。**签名证书 SHA-256 `CC:17:45:CA:6E:6D:D7:37:02:B2:0F:15:EB:E4:E7:6A:01:1B:91:E4:36:9B:AC:57:97:A2:BF:89:A5:7E:5A:04` 与生产 keystore 一致**，可覆盖安装。内置 API 域名 `https://xingsui.org` + `https://xingsuico.com`。`APP_VERSION_CODE=40`、`MIN_SUPPORTED=19`。上一版 `2.0.29 (39)`（17807231B，sha256 `661cce8e…`）留在服务器 `/opt/xingsui/download/xingsui.apk.prev-2.0.29` 备回滚。 |
+| Windows | **线上 `1.0.24`**（2026-09-11）。取自 GitHub Actions run `34614461414` 的 `xingsui-windows-nsis` artifact（`星火VPN_1.0.24_x64-setup.exe`，15376001B，sha256 `f47aca4805435212f332869f9ff140b57007c666dd6e547ee261b53e0206b427`）。本版把 `productName` 由「星隧VPN」改名为「星火VPN」，因此带了 NSIS 预装钩子清除旧版（见 §7.3）。上一版 `1.0.23`（`星隧VPN_1.0.23_x64-setup.exe`，15378314B，sha256 `9f522d1c…`，run `31815956470`）含 `webviewInstallMode: downloadBootstrapper` 闪退修复。 |
 | 个人静态订阅 | `https://xingsui.org/sub-static/<random>.yaml`（控制面 Caddy `handle_path` + 挂载 `/srv/personal-subscription`）。节点侧对应 `/etc/xingsui/static-vless-uuids.txt` 的常驻 UUID，Agent reconcile 会保留。 |
 
 **`www.xingsui.org` 已于 2026-09-11 纳入站点**：`SITE_DOMAIN` 改为 `xingsui.org www.xingsui.org` 后
