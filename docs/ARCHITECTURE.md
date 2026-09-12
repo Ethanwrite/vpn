@@ -2,7 +2,7 @@
 
 > 面向维护者与后续开发的权威参考。涵盖系统组成、完整业务流程、协议与抗封策略、
 > 部署方式、数据模型，以及**后续加需求时必须注意的事项**。
-> 凭证一律不写入本文，只注明存放位置。最后更新：2026-07-20。
+> 凭证一律不写入本文，只注明存放位置。最后更新：2026-09-12。
 
 ## 目录
 1. [概览](#1-概览)
@@ -200,9 +200,8 @@ ssh -B en0 -i ~/.ssh/id_ed25519 root@64.90.24.84 'cd /opt/xingsui/deploy/control
 # 环境见 amneziawg-android/docs/android-build.md
 ./gradlew :ui:assembleRelease -PxingsuiReleaseApiBaseUrl=https://xingsui.org   # 签名走 XINGSUI_KEYSTORE_* 环境变量
 ../scripts/upload-android-apk.sh    # 校验版本号后 scp 到 /opt/xingsui/download/xingsui.apk
-# ⚠️ 2026-09-11：scripts/upload-{android-apk,windows-installer}.sh 的 ssh_options 里没有 -p，写死走 22，
-#    而控制面现在是 20020 —— 单机重建后这两个脚本暂时不可用，需要补一个端口变量。
-#    本次是手工 scp 到 .tmp + 原子 mv + 两端 sha256 比对完成的（语义与脚本一致）。
+# 上传脚本默认 22 端口。当前控制面是 64.90.24.84:22；本地 TUN 启用时还需 BindInterface=en0。
+# 2026-09-12 使用暂存文件 + SHA256 校验 + 原子替换发布，节点的 20020 端口不参与客户端分发。
 ```
 之后同步 `.env` 的 `APP_VERSION_CODE/NAME` 并重启 api，App 内更新检查才提示。
 
@@ -275,14 +274,14 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 
 ---
 
-## 10. 当前已部署版本（2026-09-11 恢复到香港控制面）
+## 10. 当前已部署版本（2026-09-12 UI 更新）
 
 | 端 | 版本 / 状态 |
 |---|---|
 | 控制面 | **`64.90.24.84`（香港）**。`db`(postgres:16-alpine) / `api`(xingsui-backend:latest) / `caddy`(caddy:2-alpine) 三容器已拉起。**数据是原 `xingsui-control-plane_pgdata` 卷，不是任何转储** —— 310 用户 / 660 订单 / 88 条 `vip_status=active`（后台口径 46 未过期）/ 最新注册 2026-08-24。构建源 `/opt/xingsui/backend` 已与仓库对齐（`main.py` md5 `0c609d21668207d40efba353aff1f0cc`；恢复前服务器上那份只是 docstring 中英文差异，功能一致）。回滚点：`/opt/xingsui/backups/pre-restore-20260911T093734Z/`（pgdata 冷备 + caddy_data + .env + secrets + 逻辑转储）、镜像 `xingsui-backend:pre-restore-20260911`。 |
 | 新加坡节点 | `node-singapore` → **`61.13.236.31`**，权重 220（唯一在池），protocol=dual，`client_network 10.70.0.0/24`，MTU 1280，keepalive 25。awg 服务端公钥、VLESS Reality pbk / sid 见 `markdown/a.markdown`（不入库；本文遵循「凭证与密钥一律不写入」的约定，公开仓库里也不放节点指纹）；SNI `xingsui.org` / flow `xtls-rprx-vision` / Reality 回落 `xingsui.org:443`。Agent **2.1.2**，sing-box `1.13.13-lx.7`，日志级 `info`，`xingsui-vless.service` 带 `ExecReload=/bin/kill -HUP $MAINPID`。 |
-| Android | **线上 `2.0.30 (40)`**（2026-09-11 星火品牌重构随包发布）。产物 `amneziawg-android/ui/build/outputs/apk/release/ui-release.apk`，17800654B，sha256 `3b9d79d9d36e886c451c2d88c31e5462e938e01254661a4947663ba6518dbe45`。**签名证书 SHA-256 `CC:17:45:CA:6E:6D:D7:37:02:B2:0F:15:EB:E4:E7:6A:01:1B:91:E4:36:9B:AC:57:97:A2:BF:89:A5:7E:5A:04` 与生产 keystore 一致**，可覆盖安装。内置 API 域名 `https://xingsui.org` + `https://xingsuico.com`。`APP_VERSION_CODE=40`、`MIN_SUPPORTED=19`。上一版 `2.0.29 (39)`（17807231B，sha256 `661cce8e…`）留在服务器 `/opt/xingsui/download/xingsui.apk.prev-2.0.29` 备回滚。 |
-| Windows | **线上 `1.0.24`**（2026-09-11）。取自 GitHub Actions run `34614461414` 的 `xingsui-windows-nsis` artifact（`星火VPN_1.0.24_x64-setup.exe`，15376001B，sha256 `f47aca4805435212f332869f9ff140b57007c666dd6e547ee261b53e0206b427`）。本版把 `productName` 由「星隧VPN」改名为「星火VPN」，因此带了 NSIS 预装钩子清除旧版（见 §7.3）。上一版 `1.0.23`（`星隧VPN_1.0.23_x64-setup.exe`，15378314B，sha256 `9f522d1c…`，run `31815956470`）含 `webviewInstallMode: downloadBootstrapper` 闪退修复。 |
+| Android | **线上 `2.0.31 (41)`**（2026-09-12）。扁平线性锤镰、固定首页、统一登录和充值页、实时连接指标。Release 签名与生产证书一致，11 项单元测试通过。APK sha256 `1b9bdd052209e8a5135ddf0aa19ff6f9a018a44fa8cb9d308a8de6abede05f56`，`MIN_SUPPORTED=19` 保持不变。上版 2.0.30 保存在本次回滚目录。 |
+| Windows | **线上 `1.0.25`**（2026-09-12）。GitHub Actions run `34685811686` 成功，提交 `c0b6885dcdda9f133ed6ab9a781050ba4e886165`；NSIS/MSI 均生成。官网分发 NSIS（15350539B），sha256 `0aec75cf31ee933e1a93c3882cf6aee19fd297214d40a14ac20841a81f39d2ba`。保留 WebView2 bootstrapper 与旧品牌卸载钩子。 |
 | 个人静态订阅 | `https://xingsui.org/sub-static/<random>.yaml`（控制面 Caddy `handle_path` + 挂载 `/srv/personal-subscription`）。节点侧对应 `/etc/xingsui/static-vless-uuids.txt` 的常驻 UUID，Agent reconcile 会保留。 |
 
 **`www.xingsui.org` 已于 2026-09-11 纳入站点**：`SITE_DOMAIN` 改为 `xingsui.org www.xingsui.org` 后
@@ -325,3 +324,15 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
 > VIP 连接确认 `used` 不增长；订阅导入 Clash 确认「到期节点 + 星隧-新加坡」两项，重置后旧配置立即失效；
 > 一键连接 Endpoint 应为 `61.13.236.31:443`；**控制面 Caddy 重启后要复查节点 VLESS 是否仍能握手**（回落依赖）；
 > 节点上下线/权重调整后查健康表 peer 分布。
+
+
+### 2026-09-12 UI 发布回滚点
+
+本次只更新官网 `backend/app/site_page.py`、客户端安装包与 Android 更新元数据。控制面 API 容器重建，未改数据库结构、Caddy、节点配置或隧道进程。候选镜像 `xingsui-backend:flat-ui-20260912` 已验证后标记为 latest；健康检查及更新接口检查通过。
+
+- 回滚目录：`/opt/xingsui/backups/flat-ui-2.0.31-1.0.25-20260912/`，保存旧官网文件、原环境文件、Android 2.0.30、Windows 1.0.24。
+- 旧镜像：`xingsui-backend:pre-flat-ui-20260912`；目录内 `deploy.py` 包含失败自动恢复逻辑。
+- 两域名下载地址保持 `/download/android` 与 `/download/windows`。
+- 本机 DNS 启用 TUN fake-IP（198.18.0.0/15）。使用 `curl --interface en0` 时须为目标域名显式指定已核实的真实 IP（`--resolve`），否则会将 fake-IP 发往物理接口导致超时。SSH 使用真实 IP 与 `-B en0`。GitHub 产物本机下载慢时，用短效 artifact URL 在控制面下载，校验 GitHub archive digest 后再核对安装包 SHA256。
+
+发布后核对：5 个域名 `/health` 均 200；主站与镜像站的首页、用户中心、支付页、套餐接口与更新接口通过检查；两个域名完整下载的 Android/Windows 安装包 SHA256 均与本次构建产物一致。`/promotions/active` 返回既有语义 `404 No active promotion`（当前无活动，官网正常回退）。

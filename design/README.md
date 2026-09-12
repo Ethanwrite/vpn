@@ -19,8 +19,12 @@ Android 上传/下载为隧道累计字节增量除以单调时钟时间差（5 
 
 Windows 上传/下载继续使用内核实时流量；延迟为经当前本地代理请求连通性检查地址的实际响应耗时，每 15 秒一次，超时 3 秒。它包含代理、TLS 和服务响应时间，与 Android 的 TCP 建连耗时不可直接横向比较。测量只用于展示，不改变连接授权或断线策略。
 
-## 本地验证（2026-09-11）
+## 发布验证（2026-09-12）
 
-Android Release 构建与 11 项现有单元测试通过，签名证书与既有发布证书一致。签名包为 `amneziawg-android/ui/build/outputs/apk/release/ui-release.apk`；这是本地候选构建，保留当前版本 2.0.30 (40)，尚未发布。Windows TypeScript/Vite 构建通过。官网在 1440 px 与 390 px 视口检查；桌面 UI 使用浏览器模拟原生桥检查，连接状态为测试状态，不代表真实 VPN 已连接。未连接 Android 设备，尚未完成真机视觉与连接验证。Windows Rust 检查因 crates.io 依赖下载超时受阻，未生成新版 Windows 安装包。
+Android 2.0.31 (41) Release 构建与 11 项现有单元测试通过，签名证书与既有发布证书一致。Windows 1.0.25 在 GitHub Actions run 34685811686 构建成功，NSIS 与 MSI 均已生成；包内主程序版本、sing-box 与 wintun 文件已核对。构建提交为 c0b6885dcdda9f133ed6ab9a781050ba4e886165。
 
-生产网站与下载文件尚未发布替换。
+官网在桌面与手机视口检查；桌面 UI 使用浏览器模拟原生桥检查，连接状态为测试状态，不代表真实 VPN 已连接。未连接 Android/Windows 真机，尚未完成真机端到端连接验证。
+
+2026-09-12 已发布新版官网和 Android/Windows 下载文件；Android 更新接口为 2.0.31 (41)，最低兼容版本保持 19。回滚点为控制面 `/opt/xingsui/backups/flat-ui-2.0.31-1.0.25-20260912/`，旧镜像标签 `xingsui-backend:pre-flat-ui-20260912`。
+
+发布后主站与镜像站的 Android/Windows 完整下载文件 SHA256 均与构建产物一致；5 个域名健康检查均 200。官网线上页面已完成浏览器检查。
