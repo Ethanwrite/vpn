@@ -13,7 +13,10 @@ pub enum AppError {
     #[error("接口返回错误({status})：{message}")]
     Api { status: u16, message: String },
 
-    #[error("尚未登录或登录已过期")]
+    #[error("{0}")]
+    Entitlement(String),
+
+    #[error("登录已过期，请重新登录后连接")]
     Unauthorized,
 
     #[error("内核启动失败：{0}")]
@@ -42,6 +45,38 @@ impl AppError {
     pub fn config(msg: impl Into<String>) -> Self {
         AppError::Config(msg.into())
     }
+    /// Only approved account reasons can escape the generic connection failure message.
+    pub fn entitlement(reason: &str) -> Self {
+        let message = match reason.trim() {
+            "free_traffic_exhausted" => "免费体验流量已用完，请前往官网开通会员后继续使用",
+            "vip_required" => "该线路为会员专属，请前往官网开通会员后使用",
+            "vip_expired" => "会员已到期，请前往官网续费后继续使用",
+            _ => return Self::connection_sync(),
+        };
+        Self::Entitlement(message.into())
+    }
+
+    pub fn for_connection(self) -> Self {
+        match self {
+            Self::Entitlement(_) | Self::Unauthorized => self,
+            _ => Self::connection_sync(),
+        }
+    }
+
+    /// No response bodies, tokens, URLs, lease IDs or node credentials in diagnostics.
+    pub fn diagnostic_code(&self) -> &str {
+        match self {
+            Self::Entitlement(message) => message,
+            Self::Unauthorized => "unauthorized",
+            Self::Network(_) => "network_error",
+            Self::Api { .. } => "api_error",
+            Self::Core(_) => "core_error",
+            Self::System(_) => "system_error",
+            Self::Config(_) => "config_validation_error",
+            Self::Other(_) => "connection_error",
+        }
+    }
+
     pub fn connection_sync() -> Self {
         AppError::Other(CONNECTION_SYNC_ERROR.to_string())
     }
@@ -86,6 +121,21 @@ pub type AppResult<T> = Result<T, AppError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_reasons_survive_connection_error_sanitization() {
+        for reason in ["free_traffic_exhausted", "vip_required", "vip_expired"] {
+            let expected = AppError::entitlement(reason).to_string();
+            assert_ne!(expected, CONNECTION_SYNC_ERROR);
+            assert_eq!(AppError::entitlement(reason).for_connection().to_string(), expected);
+        }
+        assert!(AppError::Unauthorized.for_connection().to_string().contains("重新登录"));
+        for error in [AppError::entitlement("secret-unknown-reason"),
+            AppError::Network("private-url".into()), AppError::core("private-config"),
+            AppError::config("private-uuid"), AppError::other("unexpected-body")] {
+            assert_eq!(error.for_connection().to_string(), CONNECTION_SYNC_ERROR);
+        }
+    }
 
     #[test]
     fn connection_failures_expose_only_the_approved_message() {

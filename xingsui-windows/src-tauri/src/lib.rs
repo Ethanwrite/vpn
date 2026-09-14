@@ -3,6 +3,7 @@
 mod api;
 mod commands;
 mod core;
+mod diagnostics;
 mod error;
 mod models;
 mod singbox_config;

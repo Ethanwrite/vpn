@@ -83,7 +83,7 @@ fn validate_entitlement(config: &VpnNodeConfig, now: DateTime<Utc>) -> AppResult
     // 与 Android 端一致的业务规则：后端已判定授权（VIP 有效或免费流量剩余>0）时放行；
     // 免费流量用户 reason=free_trial / vip_status=inactive，不再被 VIP-only 拦截。
     if !entitlement.allowed {
-        return Err(AppError::config("账户无有效授权"));
+        return Err(AppError::entitlement(&entitlement.reason));
     }
     // 仅 VIP 用户校验 VIP 到期时间；免费流量用户无 VIP 到期时间，凭剩余流量放行。
     if entitlement.vip_status == "active" {
@@ -363,7 +363,10 @@ mod tests {
         let now = Utc::now();
         let mut denied = node_config(now);
         denied.entitlement.allowed = false;
-        assert!(validate_node_config(&denied, now).is_err());
+        denied.entitlement.reason = "free_traffic_exhausted".into();
+        let error = validate_node_config(&denied, now).unwrap_err().for_connection();
+        assert!(matches!(error, AppError::Entitlement(_)));
+        assert!(error.to_string().contains("免费体验流量已用完"));
 
         let mut non_vless = node_config(now);
         non_vless.protocol = "amneziawg".into();

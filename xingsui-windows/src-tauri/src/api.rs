@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 const VERSION_CODE: &str = "9";
-const VERSION_NAME: &str = "1.0.25";
+const VERSION_NAME: &str = "1.0.26";
 
 /// 供崩溃日志等处引用当前版本名。
 pub fn version_name() -> &'static str {
@@ -91,7 +91,7 @@ impl ApiClient {
                         return if token.is_some() {
                             // 已登录时，把授权失败原因码转成友好文案（免费流量用完 / VIP 相关），
                             // 其余仍回退到通用的“账户状态同步失败”提示。
-                            Err(AppError::other(friendly_reason_message(&detail)))
+                            Err(AppError::entitlement(&detail))
                         } else {
                             Err(AppError::other(detail))
                         };
@@ -176,16 +176,6 @@ impl ApiClient {
     }
 }
 
-/// 把后端授权失败原因码映射成用户可读文案；未知原因回退到通用同步失败提示。
-fn friendly_reason_message(detail: &str) -> String {
-    match detail.trim() {
-        "free_traffic_exhausted" => "免费体验流量已用完，请前往官网开通会员后继续使用".to_string(),
-        "vip_required" => "该线路为会员专属，请前往官网开通会员后使用".to_string(),
-        "vip_expired" => "会员已到期，请前往官网续费后继续使用".to_string(),
-        _ => crate::error::CONNECTION_SYNC_ERROR.to_string(),
-    }
-}
-
 /// 从后端 {"detail": "..."} 错误体抽取人类可读信息。
 fn extract_detail(text: &str) -> String {
     serde_json::from_str::<serde_json::Value>(text)
@@ -202,18 +192,13 @@ fn extract_detail(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::friendly_reason_message;
-    use crate::error::CONNECTION_SYNC_ERROR;
+    use super::*;
 
     #[test]
-    fn maps_entitlement_reasons_to_friendly_text() {
-        assert!(friendly_reason_message("free_traffic_exhausted").contains("官网"));
-        assert!(friendly_reason_message("vip_expired").contains("续费"));
-        assert!(friendly_reason_message("vip_required").contains("会员"));
-        // 未知原因回退到通用同步失败提示
-        assert_eq!(
-            friendly_reason_message("something_else"),
-            CONNECTION_SYNC_ERROR
-        );
+    fn fastapi_denial_retains_its_reason_through_the_connection_boundary() {
+        let detail = extract_detail(r#"{"detail":"free_traffic_exhausted"}"#);
+        let error = AppError::entitlement(&detail).for_connection();
+        assert!(error.to_string().contains("免费体验流量已用完"));
+        assert!(matches!(error, AppError::Entitlement(_)));
     }
 }

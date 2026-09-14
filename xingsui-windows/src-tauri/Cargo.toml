@@ -1,6 +1,6 @@
 [package]
 name = "xingsui-windows"
-version = "1.0.25"
+version = "1.0.26"
 description = "星火 VPN (MARX VPN) Windows 客户端"
 authors = ["Xingsui"]
 edition = "2021"

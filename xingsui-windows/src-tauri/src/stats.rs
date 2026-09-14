@@ -1,4 +1,5 @@
 use crate::core;
+use crate::error::AppError;
 use crate::models::{Entitlement, StatsPayload};
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
@@ -156,6 +157,14 @@ fn spawn_authorization_loop(
             }
             let now = Utc::now();
             match result {
+                Ok(entitlement) if !entitlement.allowed => {
+                    core::fail_connection_with_error(&app, generation, AppError::entitlement(&entitlement.reason));
+                    return;
+                }
+                Err(error) => {
+                    core::fail_connection_with_error(&app, generation, error);
+                    return;
+                }
                 Ok(entitlement) if now < lease_expires_at => {
                     let Some(renewed_expiry) = validated_renewal_expiry(&entitlement, now) else {
                         core::fail_connection(&app, generation);

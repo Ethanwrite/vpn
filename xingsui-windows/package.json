@@ -1,11 +1,12 @@
 {
   "name": "xingsui-windows",
   "private": true,
-  "version": "1.0.25",
+  "version": "1.0.26",
   "type": "module",
   "description": "星火 VPN (MARX VPN) Windows 客户端 (Tauri + React + sing-box)",
   "scripts": {
     "dev": "vite",
+    "test": "node --test tests/*.test.cjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

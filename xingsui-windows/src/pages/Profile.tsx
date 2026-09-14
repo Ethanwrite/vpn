@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-shell";
-import { api, CONNECTION_SYNC_ERROR, errText } from "../lib/api";
+import { api, connectionErrorText, errText } from "../lib/api";
 import { useStore } from "../store/useStore";
 import { daysLeft, formatBytes, formatDate, vipView } from "../lib/format";
 
@@ -21,8 +21,8 @@ export default function Profile({ onBack }: Props) {
     (async () => {
       try {
         setUser(await api.getMe());
-      } catch {
-        pushToast("error", CONNECTION_SYNC_ERROR);
+      } catch (error) {
+        pushToast("error", connectionErrorText(error));
       }
     })();
   }, [setUser, pushToast]);

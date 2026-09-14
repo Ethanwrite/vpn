@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ConnectButton from "../components/ConnectButton";
 import StatsBar from "../components/StatsBar";
 import NodeList from "../components/NodeList";
-import { api, CONNECTION_SYNC_ERROR } from "../lib/api";
+import { api, connectionErrorText } from "../lib/api";
 import { formatNodeDetail } from "../lib/format";
 import { useStore } from "../store/useStore";
 import type { NetMode, VpnNodeSummary } from "../lib/types";
@@ -49,8 +49,8 @@ export default function Home({ onProfile }: Props) {
         setNodes(list);
         const fastest = bestNode(list);
         if (fastest) selectNode(fastest.id);
-      } catch {
-        pushToast("error", CONNECTION_SYNC_ERROR);
+      } catch (error) {
+        pushToast("error", connectionErrorText(error));
       }
     })();
   }, [setNodes, selectNode, pushToast]);
@@ -64,14 +64,15 @@ export default function Home({ onProfile }: Props) {
     if (conn === "connected" || conn === "connecting") {
       try {
         await api.disconnect();
-      } catch {
-        pushToast("error", CONNECTION_SYNC_ERROR);
+      } catch (error) {
+        pushToast("error", connectionErrorText(error));
       }
       return;
     }
 
     const fastest = bestNode(nodes);
-    const targetNodeId = selectedNodeId || fastest?.id;
+    // Locked flags may predate a purchase; let the server decide entitlement on connect.
+    const targetNodeId = selectedNodeId || fastest?.id || nodes.find((n) => n.status === "online")?.id;
     if (!targetNodeId) {
       pushToast("error", "请先选择线路");
       setPickerOpen(true);
@@ -83,8 +84,8 @@ export default function Home({ onProfile }: Props) {
         selectNode(fastest.id);
       }
       await api.connect(targetNodeId, mode);
-    } catch {
-      pushToast("error", CONNECTION_SYNC_ERROR);
+    } catch (error) {
+      pushToast("error", connectionErrorText(error));
     }
   };
 
@@ -98,8 +99,8 @@ export default function Home({ onProfile }: Props) {
     if (conn === "connected") {
       try {
         await api.switchMode(m);
-      } catch {
-        pushToast("error", CONNECTION_SYNC_ERROR);
+      } catch (error) {
+        pushToast("error", connectionErrorText(error));
       }
     }
   };

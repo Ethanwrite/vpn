@@ -93,9 +93,9 @@ pub async fn connect(app: AppHandle, node_id: String, mode: NetMode) -> AppResul
     }
     let token = match app.state::<AppState>().require_token() {
         Ok(token) => token,
-        Err(_) => {
+        Err(error) => {
             let _ = core::stop(&app);
-            return Err(AppError::connection_sync());
+            return Err(error.for_connection());
         }
     };
     if core::stop(&app).is_err() {
@@ -121,11 +121,11 @@ pub async fn connect(app: AppHandle, node_id: String, mode: NetMode) -> AppResul
     }
     let config = match config_result {
         Ok(config) => config,
-        Err(_) => return fail_attempt(&app, generation),
+        Err(error) => return fail_attempt(&app, generation, "fetch_config", error),
     };
     let validated = match vless::validate_node_config(&config, Utc::now()) {
         Ok(validated) => validated,
-        Err(_) => return fail_attempt(&app, generation),
+        Err(error) => return fail_attempt(&app, generation, "validate_config", error),
     };
     if !attempt_is_current(&app, generation, &token) {
         return Ok(());
@@ -142,9 +142,9 @@ pub async fn connect(app: AppHandle, node_id: String, mode: NetMode) -> AppResul
         generation,
     ) {
         Ok(true) | Ok(false) => Ok(()),
-        Err(_) => {
+        Err(error) => {
             if attempt_is_current(&app, generation, &token) {
-                fail_attempt(&app, generation)
+                fail_attempt(&app, generation, "start_core", error)
             } else {
                 Ok(())
             }
@@ -179,9 +179,10 @@ fn valid_node_id(node_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-fn fail_attempt(app: &AppHandle, generation: u64) -> AppResult<()> {
+fn fail_attempt(app: &AppHandle, generation: u64, stage: &str, error: AppError) -> AppResult<()> {
     if core::stop_attempt(app, generation) {
-        Err(AppError::connection_sync())
+        crate::diagnostics::record(stage, error.diagnostic_code());
+        Err(error.for_connection())
     } else {
         Ok(())
     }

@@ -310,7 +310,7 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 
 ### 客户端 vs 服务端
 - **绝大多数配置改动是服务端驱动、无需重新打包 App**：节点、SNI、flow、MTU、pbk/sid 都来自后端/DB，客户端下次连接自动生效。只有客户端 UI/逻辑（如提示文案、页面）改动才需重新构建（Android 本地打包、Windows 走 CI）。
-- **两端业务规则一致**：免费流量/VIP 判定以后端 `entitlement.allowed` 为准；客户端错误提示按 `reason`（`free_traffic_exhausted`/`vip_expired`/`vip_required`）映射友好文案：**Android** 用尽时弹 `XingsuiHomeActivity.showPaywallCard`（与节点选择卡片同风格的底部卡片，提示前往官网开通，**不再自动跳 App 内充值页**）；连接期 403 原因由 `XingsuiManagedConfig` 的 `XingsuiEntitlementException` 透传。**Windows** 在 `api.rs::friendly_reason_message`（文案指向官网）。
+- **两端业务规则一致**：免费流量/VIP 判定以后端 `entitlement.allowed` 为准；客户端错误提示按 `reason`（`free_traffic_exhausted`/`vip_expired`/`vip_required`）映射友好文案：**Android** 用尽时弹 `XingsuiHomeActivity.showPaywallCard`（与节点选择卡片同风格的底部卡片，提示前往官网开通，**不再自动跳 App 内充值页**）；连接期 403 原因由 `XingsuiManagedConfig` 的 `XingsuiEntitlementException` 透传。**Windows** 在 `error.rs::AppError::entitlement` 映射；`commands.rs` / `stats.rs` / React 连接错误处理必须保留授权原因与 401 重新登录提示，未知错误才回退通用同步失败文案（1.0.26 修复了原有映射被后两层覆盖的问题）。
 - **客户端双域名故障转移**：Android `XingsuiApiClient.buildApiBaseUrls`（含 `xingsuico.com`，sticky `activeBaseUrl`）+ `activeWebOrigin()`（官网/下载/充值走当前可达域名）；Windows `api.rs BASE_URLS` + sticky `preferred_base`。加/改镜像域名两端都要动、各自出新包。
 
 ### 其它
@@ -433,3 +433,25 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
 - 官网删除指定的「三件事决定……」文案。App 选择的套餐通过 `/payment?plan_id=...` 传入；未登录时用同源 sessionStorage 保留套餐，登录后一次性返回，限制为合法套餐 ID，避免任意跳转。
 - 验证：13 项 Android JUnit 测试（含 Carousel 比例、露出宽度、首尾居中），Node checkout-return 回归覆盖月/季/年套餐、空数据和非法返回目标，Release 构建及签名验证通过。无已连接 Android 真机，未验证实际滑动手感。
 - 回滚：`/opt/xingsui/backups/membership-carousel-2.0.32-20260912/` 保存旧 Android 2.0.31、官网/支付页和环境文件；旧镜像为 `xingsui-backend:pre-membership-2.0.32`，候选为 `xingsui-backend:membership-2.0.32`。
+
+
+### 2026-09-14 Windows 1.0.26 授权错误修复
+
+排查控制面 Caddy/API 与节点日志：1.0.25 在 04:36:42 UTC 续租被 403 拒绝，
+04:36:52–04:37:18 重连共 13 次均 403，而 `/me` 始终 200。
+对应设备在首次 403 时被撤销，账户免费配额 62,914,560 B 已用 63,523,713 B；
+服务端按文档规则拒绝耗尽后的连接。会员确认后重新登录，04:45:21 配置获取恢复 200，
+续租持续 200，节点可观察到真实 VLESS 流量。未修改用户配额、会员状态或服务端授权规则。
+
+根因：`api.rs` 原本已有授权提示映射，但 `commands.rs::connect` 的 `Err(_)`、
+`stats.rs` 的续租失败分支及 `Home.tsx` 的 catch 再次将其覆盖成通用“账户状态同步失败”。
+现通过专用授权错误类型保留免费流量耗尽、会员到期、会员专属提示，并保留 401 重新登录提示。
+结构化配置返回 `allowed=false` 时同样按原因提示；未知错误仍不透出内部细节。
+已缓存的节点 `locked` 标记不能永久阻止充值后的重试，最终仍由服务端判定授权。
+
+新增 `%LOCALAPPDATA%\com.xingsui.vpn.desktop\connection.log`（主文件 256KiB 轮转，最多保留一份旧文件），
+只记录时间、版本、失败阶段与安全错误分类/授权提示，不记录 token、UUID、配置、响应体或访问目标。
+测试：`node --test tests/connection-errors.test.cjs` 验证真实 Home 点击处理器，
+`cargo test --lib` 验证授权映射/配置校验/续租规则，`npm run build` 验证前端。
+macOS 可用 `TAURI_CONFIG='{"bundle":{"externalBin":[]}}' cargo test --locked --lib`
+仅运行 Rust 单元测试；正式安装包仍须 Windows CI 构建。

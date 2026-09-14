@@ -57,3 +57,14 @@ export function errText(e: unknown): string {
   }
   return "操作失败，请稍后重试";
 }
+
+// Keep account actions actionable without exposing raw core/configuration errors.
+export function connectionErrorText(error: unknown): string {
+  const text = errText(error);
+  return [
+    "免费体验流量已用完，请前往官网开通会员后继续使用",
+    "该线路为会员专属，请前往官网开通会员后使用",
+    "会员已到期，请前往官网续费后继续使用",
+    "登录已过期，请重新登录后连接",
+  ].includes(text) ? text : CONNECTION_SYNC_ERROR;
+}

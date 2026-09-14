@@ -1,4 +1,4 @@
-use crate::error::{AppError, AppResult, CONNECTION_SYNC_ERROR};
+use crate::error::{AppError, AppResult};
 use crate::models::{ConnState, NetMode, StatusPayload, VlessConfig};
 use crate::state::AppState;
 use crate::{singbox_config, stats, sysproxy};
@@ -244,9 +244,14 @@ fn stop_runtime(app: &AppHandle, expected_generation: Option<u64>) -> StopOutcom
 }
 
 pub fn fail_connection(app: &AppHandle, generation: u64) {
+    fail_connection_with_error(app, generation, AppError::connection_sync());
+}
+
+pub fn fail_connection_with_error(app: &AppHandle, generation: u64, error: AppError) {
     let outcome = stop_runtime(app, Some(generation));
     if outcome.stopped {
-        emit_status(app, Some(CONNECTION_SYNC_ERROR.into()));
+        crate::diagnostics::record("connection_stopped", error.diagnostic_code());
+        emit_status(app, Some(error.for_connection().to_string()));
     }
 }
 
