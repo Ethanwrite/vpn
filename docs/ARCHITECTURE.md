@@ -328,7 +328,7 @@ ssh root@<节点> 'systemctl restart xingsui-agent'   # 重启不动 wg 接口�
 | 控制面 | **`64.90.24.84`（香港）**。`db`(postgres:16-alpine) / `api`(xingsui-backend:latest) / `caddy`(caddy:2-alpine) 三容器已拉起。**数据是原 `xingsui-control-plane_pgdata` 卷，不是任何转储** —— 310 用户 / 660 订单 / 88 条 `vip_status=active`（后台口径 46 未过期）/ 最新注册 2026-08-24。构建源 `/opt/xingsui/backend` 已与仓库对齐（`main.py` md5 `0c609d21668207d40efba353aff1f0cc`；恢复前服务器上那份只是 docstring 中英文差异，功能一致）。回滚点：`/opt/xingsui/backups/pre-restore-20260911T093734Z/`（pgdata 冷备 + caddy_data + .env + secrets + 逻辑转储）、镜像 `xingsui-backend:pre-restore-20260911`。 |
 | 新加坡节点 | `node-singapore` → **`61.13.236.31`**，权重 220（唯一在池），protocol=dual，`client_network 10.70.0.0/24`，MTU 1280，keepalive 25。awg 服务端公钥、VLESS Reality pbk / sid 见 `markdown/a.markdown`（不入库；本文遵循「凭证与密钥一律不写入」的约定，公开仓库里也不放节点指纹）；SNI `xingsui.org` / flow `xtls-rprx-vision` / Reality 回落 `xingsui.org:443`。Agent **2.2.0**，sing-box `1.13.13-lx.7`，日志级 `info`，`xingsui-vless.service` 带 `ExecReload=/bin/kill -HUP $MAINPID`。 |
 | Android | **线上 `2.0.32 (42)`**（2026-09-12）。首页移除品牌字样，并按系统栏/刘海安全区留白；充值页为 84% 宽、居中吸附的套餐 Carousel，邀请和奖励区域分层。Release 生产签名一致，13 项 Android 测试通过。APK sha256 `0c5e27d1d8b09c5a412c39ef2aad351f13112dc6ed966ca316b7595f99255017`，最低兼容版本保持 19。 |
-| Windows | **线上 `1.0.25`**（2026-09-12）。GitHub Actions run `34685811686` 成功，提交 `c0b6885dcdda9f133ed6ab9a781050ba4e886165`；NSIS/MSI 均生成。官网分发 NSIS（15350539B），sha256 `0aec75cf31ee933e1a93c3882cf6aee19fd297214d40a14ac20841a81f39d2ba`。保留 WebView2 bootstrapper 与旧品牌卸载钩子。 |
+| Windows | **线上 `1.0.26`**（2026-09-14）。修复连接/续租时授权拒绝原因被覆盖，明确区分免费流量耗尽、会员要求与登录失效；新增脱敏连接日志。GitHub Actions run `34807663967`，源码 `fb4613e`，NSIS/MSI 均成功。官网 NSIS 15350850B，sha256 `a576248cc108ca99b16c602c9d7d777c9ba0f7832ef0b32bf916e7b6bd9854ee`。 |
 | 个人静态订阅 | `https://xingsui.org/sub-static/<random>.yaml`（控制面 Caddy `handle_path` + 挂载 `/srv/personal-subscription`）。节点侧对应 `/etc/xingsui/static-vless-uuids.txt` 的常驻 UUID，Agent reconcile 会保留。 |
 
 **`www.xingsui.org` 已于 2026-09-11 纳入站点**：`SITE_DOMAIN` 改为 `xingsui.org www.xingsui.org` 后
@@ -441,7 +441,10 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
 04:36:52–04:37:18 重连共 13 次均 403，而 `/me` 始终 200。
 对应设备在首次 403 时被撤销，账户免费配额 62,914,560 B 已用 63,523,713 B；
 服务端按文档规则拒绝耗尽后的连接。会员确认后重新登录，04:45:21 配置获取恢复 200，
-续租持续 200，节点可观察到真实 VLESS 流量。未修改用户配额、会员状态或服务端授权规则。
+续租恢复 200，节点可观察到真实 VLESS 流量。
+04:48 手机网页连续四次登录后，04:48:13 Windows 续租转为 401；数据库只保留最新两个会话，
+与 `MAX_ACTIVE_AUTH_SESSIONS=2` 的既定规则一致。此时需在 Windows 重新登录。
+未修改用户配额、会员状态、会话数量限制或服务端授权规则。
 
 根因：`api.rs` 原本已有授权提示映射，但 `commands.rs::connect` 的 `Err(_)`、
 `stats.rs` 的续租失败分支及 `Home.tsx` 的 catch 再次将其覆盖成通用“账户状态同步失败”。
@@ -455,3 +458,16 @@ Agent 心跳写入控制面 `vpn_node_health`；api 容器经 CA bundle 调 `htt
 `cargo test --lib` 验证授权映射/配置校验/续租规则，`npm run build` 验证前端。
 macOS 可用 `TAURI_CONFIG='{"bundle":{"externalBin":[]}}' cargo test --locked --lib`
 仅运行 Rust 单元测试；正式安装包仍须 Windows CI 构建。
+
+回归结果：20 项 Rust 单元测试、4 项前端测试通过；将旧版 `Home.tsx` 代回同一测试，
+授权提示透传与锁定节点重试两项均失败，确认测试能捕获本次故障。
+
+发布：GitHub Actions `34807663967`（源码 `fb4613e`）成功，NSIS/MSI 均生成。
+NSIS archive digest `648046a260409c612b9daea6ce79f280e38f8edd56f7b92a520f9635249b38a6` 已核对。
+官网原子替换为 1.0.26（15,350,850 B）；安装包 SHA256
+`a576248cc108ca99b16c602c9d7d777c9ba0f7832ef0b32bf916e7b6bd9854ee`。
+回滚包：`64.90.24.84:/opt/xingsui/backups/windows-1.0.26-20260914/xingsui-windows-setup-1.0.25.exe`，
+备份目录内 `release.json` 保存新包摘要。无需重启 API/Caddy 或节点进程。
+从新加坡节点分别完整下载 `xingsui.org/download/windows` 与
+`xingsuico.com/download/windows`，两者均 200、字节数与 SHA256 均与构建产物一致，
+两域名 `/health` 均正常。未连接用户 Windows 真机，安装后的实际操作仍需用户复测。
